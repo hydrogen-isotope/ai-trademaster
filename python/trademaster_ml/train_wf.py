@@ -217,7 +217,7 @@ def main():
         "target": "forward return minus cross-sectional mean of stocks (bps)", "output": ["mu_bps", "logvar_bps2"],
         "export_fold": {"train": tr_s, "val": va_s, "test": te_s}, "seeds": a.seeds, "cost_bps_one_way": a.cost_bps,
         "walk_forward": {"folds": folds, "pooled": summary},
-        "data_source": "Yahoo Finance chart API (unofficial, personal research)",
+        "data_source": json.load(open(os.path.join(a.hist, "universe.json"), encoding="utf-8")).get("source", "Yahoo Finance chart API (older download)"),
     }
     with open(os.path.join(a.out, "model.spec.json"), "w", encoding="utf-8") as f:
         json.dump(spec, f, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else float(o))

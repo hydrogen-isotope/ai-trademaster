@@ -4,7 +4,8 @@ Live buy/sell indicators for the dashboard's forward-test page (research only: n
   prepare  pull the latest 1-minute bars (merged into private/data/hist_1m_30d), then freeze on the newest
            complete week if it isn't frozen yet. `live` runs this first unless --no-refresh.
   freeze   fit the 30-minute model + signal thresholds on the most recent full week and save them, hashed
-  live     wait for the next NASDAQ session; at each 30-minute checkpoint fetch today's 1-minute bars, compute
+  live     wait for the next NASDAQ session; at each 30-minute checkpoint fetch today's 1-minute bars (Alpaca IEX,
+           real time), compute
            signals from bars up to that minute only, write them to disk, and score each one 30 minutes later
   replay   run the identical code over a past session from private/data/hist_1m_30d (pipeline rehearsal)
 
@@ -26,6 +27,7 @@ from .rolling import weeks_of, fit, features, FEATS, SKIP
 from .signals import H, STEP, COST_ONE_WAY, predict_rel, checkpoints
 from .forward import keep_awake, next_session
 from .fetch1m import fetch_all
+from . import alpaca
 
 NY = ZoneInfo("America/New_York")
 HIST = "private/data/hist_1m_30d"
@@ -113,19 +115,19 @@ def arrays_from_bars(symbols, bars, open_epoch):
 
 
 def fetch_today(symbols):
-    bars, errors = {}, []
+    """Today's regular-session 1-minute bars from Alpaca's real-time IEX feed. The model's only volume input is a
+    ratio to the stock's own recent volume, so the single-exchange volume scale cancels out."""
+    now = dt.datetime.now(NY)
+    open_epoch = int(dt.datetime.combine(now.date(), dt.time(9, 30), NY).timestamp())
+    try:
+        data = alpaca.get_bars(list(symbols), "1Min", open_epoch, None, feed="iex", pause=0.1)
+    except Exception as e:
+        return {}, [f"download failed: {e}"]
+    bars = {}
     for s in symbols:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{s}?interval=1m&range=1d&includePrePost=false"
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=20) as r:
-                res = json.load(r)["chart"]["result"][0]
-            q = res["indicators"]["quote"][0]
-            bars[s] = (res.get("timestamp") or [], q.get("close") or [], q.get("volume") or [])
-        except Exception as e:
-            errors.append(f"{s}: {e}")
-        time.sleep(0.1)
-    return bars, errors
+        rows = alpaca.regular_session(data.get(s, []))
+        bars[s] = ([r[0] for r in rows], [r[4] for r in rows], [r[5] for r in rows])
+    return bars, []
 
 
 # ---------------------------------------------------------------- run log
@@ -185,7 +187,7 @@ class Run:
                    horizon_min=H, step_min=STEP, cost_one_way_bps=self.f.m["cost_one_way_bps"],
                    frozen=dict(path=self.f.path, sha256=self.f.sha, train=self.f.m["train"], frozen_at=self.f.m["frozen_at"]),
                    checkpoints_logged=len(self.done), signals=self.sigs, scoreboard=board, errors=self.errors[-10:],
-                   data_source="Yahoo Finance chart API (unofficial, delayed; personal research)")
+                   data_source="Alpaca Market Data API v2 (IEX real-time feed)")
         tmp = os.path.join(self.dir, "signals.json.tmp")
         json.dump(doc, open(tmp, "w"))
         os.replace(tmp, os.path.join(self.dir, "signals.json"))
@@ -240,6 +242,10 @@ def replay(date_s, frozen):
 
 
 def live(frozen, poll_offset_s=25):
+    try:
+        alpaca.credentials()
+    except alpaca.AlpacaConfigError as e:
+        raise SystemExit(str(e))
     f = Frozen(frozen)
     keep_awake(True)
     try:

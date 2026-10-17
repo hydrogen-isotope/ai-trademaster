@@ -23,7 +23,7 @@ them yourself, under your own data licences. Everything you create goes in the g
 | You need | How | Where |
 |---|---|---|
 | Synthetic test market (for the engine, dashboard, tests) | `trademaster generate` (seeded, created locally) | `private/data/synth-*` |
-| Real market data for research | your own licensed source, or `python/trademaster_ml/fetch.py` (Yahoo, unofficial, personal use; **you** must comply with its terms) | `private/data/` |
+| Real market data for research | your own licensed source, or `python/trademaster_ml/fetch.py` / `fetch1m.py` via the Alpaca Market Data API (free key; **you** must comply with its terms; see [docs/MARKET-DATA.md](docs/MARKET-DATA.md)) | `private/data/` |
 | Trained models | `python -m trademaster_ml.train_wf` / `research` (CPU), then ONNX export | `private/models/` |
 | Run outputs | produced by every run | `private/reports/` |
 

@@ -7,9 +7,18 @@ It is **read-only**: it never places orders.
 Yahoo has no official public API. Its Terms of Service (section 2(d)) forbid accessing or collecting data from its
 services "using any automated means" without Yahoo's express prior permission. So the dashboard does not use Yahoo.
 
-The older research scripts (`fetch.py`, `fetch1m.py`, `forward.py`, `signals_live.py`) still use Yahoo's chart
-endpoint, and that use has the same problem. Moving them to Alpaca is a pending task (Alpaca's free plan also
-provides years of historical 1-minute bars).
+The research scripts used Yahoo's chart endpoint until 17 Oct 2026 and now use Alpaca too:
+
+| Script | What it downloads | Alpaca feed |
+|---|---|---|
+| `fetch.py` | 1m / 5m / 1h bars for research (1h = session-aligned 09:30, 10:30, …) | `sip`, all exchanges, up to 15 min ago |
+| `fetch1m.py` | 1-minute bars, merged into the growing `private/data/hist_1m_30d` | `sip` |
+| `forward.py live` | the last 7 days of 5-minute bars, every 5 minutes during the session | `iex`, real time |
+| `signals_live.py live` | today's 1-minute bars at each 30-minute checkpoint | `iex`, real time |
+
+Bars are stamped with their start time and filtered to 09:30–16:00 ET, which is the same shape as the Yahoo data
+before. Older files in `private/` that came from Yahoo stay where they are. Offline checks:
+`python python/tests/test_alpaca.py`.
 
 ## Live data: Alpaca (free)
 [Alpaca](https://alpaca.markets) Market Data API v2, free Basic plan, via its official, documented API:

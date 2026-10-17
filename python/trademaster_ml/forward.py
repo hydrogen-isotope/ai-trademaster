@@ -3,7 +3,7 @@ Frozen-model forward test (predictions only; no orders; CPU only).
 
   freeze  copies the chosen artifacts into models/forward/<id>/ with SHA-256 hashes. A frozen set is never overwritten
           or retrained; the logger refuses to run if any hash changes.
-  live    polls Yahoo 5-minute bars during the NASDAQ regular session. After each completed bar it logs every model's
+  live    polls Alpaca 5-minute bars (IEX feed, real time) during the NASDAQ regular session. After each completed bar it logs every model's
           prediction for the next 30 minutes (6 bars) BEFORE the outcome exists, then scores each prediction once its
           outcome bar has completed. Waits for the open, stops after the close. Keeps the PC awake while running.
   replay  runs the identical pipeline over a past session from data/hist2 (pipeline rehearsal, not evidence).
@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import onnxruntime as ort
 
+from . import alpaca
 from .dataset import FEATURES, build_panel
 
 NY = ZoneInfo("America/New_York")
@@ -200,7 +201,7 @@ class Run:
             "bars_logged": len(self.preds), "bars_scored": sum(1 for p in self.preds if p["t"] in self.outs),
             "models": summ, "series": series, "latest": {"t": latest["t"], "label": latest["label"], "rows": rows} if latest else None,
             "errors": self.errors[-10:],
-            "data_source": "Yahoo Finance chart API (unofficial, delayed; personal research)",
+            "data_source": "Alpaca Market Data API v2 (IEX real-time feed)",
         }
         tmp = os.path.join(self.dir, "summary.json.tmp")
         json.dump(doc, open(tmp, "w"), default=float)
@@ -240,20 +241,24 @@ def replay(date_str, frozen_path, hist="private/data/hist2"):
 
 
 def fetch_all(symbols, out_dir):
+    """Last ~7 days of 5-minute bars from Alpaca's real-time IEX feed (one consistent feed for the whole window, so
+    volume-based features compare like with like), written in the chart format build_panel() reads."""
     os.makedirs(out_dir, exist_ok=True)
     shutil.copy(UNIVERSE_SRC, os.path.join(out_dir, "universe.json"))
+    try:
+        data = alpaca.get_bars(list(symbols), "5Min", int(time.time()) - 7 * 86400, None, feed="iex", pause=0.1)
+    except Exception as e:  # keep the last good files
+        return [f"download failed: {e}"]
     errors = []
     for s in symbols:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{s}?interval=5m&range=5d&includePrePost=false"
-        try:
-            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=20) as r:
-                data = r.read()
-            with open(os.path.join(out_dir, f"{s}-5m.json"), "wb") as fh:
-                fh.write(data)
-        except Exception as e:  # keep the last good file for this symbol
-            errors.append(f"{s}: {e}")
-        time.sleep(0.15)
+        rows = alpaca.regular_session(data.get(s, []))
+        if not rows:
+            errors.append(f"{s}: no bars")
+            continue
+        tmp = os.path.join(out_dir, f"{s}-5m.json.tmp")
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(alpaca.chart_json(rows), fh)
+        os.replace(tmp, os.path.join(out_dir, f"{s}-5m.json"))
     return errors
 
 
@@ -279,6 +284,10 @@ def next_session(now_ny):
 
 
 def live(frozen_path, poll_offset_s=25):
+    try:
+        alpaca.credentials()
+    except alpaca.AlpacaConfigError as e:
+        raise SystemExit(str(e))
     f = Frozen(frozen_path)
     keep_awake(True)
     try:

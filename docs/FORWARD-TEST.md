@@ -31,4 +31,4 @@ python -m trademaster_ml.forward live      (or double-click tools\forward-live.c
 ## Reading the results
 - **One day proves nothing.** Rank IC per bar is noisy (±0.1 or more is normal). Judge only after weeks of sessions. The research suggests |IC| ≈ 0.01–0.03 would be the realistic best case.
 - **The net P&L line assumes taker costs.** Per [EXECUTION-RESEARCH.md](EXECUTION-RESEARCH.md), passive execution might lower them, but that isn't calibrated yet.
-- **Data:** Yahoo chart API, unofficial and delayed; personal research only. Missing symbols in a poll are logged in `errors` and masked.
+- **Data:** Alpaca Market Data API, IEX real-time feed. Prices are real time; volumes cover IEX only, but every volume feature is a ratio to the same feed's recent volume. Missing symbols in a poll are logged in `errors` and masked. Needs a free Alpaca key ([MARKET-DATA.md](MARKET-DATA.md)); without one the logger stops with a message. Sessions before 19 Oct 2026 used Yahoo data.

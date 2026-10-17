@@ -11,7 +11,7 @@ This repository holds trading software. Its biggest risks are leaked credentials
 | | Any credential: `.env*`, `*.pem/.key/.pfx/.p12`, `secrets/`, `ibkr*.json`, `config/live*.json`, `config/*.local.json` |
 
 **Why data stays out:**
-- Yahoo's terms allow personal, non-commercial use without redistribution.
+- Market data comes from Alpaca's API under its subscriber terms (personal use, no redistribution). Yahoo's terms forbid automated collection, so the project no longer uses it; data downloaded from Yahoo earlier stays private.
 - Exchange data (Nasdaq, SGX) and broker data (IBKR) are licensed per subscriber, and redistribution or public display needs separate licences.
 - Models trained on that data are kept private too.
 

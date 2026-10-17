@@ -191,7 +191,7 @@ def main():
         "symbols": P.symbols, "is_etf": P.is_etf.tolist(), "interval": "5m", "horizon_bars": a.horizon,
         "output": ["mu_bps", "logvar_bps2"], "inputs": {"x": ["batch", len(P.symbols), len(FEATURES)], "mask": ["batch", len(P.symbols)]},
         "sessions": {"train": sess_dates[:40], "val": sess_dates[40:50], "test": sess_dates[50:]},
-        "data_source": "Yahoo Finance chart API (unofficial, personal research)", "results_test": res,
+        "data_source": json.load(open(os.path.join(a.hist, "universe.json"), encoding="utf-8")).get("source", "Yahoo Finance chart API (older download)"), "results_test": res,
     }
     with open(os.path.join(a.out, "model.spec.json"), "w", encoding="utf-8") as f:
         json.dump(spec, f, indent=1, default=float)
