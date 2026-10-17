@@ -27,6 +27,14 @@ table{width:100%;border-collapse:collapse}th,td{padding:5px 10px;text-align:righ
 .sig.s{color:var(--down);background:#2c1217;border:1px solid #5a1f29}.sig.ss{color:#0b0e11;background:var(--down)}
 .board{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;padding:10px 12px}
 .scroll{max-height:420px;overflow:auto}
+
+/* dark, thin scrollbars and dark native controls everywhere */
+:root{color-scheme:dark}
+*{scrollbar-width:thin;scrollbar-color:#2e333c transparent}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{background:#2e333c;border-radius:4px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:#454b56;background-clip:padding-box}
 </style>
 </head>
 <body>

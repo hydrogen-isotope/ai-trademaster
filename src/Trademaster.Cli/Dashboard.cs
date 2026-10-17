@@ -66,6 +66,7 @@ public static class Dashboard
         string uiDir = Path.Combine(AppContext.BaseDirectory, "ui");
 
         app.MapGet("/", () => Results.File(Path.Combine(uiDir, "market.html"), "text/html; charset=utf-8"));
+        app.MapGet("/favicon.svg", () => Results.File(Path.Combine(uiDir, "favicon.svg"), "image/svg+xml"));
         app.MapGet("/sim", () => Results.File(Path.Combine(uiDir, "index.html"), "text/html; charset=utf-8"));
 
         // Real market data (read-only quotes and charts): Alpaca when a key is configured, else the recorded demo.
@@ -93,6 +94,40 @@ public static class Dashboard
             if (!OkSym(symbol)) return Results.BadRequest();
             try { return Results.Json(await mdCache.Get($"t:{symbol}", TimeSpan.FromSeconds(2), async () => await md.Trades(symbol, ct)), JsonOpts); }
             catch (Exception ex) when (ex is not OperationCanceledException) { return Results.Problem(ex.Message, statusCode: 502); }
+        });
+        // 5-trading-day forecasts (research): files written by python -m trademaster_ml.daily_forecast
+        app.MapGet("/api/forecast", (string symbol) =>
+        {
+            symbol = symbol.ToUpperInvariant();
+            if (!OkSym(symbol)) return Results.BadRequest();
+            var fcDir = Path.Combine("private", "data", "forecasts");
+            var repDir = Path.Combine("private", "reports", "daily_forecast");
+            static System.Text.Json.Nodes.JsonNode? Read(string path)
+            {
+                if (!File.Exists(path)) return null;
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                return System.Text.Json.Nodes.JsonNode.Parse(fs);
+            }
+            static System.Text.Json.Nodes.JsonNode? FindSym(System.Text.Json.Nodes.JsonNode? doc, string sym) =>
+                doc?["forecasts"]?.AsArray().FirstOrDefault(f => (string?)f?["symbol"] == sym)?.DeepClone();
+            var latest = Directory.Exists(fcDir)
+                ? Directory.GetFiles(fcDir, "????-??-??.json").OrderByDescending(f => f).Select(Read).FirstOrDefault(d => FindSym(d, symbol) is not null)
+                : null;
+            var fc = FindSym(latest, symbol);
+            if (fc is null) return Results.NotFound();
+            var holdout = Directory.Exists(repDir)
+                ? Directory.GetFiles(repDir, "holdout_*.json").OrderByDescending(f => f).Select(Read).Select(d => FindSym(d, symbol)).FirstOrDefault(x => x is not null)
+                : null;
+            var validation = Read(Path.Combine(repDir, "validation_summary.json"))?["symbols"]?[symbol]?.DeepClone();
+            var daily = Read(Path.Combine("private", "data", "daily", symbol + ".json"));
+            var dates = daily?["dates"]?.AsArray().Select(x => (string?)x).ToList() ?? [];
+            var close = daily?["close"]?.AsArray().Select(x => (double?)x).ToList() ?? [];
+            int from = Math.Max(0, dates.Count - 90);
+            return Results.Json(new
+            {
+                symbol, createdAt = (string?)latest?["created_at"], forecast = fc, holdout, validation,
+                history = dates.Skip(from).Zip(close.Skip(from), (d, c) => new { date = d, close = c }),
+            }, JsonOpts);
         });
         app.MapGet("/api/info", () => Results.Json(new
         {

@@ -25,6 +25,17 @@ public static class AppWindow
         return roots.Select(r => Path.Combine(r, "Microsoft", "Edge", "Application", "msedge.exe")).FirstOrDefault(File.Exists);
     }
 
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] private static extern IntPtr GetConsoleWindow();
+    [System.Runtime.InteropServices.DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    /// <summary>Hides this program's console window, so the app looks like a normal desktop application.</summary>
+    public static void HideConsole()
+    {
+        if (!OperatingSystem.IsWindows()) return;
+        var h = GetConsoleWindow();
+        if (h != IntPtr.Zero) ShowWindow(h, 0);
+    }
+
     public static bool PortInUse(int port)
     {
         try

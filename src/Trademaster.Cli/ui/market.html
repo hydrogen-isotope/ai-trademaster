@@ -3,18 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AI Trademaster Markets</title>
+<title>AI Trademaster</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <style>
 :root{--bg:#0d0e11;--rail:#121317;--panel:#15161a;--panel2:#1b1d22;--hover:#20232a;--sel:#262a33;--line:#24272e;--text:#e9eaee;--muted:#8a8f99;--dim:#5f6470;
   --up:#16c784;--down:#f6465d;--accent:#ff6b00;--warn:#f0b90b;--mono:"Roboto Mono",ui-monospace,SFMono-Regular,Consolas,monospace}
 *{box-sizing:border-box}html,body{margin:0;height:100%;background:var(--bg);color:var(--text);font:13px/1.35 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;overflow:hidden}
 .num{font-family:var(--mono);font-variant-numeric:tabular-nums}.up{color:var(--up)}.down{color:var(--down)}.muted{color:var(--muted)}.dim{color:var(--dim)}
 button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
-#app{display:grid;grid-template-columns:60px 320px 1fr 340px;grid-template-rows:42px 1fr 28px;height:100vh}
+#app{display:grid;grid-template-columns:60px clamp(250px,22vw,320px) minmax(0,1fr) clamp(280px,23vw,340px);grid-template-rows:42px 1fr 28px;height:100vh}
 /* top bar */
-#top{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:0 12px;background:var(--rail);border-bottom:1px solid var(--line)}
+#top{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:0 12px;min-width:0;white-space:nowrap;background:var(--rail);border-bottom:1px solid var(--line)}
 .brand{display:flex;align-items:center;gap:8px;font-weight:700;font-size:14px;letter-spacing:.2px}.brand i{width:20px;height:20px;border-radius:5px;background:linear-gradient(135deg,var(--accent),#ffb36b);display:inline-block}
-#search{flex:0 1 320px;background:var(--panel2);border:1px solid var(--line);border-radius:16px;padding:5px 12px;color:var(--text);outline:none}
+#search{flex:0 1 320px;min-width:120px;background:var(--panel2);border:1px solid var(--line);border-radius:16px;padding:5px 12px;color:var(--text);outline:none}
 #search:focus{border-color:var(--accent)}
 .chip{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;border:1px solid var(--line);background:var(--panel2);white-space:nowrap}
 .chip.live{color:var(--up);border-color:#164d36;background:#0e2a1f}.chip.demo{color:var(--warn);border-color:#5a4a12;background:#2a2410}
@@ -28,41 +29,50 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 #wl{grid-row:2/3;background:var(--panel);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
 .tabs{display:flex;gap:16px;padding:0 12px;border-bottom:1px solid var(--line);height:38px;align-items:flex-end}
 .tabs button{padding:0 0 8px;color:var(--muted);font-weight:600;border-bottom:2px solid transparent}.tabs button.on{color:var(--text);border-color:var(--accent)}
-.wlh{display:grid;grid-template-columns:1fr 84px 84px;padding:6px 12px;color:var(--dim);font-size:11px}
+.wlh{display:grid;grid-template-columns:minmax(0,1fr) 76px 74px;padding:6px 12px;color:var(--dim);font-size:11px}
 .wlh div:not(:first-child){text-align:right}
 #rows{overflow:auto;flex:1}
-.row{display:grid;grid-template-columns:1fr 84px 84px;padding:7px 12px;cursor:pointer;position:relative;border-left:2px solid transparent}
+.row{display:grid;grid-template-columns:minmax(0,1fr) 76px 74px;column-gap:4px;padding:7px 12px;cursor:pointer;position:relative;border-left:2px solid transparent}
 .row:hover{background:var(--hover)}.row.sel{background:var(--sel);border-left-color:var(--accent)}
-.row .s{font-weight:700}.row .n{color:var(--dim);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:130px}
-.row .p{text-align:right}.row .c{text-align:right;font-size:11px}.row .pc{text-align:right;align-self:center}
-.pill{display:inline-block;min-width:70px;text-align:center;padding:3px 4px;border-radius:4px;font-weight:700;font-size:12px;color:#fff}
+.row .s{font-weight:700}.row .n{color:var(--dim);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.row>div{min-width:0}
+.row .p{text-align:right;white-space:nowrap}.row .c{text-align:right;font-size:11px;white-space:nowrap}.row .pc{text-align:right;align-self:center}
+.pill{display:inline-block;width:70px;text-align:center;padding:3px 2px;border-radius:4px;font-weight:700;font-size:11.5px;color:#fff;white-space:nowrap}
 .pill.up{background:var(--up);color:#06140e}.pill.down{background:var(--down)}.pill.flat{background:#3a3d45}
 .row .x{position:absolute;left:2px;top:2px;color:var(--dim);display:none;font-size:12px}.row:hover .x{display:block}.row .x:hover{color:var(--down)}
 .sigdot{display:inline-block;font-size:9px;font-weight:800;padding:0 4px;border-radius:3px;margin-left:5px;vertical-align:1px}
 .sigdot.b{background:#0f2a20;color:var(--up)}.sigdot.s{background:#2c1217;color:var(--down)}
 /* center */
-#center{grid-row:2/3;display:flex;flex-direction:column;min-width:0;min-height:0}
-#qhead{display:flex;align-items:baseline;gap:12px;padding:10px 14px 6px;border-bottom:1px solid var(--line)}
+#center{grid-row:2/3;display:flex;flex-direction:column;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;scroll-behavior:smooth;scrollbar-gutter:stable}
+#qhead{display:flex;align-items:baseline;gap:12px;padding:10px 14px 6px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;min-width:0}#qname{overflow:hidden;text-overflow:ellipsis;min-width:0}
 #qsym{font-size:16px;font-weight:700}#qname{color:var(--muted)}#qpx{font-size:22px;font-weight:700}#qchg{font-weight:600}
 .ctabs{display:flex;gap:18px;padding:0 14px;border-bottom:1px solid var(--line);height:36px;align-items:flex-end}
 .ctabs button{padding:0 0 8px;color:var(--muted);font-weight:600;border-bottom:2px solid transparent}.ctabs button.on{color:var(--text);border-color:var(--accent)}
-#toolbar{display:flex;gap:4px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);flex-wrap:wrap}
-#toolbar button{padding:3px 9px;border-radius:4px;color:var(--muted);font-size:12px}#toolbar button:hover{background:var(--hover);color:var(--text)}
+#toolbar{display:flex;gap:2px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);flex-wrap:nowrap;overflow-x:auto;white-space:nowrap;flex:none}
+#toolbar button{flex:none;padding:3px 8px;border-radius:4px;color:var(--muted);font-size:12px}#toolbar button:hover{background:var(--hover);color:var(--text)}
 #toolbar button.on{background:var(--sel);color:var(--text)}
 #toolbar .sep{width:1px;height:16px;background:var(--line);margin:0 6px}
 #legend{padding:4px 14px;font-size:11px;color:var(--muted);height:22px;white-space:nowrap;overflow:hidden}
-#chartwrap{flex:1;position:relative;min-height:0}#chart{position:absolute;inset:0}
+#chartwrap{flex:none;height:calc(100vh - 262px);min-height:300px;position:relative}#chart{position:absolute;inset:0}
+#fchint{flex:none;text-align:center;padding:6px;color:var(--muted);font-size:12px;cursor:pointer;border-top:1px solid var(--line);background:var(--panel)}
+#fchint:hover{color:var(--accent)}
+#fcsec{flex:none;padding:16px 16px 28px;border-top:1px solid var(--line)}
+#fcsec h2{font-size:16px;margin:0 0 4px;display:flex;align-items:center;gap:10px}
+.fcgrid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;margin-top:12px}.fcgrid .wide{grid-column:1/-1}
+.card2{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px;min-width:0;overflow-x:auto}
+.card2 h3{margin:0 0 8px;font-size:13px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.4px}
+#fcsvg{width:100%;height:auto;display:block}
+.ok{color:var(--up)}.bad{color:var(--down)}
 #aiview{flex:1;overflow:auto;padding:12px 14px;display:none}
 /* right */
 #right{grid-row:2/3;background:var(--panel);border-left:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
 .rh{padding:10px 14px 8px;border-bottom:1px solid var(--line)}
 .rh .t{display:flex;gap:8px;align-items:baseline}.rh .t b{font-size:15px}
-.rh .big{font-size:28px;font-weight:700;margin-top:4px}.rh .chg{font-weight:600;margin-left:8px;font-size:14px}
-.rh .ts{color:var(--dim);font-size:11px;margin-top:2px}
-.stats{display:grid;grid-template-columns:1fr 1fr;gap:5px 16px;padding:10px 14px;border-bottom:1px solid var(--line)}
-.stats div{display:flex;justify-content:space-between}.stats span:first-child{color:var(--muted)}
+.rh .big{font-size:26px;font-weight:700;margin-top:4px}.rh{white-space:nowrap;overflow:hidden}.rh .chg{font-weight:600;margin-left:8px;font-size:14px}
+.rh .ts{color:var(--dim);font-size:11px;margin-top:2px;overflow:hidden;text-overflow:ellipsis}
+.stats{display:grid;grid-template-columns:1fr 1fr;gap:5px 14px;padding:10px 14px;border-bottom:1px solid var(--line);font-size:12px}
+.stats div{display:flex;justify-content:space-between;gap:6px;min-width:0;white-space:nowrap}.stats span:last-child{overflow:hidden;text-overflow:ellipsis}.stats span:first-child{color:var(--muted)}
 .ba{padding:10px 14px;border-bottom:1px solid var(--line)}
-.ba .l{display:flex;justify-content:space-between;font-size:12px}
+.ba .l{display:flex;justify-content:space-between;gap:8px;font-size:12px;white-space:nowrap}
 .bar{height:6px;border-radius:3px;background:var(--down);overflow:hidden;margin:6px 0}.bar i{display:block;height:100%;background:var(--up)}
 .rtabs{display:flex;gap:16px;padding:0 14px;border-bottom:1px solid var(--line);height:34px;align-items:flex-end}
 .rtabs button{padding:0 0 7px;color:var(--muted);font-weight:600;border-bottom:2px solid transparent}.rtabs button.on{color:var(--text);border-color:var(--accent)}
@@ -70,7 +80,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .tick{display:grid;grid-template-columns:1fr 1fr 1fr;padding:2px 14px;font-size:12px}.tick div:not(:first-child){text-align:right}
 #aiside{overflow:auto;flex:1;padding:10px 14px;display:none}
 /* status bar */
-#status{grid-column:1/-1;display:flex;align-items:center;gap:16px;padding:0 12px;background:var(--rail);border-top:1px solid var(--line);font-size:11px;white-space:nowrap;overflow:hidden}
+#status{grid-column:1/-1;display:flex;align-items:center;gap:14px;padding:0 12px;min-width:0;background:var(--rail);border-top:1px solid var(--line);font-size:11px;white-space:nowrap;overflow:hidden}
 #status .ix b{color:var(--muted);font-weight:600;margin-right:4px}#status .ix{margin-right:16px}
 .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px;background:var(--dim)}.dot.open{background:var(--up)}.dot.pre{background:var(--warn)}
 .sig{display:inline-block;min-width:88px;text-align:center;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:700}
@@ -79,7 +89,16 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 table{width:100%;border-collapse:collapse}th,td{padding:5px 8px;text-align:right;white-space:nowrap;font-size:12px}th{color:var(--dim);font-weight:500;border-bottom:1px solid var(--line)}
 td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #1c1e23}
 .note{color:var(--muted);font-size:12px;line-height:1.5}
-.banner{margin:8px 12px;padding:8px 10px;border:1px solid #5a4a12;background:#2a2410;color:#f3d98a;border-radius:6px;font-size:12px;display:none}
+.banner{margin:8px 10px;padding:6px 9px;line-height:1.35;border:1px solid #5a4a12;background:#2a2410;color:#f3d98a;border-radius:6px;font-size:12px;display:none}
+
+/* dark, thin scrollbars and dark native controls everywhere */
+:root{color-scheme:dark}
+*{scrollbar-width:thin;scrollbar-color:#2e333c transparent}
+::-webkit-scrollbar{width:8px;height:8px}
+::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{background:#2e333c;border-radius:4px;border:2px solid transparent;background-clip:padding-box}
+::-webkit-scrollbar-thumb:hover{background:#454b56;background-clip:padding-box}
+@media (max-width:1150px){#app{grid-template-columns:56px 250px minmax(0,1fr)}#right{display:none}}
 </style>
 </head>
 <body>
@@ -115,10 +134,23 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
       <span class="sep"></span>
       <button data-type="candle" class="on">Candles</button><button data-type="line">Line</button>
       <span class="sep"></span>
-      <button data-ind="ma5">MA5</button><button data-ind="ma20" class="on">MA20</button><button data-ind="ma60">MA60</button><button data-ind="vwap" class="on">VWAP</button><button data-ind="sig" class="on">AI markers</button>
+      <button data-ind="ma5">MA5</button><button data-ind="ma20" class="on">MA20</button><button data-ind="ma60">MA60</button><button data-ind="vwap" class="on">VWAP</button><button data-ind="sig" class="on" title="Show the AI buy/sell markers">AI</button>
     </div>
     <div id="legend" class="num"></div>
     <div id="chartwrap"><div id="chart"></div></div>
+    <div id="fchint" onclick="document.getElementById('fcsec').scrollIntoView()">&#9660; Scroll down for the 5-trading-day forecast</div>
+    <section id="fcsec">
+      <h2><span id="fctitle">5-day forecast</span><span class="chip" id="fcchip"></span></h2>
+      <div class="note" id="fcnote"></div>
+      <div class="fcgrid" id="fcbody">
+        <div class="card2 wide"><h3>Next 5 trading days &middot; closing price</h3><svg id="fcsvg" viewBox="0 0 1000 380" preserveAspectRatio="xMidYMid meet"></svg>
+          <div class="note" style="margin-top:6px">White = past closes &middot; orange dashed = middle forecast &middot; dark band = 80% range &middot; light band = 95% range</div></div>
+        <div class="card2 wide"><h3>Forecast table</h3><table style="min-width:0"><thead><tr><th>Date</th><th>Middle</th><th>80% range</th><th>95% range</th></tr></thead><tbody id="fctable"></tbody></table>
+</div>
+        <div class="card2 wide"><h3>How well it has done</h3><div id="fcval" class="note"></div></div>
+      </div>
+      <div class="card2" id="fcholdcard" style="margin-top:14px"><h3>Last week's test (forecast made before the week, then compared)</h3><div id="fchold"></div></div>
+    </section>
     <div id="aiview"></div>
   </section>
 
@@ -137,9 +169,9 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
 
   <footer id="status">
     <span><span class="dot" id="mdot"></span><span id="mstate">—</span></span>
-    <span id="ixbar"></span>
+    <span id="ixbar" style="flex:none"></span>
     <div class="spacer"></div>
-    <span class="dim" id="note"></span>
+    <span class="dim" id="note" style="min-width:0;overflow:hidden;text-overflow:ellipsis"></span>
   </footer>
 </div>
 
@@ -329,8 +361,69 @@ document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
 document.querySelectorAll('[data-c]').forEach(b => b.onclick = () => {
   document.querySelectorAll('[data-c]').forEach(x => x.classList.toggle('on', x === b));
   const chartOn = b.dataset.c === 'chart';
-  ['toolbar', 'legend', 'chartwrap'].forEach(id => $(id).style.display = chartOn ? '' : 'none'); $('aiview').style.display = chartOn ? 'none' : 'block';
+  ['toolbar', 'legend', 'chartwrap', 'fchint', 'fcsec'].forEach(id => $(id).style.display = chartOn ? '' : 'none'); $('aiview').style.display = chartOn ? 'none' : 'block';
 });
+
+// ---------------------------------------------------------------- 5-day forecast
+function fanSvg(hist, days) {
+  const W = 1000, H = 380, L = 70, R = 90, T = 18, B = 36, n = hist.length, m = days.length;
+  const split = L + 0.6 * (W - L - R);                         // past closes use 60% of the width, the 5 forecast days 40%
+  const xs = i => i < n ? L + i / (n - 1) * (split - L) : split + (i - n + 1) / m * (W - R - split);
+  const vals = hist.map(h => h.close).concat(days.flatMap(d => [d.p2_5, d.p97_5]));
+  let lo = Math.min(...vals), hi = Math.max(...vals); const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
+  const ys = v => T + (hi - v) / (hi - lo) * (H - T - B);
+  let g = '';
+  for (let k = 0; k <= 4; k++) { const v = lo + (hi - lo) * k / 4; g += `<line x1="${L}" x2="${W - R}" y1="${ys(v)}" y2="${ys(v)}" stroke="#20242c"/><text x="${L - 8}" y="${ys(v) + 5}" fill="#8a8f99" font-size="14" text-anchor="end">${fmt(v)}</text>`; }
+  const last = hist[n - 1].close, x0 = xs(n - 1);
+  const band = (a, b, op) => {
+    const top = [[x0, ys(last)], ...days.map((d, k) => [xs(n + k), ys(d[a])])], bot = [[x0, ys(last)], ...days.map((d, k) => [xs(n + k), ys(d[b])])];
+    return `<polygon points="${top.concat(bot.reverse()).map(p => p.join(',')).join(' ')}" fill="#ff6b00" fill-opacity="${op}"/>`;
+  };
+  g += band('p97_5', 'p2_5', 0.14) + band('p90', 'p10', 0.30);
+  g += `<polyline points="${hist.map((h, i) => xs(i) + ',' + ys(h.close)).join(' ')}" fill="none" stroke="#e9eaee" stroke-width="1.8"/>`;
+  g += `<polyline points="${[[x0, ys(last)], ...days.map((d, k) => [xs(n + k), ys(d.p50)])].map(p => p.join(',')).join(' ')}" fill="none" stroke="#ff9f1c" stroke-width="2.2" stroke-dasharray="6 4"/>`;
+  days.forEach((d, k) => g += `<circle cx="${xs(n + k)}" cy="${ys(d.p50)}" r="4.5" fill="#ff9f1c"/><text x="${xs(n + k)}" y="${H - 12}" fill="#b6bcc6" font-size="14" text-anchor="middle">${d.date.slice(5)}</text>`);
+  const lastDay = days[m - 1];
+  [['p97_5', '95%'], ['p90', '80%'], ['p50', 'middle'], ['p10', '80%'], ['p2_5', '95%']].forEach(([k, lab]) =>
+    g += `<text x="${W - R + 8}" y="${ys(lastDay[k]) + 5}" fill="${k === 'p50' ? '#ff9f1c' : '#b6bcc6'}" font-size="13">${fmt(lastDay[k])}</text>`);
+  g += `<line x1="${x0}" x2="${x0}" y1="${T}" y2="${H - B}" stroke="#3a4050" stroke-dasharray="3 3"/>`;
+  g += `<text x="${xs(0)}" y="${H - 12}" fill="#8a8f99" font-size="14">${hist[0].date.slice(5)}</text><text x="${x0 - 8}" y="${T + 14}" fill="#b6bcc6" font-size="14" text-anchor="end">last close ${hist[n - 1].date.slice(5)}: ${fmt(last)}</text>`;
+  return g;
+}
+async function loadForecast() {
+  const r = await fetch('/api/forecast?symbol=' + sel);
+  $('fctitle').textContent = `5-day forecast · ${sel}`;
+  if (!r.ok) {
+    $('fcchip').textContent = 'NO FORECAST'; $('fcchip').className = 'chip';
+    $('fcnote').innerHTML = `No forecast for ${sel} yet. Forecasts currently cover MU, NVDA, AMD and AAPL; gold and silver follow once a Databento key is added. Run <span class="num">tools\\daily-forecast.cmd</span> after the US close to refresh.`;
+    $('fcbody').style.display = 'none'; $('fcholdcard').style.display = 'none'; return;
+  }
+  const f = await r.json(), fc = f.forecast, v = f.validation, ok = fc.validated;
+  $('fcbody').style.display = ''; $('fcholdcard').style.display = '';
+  $('fcchip').textContent = ok ? 'VALIDATED' : 'NOT VALIDATED'; $('fcchip').className = 'chip ' + (ok ? 'live' : 'demo');
+  $('fcnote').innerHTML = `Made at the close of ${fc.asof} (last close ${fmt(fc.last_close)}). ${fc.mean_model === 'random walk' ? 'No trend is assumed, so the middle line stays near the last close; the ranges carry the information.' : ''}
+    ${ok ? '' : '<span class="bad">This stock failed the 250-day check (its ranges were too narrow), so treat its ranges as too optimistic.</span>'} Research only, not advice.`;
+  $('fcsvg').innerHTML = fanSvg(f.history.slice(-30), fc.days);
+  $('fctable').innerHTML = fc.days.map(d => `<tr><td>${d.date}</td><td class="num">${fmt(d.p50)} <span class="dim">(${sgn((d.p50 / fc.last_close - 1) * 100)}%)</span></td>
+    <td class="num">${fmt(d.p10)} – ${fmt(d.p90)}</td><td class="num dim">${fmt(d.p2_5)} – ${fmt(d.p97_5)}</td></tr>`).join('');
+  if (v) {
+    const c80 = v.h.map(x => x.coverage.in80.toFixed(2)).join(' · '), c95 = v.h.map(x => x.coverage.in95.toFixed(2)).join(' · ');
+    const cell = (x, t, tol) => `<td class="num ${Math.abs(x - t) <= tol ? 'ok' : 'bad'}">${(x * 100).toFixed(0)}%</td>`;
+    $('fcval').innerHTML = `<div style="margin-bottom:8px">Checked on each of the last ${v.origins} trading days: <b class="${v.passed ? 'ok' : 'bad'}">${v.passed ? 'PASS' : 'FAIL'}</b>.
+      How often the real close landed inside the forecast range:</div>
+      <table><thead><tr><th>Range</th>${v.h.map(x => `<th>Day ${x.h}</th>`).join('')}<th>Target</th></tr></thead><tbody>
+      <tr><td>80% range</td>${v.h.map(x => cell(x.coverage.in80, 0.80, 0.06)).join('')}<td class="num dim">80%</td></tr>
+      <tr><td>95% range</td>${v.h.map(x => cell(x.coverage.in95, 0.95, 0.04)).join('')}<td class="num dim">95%</td></tr></tbody></table>
+      <div style="margin-top:8px">Typical miss of the middle line after 5 days: <span class="num">${(v.h[4].mape_model * 100).toFixed(1)}%</span> (assuming no change: ${(v.h[4].mape_rw * 100).toFixed(1)}%).</div>`;
+  } else $('fcval').textContent = 'Not validated yet.';
+  const h = f.holdout;
+  if (h) {
+    const inside = h.days.filter(d => d.in80).length;
+    $('fchold').innerHTML = `<div class="note" style="margin-bottom:6px">Fitted only on closes up to ${h.asof} (${fmt(h.last_close)}), then compared with what happened: <b class="${inside >= 4 ? 'ok' : 'bad'}">${inside}/5 closes inside the 80% range</b>.</div>
+      <table><thead><tr><th>Date</th><th>Forecast middle</th><th>80% range</th><th>Actual close</th><th>Result</th></tr></thead><tbody>${h.days.map(d => `<tr><td>${d.date}</td><td class="num">${fmt(d.p50)}</td>
+      <td class="num">${fmt(d.p10)} – ${fmt(d.p90)}</td><td class="num">${fmt(d.actual)}</td><td>${d.in80 ? '<span class="ok">✓ inside</span>' : '<span class="bad">✗ outside</span>'}</td></tr>`).join('')}</tbody></table>`;
+  } else $('fchold').innerHTML = '<span class="note">No hold-out test for this stock yet.</span>';
+}
 
 // ---------------------------------------------------------------- toolbar
 function syncToolbar() {
@@ -346,7 +439,7 @@ document.querySelectorAll('[data-ind]').forEach(b => b.onclick = () => { ind[b.d
 async function select(s) {
   sel = s; store.set('tm.sel', s); renderRows(); renderQuote();
   const d = await fetch(`/api/md/bars?symbol=${s}&tf=1D`); window._daily = d.ok ? await d.json() : [];
-  await Promise.all([loadBars(true), loadTicks()]); renderQuote();
+  await Promise.all([loadBars(true), loadTicks(), loadForecast()]); renderQuote();
 }
 async function pollSnaps() {
   const syms = [...new Set([...wl, sel, ...INDEX.map(x => x[0]), ...signals.map(s => s.symbol)])];
@@ -372,7 +465,7 @@ function tickClock() {
   status = await (await fetch('/api/md/status')).json();
   $('src').textContent = status.live ? 'LIVE · ' + status.provider.toUpperCase() : 'DEMO · RECORDED DATA';
   $('src').className = 'chip ' + (status.live ? 'live' : 'demo');
-  if (!status.live) { $('srcbanner').style.display = 'block'; $('srcbanner').innerHTML = 'Demo: replaying recorded 1-minute data. For live quotes add a free Alpaca market-data key (see docs/MARKET-DATA.md).'; }
+  if (!status.live) { $('srcbanner').style.display = 'block'; $('srcbanner').innerHTML = 'Demo mode: recorded data replayed. Add a free Alpaca key for live quotes (docs/MARKET-DATA.md).'; }
   if (status.universe && !status.universe.includes(sel)) sel = 'MU';
   syncToolbar(); tickClock(); setInterval(tickClock, 1000);
   await loadSignals(); await pollSnaps(); await select(sel);
@@ -380,6 +473,8 @@ function tickClock() {
   setInterval(loadTicks, 3000);
   setInterval(() => loadBars(false), 15000);
   setInterval(loadSignals, 30000);
+  setInterval(loadForecast, 300000);
+  if (location.hash === '#forecast') setTimeout(() => $('fcsec').scrollIntoView({ behavior: 'instant' }), 300);
 })();
 </script>
 </body>

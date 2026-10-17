@@ -187,6 +187,7 @@ static int Serve(Dictionary<string, string> o)
 static int App(Dictionary<string, string> o)
 {
     int port = Int(o, "port", 5080);
+    if (o.ContainsKey("hide-console")) Trademaster.Cli.AppWindow.HideConsole();
     string page = o.GetValueOrDefault("page", "market") switch { "market" => "/", "forward" => "/forward", "terminal" or "sim" => "/sim", var p => "/" + p.TrimStart('/') };
     if (Trademaster.Cli.AppWindow.PortInUse(port))
     {
