@@ -52,3 +52,47 @@ expanding window; a training row is used only if its outcome is known by the ori
 
   These results are reported whatever the outcome. If v4 was not adopted, v3 stays live.
 - **Hold-out 12–16 Oct:** reported for information only.
+
+---
+
+## Amendment A (2026-10-18, still before any v4 result): trend, ETF pressure, macro, nonlinear model
+The user asked for three layers. All are added before any v4 number is computed.
+
+**Trend and acceleration.** For each stock, in 20-day volatility units:
+- slope over 3, 5 and 10 days, and the change between the last 3 days and the 3 before (steepening vs flattening);
+- the curve (5-day slope minus 10-day slope);
+- each of these split into its down part and its up part, so falls and rises can behave differently.
+
+**ETF and forced-selling pressure (from Alpaca daily bars).**
+- **The stock relative to its sector ETF** (SMH for semis, QQQ otherwise), over 1, 5 and 20 days.
+- **Leveraged-ETF rebalancing pressure:**
+  - funds: SOXL/SOXS for semis; TQQQ/SQQQ for everything else; MUU for MU and NVDL for NVDA where Alpaca has them;
+  - pressure = leverage × (leverage − 1) × the day's return of the underlying, times the fund's dollar volume
+    relative to its 60-day average;
+  - summed over 1 and 5 days.
+- **Breadth stress:** the share of the 90 stocks closing at a 20-day low, and the share with volume ≥ 2× normal on a
+  down day (proxies for forced or margin selling; true margin data is not public).
+
+**The bigger picture.**
+- **Treasury yields** (FRED DGS2 and DGS10, US Treasury, public domain): the level, the 5- and 20-day change, and the
+  2s10s curve.
+- **Bonds and fear:**
+  - TLT 5- and 20-day returns;
+  - VIXY (VIX-futures ETF) 5-day return, as a fear proxy (the VIX index itself is not used, for licensing reasons);
+  - SPY 20-day realised volatility and SPY drawdown from its 250-day high.
+- **News** (FinBERT, as above), plus market-wide daily theme counts and theme sentiment. Themes are matched with fixed
+  keyword lists written here:
+  - AI: "AI bubble", "AI spending", "AI capex", "AI fear", "AI stocks";
+  - rates: "rate hike", "Fed", "Treasury yield", "bond yield", "inflation";
+  - deleveraging: "margin call", "deleverag", "liquidation", "forced selling", "leveraged ETF";
+  - export: "export control", "chip ban", "tariff".
+
+**Stress regime.** A day is "stress" if SPY is ≥ 8% below its 250-day high or SPY's 20-day realised volatility is in
+its top 20% (measured on data up to that day). Results are reported separately for stress and calm days.
+
+**Model.** The pooled ridge is replaced by a small neural network: 2 hidden layers of 32 units, weight decay, 5 seeds
+averaged, early-stopped on the last 20% of each training window. Everything else is unchanged: same targets,
+retraining every 21 days on an expanding window, no-foresight rules, v3 ranges around the predicted mean, and the same
+adoption and final-test rules as above. The network size is fixed here and will not be tuned on the test year.
+
+**Hardware.** CPU. The GPU is not needed for this size.
