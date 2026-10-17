@@ -14,6 +14,10 @@ public struct Prediction
     public float Sigma;
     /// <summary>Estimated relationship used (beta to reference ETF); provenance "estimated".</summary>
     public float Beta;
+    /// <summary>Model-inferred strongest relationship: the instrument this prediction attended to most (provenance "inferred").</summary>
+    public bool HasPeer;
+    public int Peer;
+    public float PeerWeight;
 }
 
 /// <summary>Stage 5 contract. Every model — rule baseline, ONNX network — implements this.</summary>

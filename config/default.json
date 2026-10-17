@@ -13,7 +13,7 @@
     "output_dir": "private/reports",
     "progress_every_cycles": 60
   },
-  "ingest": { "reorder_window_ms": 50 },
+  "ingest": { "reorder_window_ms": 50, "dedup": "sequence", "content_window_ms": 2000 },
   "quality": {
     "jump_sigma": 10.0,
     "outlier_trade_spreads": 3.0,
@@ -21,7 +21,7 @@
     "max_age_ms": { "high": 5000, "medium": 15000, "low": 60000 }
   },
   "features": { "window": 60 },
-  "model": { "name": "b0_factor_residual", "lookback": 30, "kappa": 0.5, "horizon_cycles": 10, "beta_halflife_cycles": 300 },
+  "model": { "name": "b0_factor_residual", "path": "", "lookback": 30, "kappa": 0.5, "horizon_cycles": 10, "beta_halflife_cycles": 300 },
   "decision": {
     "entry_score": 1.0,
     "exit_score": 0.0,
@@ -35,7 +35,8 @@
     "max_gross_notional": 500000,
     "max_daily_loss": 5000,
     "max_orders_per_cycle": 20,
-    "price_collar_pct": 2.0
+    "price_collar_pct": 2.0,
+    "kill_switch_action": "hold"
   },
   "execution": {
     "adapter": "sim",

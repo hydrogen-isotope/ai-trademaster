@@ -30,6 +30,7 @@ class Block(nn.Module):
         s = q @ k.transpose(-1, -2) / math.sqrt(self.dk)                 # [B, H, N, N]
         s = s + (1.0 - mask)[:, None, None, :] * -1e9                    # ignore invalid instruments as keys
         a = torch.softmax(s, dim=-1)
+        self.last_attn = a.mean(1)                                       # [B, N, N] averaged over heads
         x = x + self.drop(self.o((a @ v).transpose(1, 2).reshape(B, N, D)))
         return x + self.drop(self.ff(self.ln2(x)))
 
@@ -51,3 +52,19 @@ class B1(nn.Module):
             h = b(h, mask)
         out = self.head(self.ln(h))
         return torch.stack([out[..., 0], out[..., 1].clamp(-8.0, 12.0)], dim=-1)
+
+
+class WithAttention(nn.Module):
+    """Export wrapper: returns (out, attn) where attn[B,N,N] is the last block's head-averaged attention, averaged
+    over ensemble members. The engine reports each instrument's most-attended peer as an inferred relationship."""
+
+    def __init__(self, models):
+        super().__init__()
+        self.models = nn.ModuleList(models)
+
+    def forward(self, x, mask):
+        outs, attns = [], []
+        for m in self.models:
+            outs.append(m(x, mask))
+            attns.append(m.blocks[-1].last_attn)
+        return torch.stack(outs, 0).mean(0), torch.stack(attns, 0).mean(0)

@@ -38,7 +38,8 @@ public sealed class OnnxRunner : IDisposable
     private readonly InferenceSession _session;
     private readonly RunOptions _run = new();
     private readonly OrtValue _x, _mask, _out;
-    private readonly string[] _inNames = ["x", "mask"], _outNames = ["out"];
+    private readonly OrtValue? _attn;
+    private readonly string[] _inNames = ["x", "mask"], _outNames;
     private readonly OrtValue[] _inputs, _outputs;
 
     public int Batch { get; }
@@ -47,6 +48,8 @@ public sealed class OnnxRunner : IDisposable
     public float[] X { get; }
     public float[] Mask { get; }
     public float[] Out { get; }
+    /// <summary>Optional attention map out "attn"[B,N,N] (row i = how much instrument i attends to each j), if the model exports it.</summary>
+    public float[]? Attn { get; }
     public string ModelPath { get; }
 
     public OnnxBackend Backend { get; }
@@ -104,7 +107,18 @@ public sealed class OnnxRunner : IDisposable
         _mask = OrtValue.CreateTensorValueFromMemory(Mask, [batch, n]);
         _out = OrtValue.CreateTensorValueFromMemory(Out, [batch, n, 2]);
         _inputs = [_x, _mask];
-        _outputs = [_out];
+        if (_session.OutputMetadata.ContainsKey("attn"))
+        {
+            Attn = new float[batch * n * n];
+            _attn = OrtValue.CreateTensorValueFromMemory(Attn, [batch, n, n]);
+            _outNames = ["out", "attn"];
+            _outputs = [_out, _attn];
+        }
+        else
+        {
+            _outNames = ["out"];
+            _outputs = [_out];
+        }
     }
 
     public string Description => Backend.IsGpu ? $"{Backend.Name} (device {DeviceId}, ORT flavour {OnnxBackend.Flavor})" : "cpu";
@@ -114,7 +128,7 @@ public sealed class OnnxRunner : IDisposable
 
     public void Dispose()
     {
-        _x.Dispose(); _mask.Dispose(); _out.Dispose();
+        _x.Dispose(); _mask.Dispose(); _out.Dispose(); _attn?.Dispose();
         _run.Dispose();
         _session.Dispose();
     }

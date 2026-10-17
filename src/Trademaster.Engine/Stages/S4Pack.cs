@@ -11,6 +11,8 @@ public sealed class FeatureSpec
     public required float[] Mean { get; init; }
     public required float[] Std { get; init; }
     public required int Window { get; init; }
+    /// <summary>Normalized features are clipped to ±Clip (as in training). Infinity = no clipping.</summary>
+    public float Clip { get; init; } = float.PositiveInfinity;
 
     public static FeatureSpec Identity(int window) => new()
     {
@@ -130,7 +132,12 @@ public sealed class S4Pack
             b.Quality[i] = _s2.Quality[i];
             if (!valid) { dst.Clear(); continue; }
             _s3.Read(i, cutoff, _scratch);
-            for (int f = 0; f < F.Count; f++) dst[f] = (_scratch[f] - _spec.Mean[f]) / _spec.Std[f];
+            float clip = _spec.Clip;
+            for (int f = 0; f < F.Count; f++)
+            {
+                float z = (_scratch[f] - _spec.Mean[f]) / _spec.Std[f];
+                dst[f] = float.IsFinite(z) ? Math.Clamp(z, -clip, clip) : 0f;
+            }
         }
         _s3.EndCycle();
         if (marketOpen) Stats.Update(b);

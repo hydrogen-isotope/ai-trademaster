@@ -1,4 +1,7 @@
+using System.Buffers;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Trademaster.Core;
 using Trademaster.Engine.Risk;
@@ -38,11 +41,19 @@ public sealed class CycleDecision
     }
 }
 
-/// <summary>Append-only JSON Lines decision log: one self-contained, auditable record per cycle.</summary>
+/// <summary>
+/// Append-only JSON Lines decision log: one self-contained, auditable record per cycle, hash-chained for tamper
+/// evidence. Each line ends with "prev_hash" (the previous line's hash; 64 zeros for the first) and "hash" =
+/// SHA-256(prev_hash + the record JSON without these two fields). Editing, deleting, inserting or reordering any
+/// record breaks the chain; <see cref="Verify"/> (CLI: trademaster verify-audit) checks it.
+/// </summary>
 public sealed class AuditLog : IDisposable
 {
+    public const string Genesis = "0000000000000000000000000000000000000000000000000000000000000000";
     private readonly FileStream _fs;
+    private readonly ArrayBufferWriter<byte> _buf = new(1 << 14);
     private readonly Utf8JsonWriter _w;
+    private string _prev = Genesis;
     private readonly Universe _u;
     private readonly string _model, _modelHash, _dataVersion;
     private readonly bool _synthetic;
@@ -53,7 +64,7 @@ public sealed class AuditLog : IDisposable
     {
         Path = path;
         _fs = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.Read, 1 << 16);
-        _w = new Utf8JsonWriter(_fs, new JsonWriterOptions { Indented = false, SkipValidation = true });
+        _w = new Utf8JsonWriter(_buf, new JsonWriterOptions { Indented = false, SkipValidation = true });
         _u = universe;
         _model = $"{model.Name}@{model.Version}";
         _modelHash = model.ArtifactHash;
@@ -92,6 +103,7 @@ public sealed class AuditLog : IDisposable
         w.WriteString("bid", "observed"); w.WriteString("ask", "observed");
         w.WriteString("beta", "estimated");
         w.WriteString("mu", "inferred"); w.WriteString("sigma", "inferred"); w.WriteString("score", "inferred");
+        w.WriteString("peer", "inferred");
         w.WriteEndObject();
 
         w.WriteStartArray("orders");
@@ -119,8 +131,13 @@ public sealed class AuditLog : IDisposable
         w.WriteString("equity", d.Equity.ToString("0.00", CultureInfo.InvariantCulture));
         w.WriteEndObject();
         w.Flush();
-        _fs.WriteByte((byte)'\n');
-        w.Reset(_fs); // next record is a new JSON root
+        var body = _buf.WrittenSpan;                      // {...}
+        string hash = Hash(_prev, body);
+        _fs.Write(body[..^1]);
+        _fs.Write(Encoding.ASCII.GetBytes($",\"prev_hash\":\"{_prev}\",\"hash\":\"{hash}\"}}\n"));
+        _prev = hash;
+        _buf.ResetWrittenCount();
+        w.Reset(_buf); // next record is a new JSON root
     }
 
     private void WriteIntent(in OrderIntent it, long? id, string? reason)
@@ -139,8 +156,43 @@ public sealed class AuditLog : IDisposable
         w.WriteNumber("score", Math.Round(it.Score, 4));
         w.WriteNumber("beta", Math.Round(it.Beta, 4));
         w.WriteString("rule", it.Rule);
+        if (it.Peer >= 0 && it.Peer < _u.Count)
+        {
+            w.WriteString("peer", _u.Instruments[it.Peer].Symbol);
+            w.WriteNumber("peer_weight", Math.Round(it.PeerWeight, 4));
+        }
         if (reason is not null) w.WriteString("reason", reason);
         w.WriteEndObject();
+    }
+
+    private static string Hash(string prev, ReadOnlySpan<byte> body)
+    {
+        using var h = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        h.AppendData(Encoding.ASCII.GetBytes(prev));
+        h.AppendData(body);
+        return Convert.ToHexStringLower(h.GetHashAndReset());
+    }
+
+    /// <summary>Re-computes the hash chain of a decision log. Returns the number of valid records and, if the chain is
+    /// broken, the 1-based line where it breaks and why.</summary>
+    public static (int Records, int BadLine, string? Problem) Verify(string path)
+    {
+        const string tag = ",\"prev_hash\":\"";
+        string prev = Genesis;
+        int n = 0;
+        foreach (var line in File.ReadLines(path))
+        {
+            n++;
+            int at = line.LastIndexOf(tag, StringComparison.Ordinal);
+            if (at < 0 || !line.EndsWith("\"}", StringComparison.Ordinal)) return (n - 1, n, "record has no hash chain fields");
+            string tail = line[(at + tag.Length)..];               // <prev>","hash":"<hash>"}
+            string recPrev = tail[..64], recHash = tail[^66..^2];
+            if (recPrev != prev) return (n - 1, n, "prev_hash does not match the previous record (deleted, inserted or reordered)");
+            string expect = Hash(prev, Encoding.UTF8.GetBytes(line[..at] + "}"));
+            if (expect != recHash) return (n - 1, n, "hash mismatch (record content was modified)");
+            prev = recHash;
+        }
+        return (n, 0, null);
     }
 
     private bool _disposed;

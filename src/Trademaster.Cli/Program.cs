@@ -21,6 +21,7 @@ try
         "bench-onnx" => BenchOnnx(opts),
         "serve" => Serve(opts),
         "exec-study" => ExecStudy(opts),
+        "verify-audit" => VerifyAudit(args.Skip(1).FirstOrDefault()),
         _ => Help(),
     };
 }
@@ -40,6 +41,9 @@ static int Help()
                    [--stocks 200] [--sectors 8] [--minutes 30] [--seed 42]
           run      [--config config/default.json] [--data DIR] [--mode virtual|paced]
                    [--speed 1.0] [--max-cycles N] [--out reports/<run-id>]
+                   [--model b0_factor_residual|onnx] [--model-path private/models/...] [--backend cpu|dml|...]
+                   [--allow-gpu] [--dump-features]
+          verify-audit <run>/decisions.jsonl                 Check the decision log's hash chain
           serve    [--speed 1] [--port 5080]                 Local dashboard
           exec-study [--data DIR] [--fill-model queue|touch]  Execution probe
           bench-onnx [--backend cpu|dml|cuda|tensorrt|migraphx[,..]] [--device N] [--allow-gpu]
@@ -103,8 +107,13 @@ static int Run(Dictionary<string, string> o)
     var manifest = DataManifest.Load(cfg.Data.Dir);
     var universe = Universe.Load(Path.Combine(cfg.Data.Dir, manifest.UniverseFile));
     var exchange = ExchangeConfig.Load(Path.Combine(cfg.Data.ExchangesDir, manifest.Exchange + ".json"));
-    if (cfg.Model.Name != "b0_factor_residual") throw new ArgumentException($"Unknown model '{cfg.Model.Name}' (M1 has b0_factor_residual only).");
-    IModel model = new B0FactorResidualModel(cfg.Model, cfg.Features.Window, universe);
+    if (o.TryGetValue("model", out var mname)) cfg.Model.Name = mname;
+    if (o.TryGetValue("model-path", out var mpath)) cfg.Model.Path = mpath;
+    if (o.TryGetValue("backend", out var be)) cfg.Compute.Backend = be;
+    if (o.ContainsKey("allow-gpu")) cfg.Compute.AllowGpu = true;
+    if (o.ContainsKey("dump-features")) cfg.Run.DumpFeatures = true;
+    IModel model = Trademaster.Engine.Inference.ModelFactory.Create(cfg, universe);
+    using var disposeModel = model as IDisposable;
 
     using var exec = new SimExchange(Path.Combine(cfg.Data.Dir, manifest.ExchangeFile), universe, exchange, cfg.Execution, manifest.StartTs);
     var sys = SystemInfo.Collect();
@@ -117,6 +126,15 @@ static int Run(Dictionary<string, string> o)
     Console.WriteLine(File.ReadAllText(summary));
     Console.WriteLine($"Reports: {outDir}{Path.DirectorySeparatorChar}{{summary.md, cycles.csv, decisions.jsonl}}");
     return 0;
+}
+
+static int VerifyAudit(string? path)
+{
+    if (path is null || !File.Exists(path)) throw new FileNotFoundException("usage: trademaster verify-audit <run-folder>/decisions.jsonl");
+    var (records, bad, problem) = AuditLog.Verify(path);
+    if (problem is null) { Console.WriteLine($"OK: {records:N0} records, hash chain intact ({path})"); return 0; }
+    Console.WriteLine($"TAMPERED: chain breaks at line {bad} ({problem}); {records:N0} records before it are intact");
+    return 1;
 }
 
 static int ExecStudy(Dictionary<string, string> o)

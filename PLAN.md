@@ -20,6 +20,7 @@ Stack: **C# / .NET 10** real-time engine · **ONNX Runtime** inference (CPU → 
 | AI | Research harness + locked hold-out | 2.9 y hourly + 60 d 5-min, 4 models x 5 rules, full portfolio sim with costs — see [docs/AI-RESEARCH.md](docs/AI-RESEARCH.md) | ❌ no net edge (hold-out −6.3 bps/day); gross edge needs ≤ ~0.7 bps one-way, i.e. passive execution research with quote data |
 | EX | Execution research | Queue-position fill model, execution analytics (fill odds, spread capture, markouts, adverse selection, shortfall), signal-free probe, informed-flow generator, passive strategy style — see [docs/EXECUTION-RESEARCH.md](docs/EXECUTION-RESEARCH.md) and [docs/QUOTE-DATA-REQUIREMENTS.md](docs/QUOTE-DATA-REQUIREMENTS.md) | 🟡 machinery done and validated on synthetic data; calibration needs real L1–L3 quote data |
 | FT | Frozen-model forward test | Hashed frozen B1/ridge/B0, live 5-min logger + scorer, dashboard page `/forward`, Friday rehearsal — see [docs/FORWARD-TEST.md](docs/FORWARD-TEST.md) | 🟡 ready; first live session Mon 19 Oct 09:30 ET (21:30 SGT) |
+| S5 | Cross-stock inference in the engine + pipeline completion | ONNX B1 in stage 5 (inferred peers), engine feature dump + `engine_train.py`, content dedup, clipping, kill-switch flatten, hash-chained audit — see [docs/CROSS-STOCK-MODEL.md](docs/CROSS-STOCK-MODEL.md) | 🟡 code compiled 2026-10-17; **not yet run or tested** |
 | M3 | First benchmark report | Sweep universe size N, window W, inference steps K (modes A/B/C) on CPU vs GPU; p50/p95/p99/max per stage; missed-deadline rate | |
 | M4 | Precision study | FP64/FP32 reference vs FP16/BF16 (GPU) vs FP8 (emulated); decision flips and tick changes | |
 | M5 | Optimize (only what profiling shows) | Pipelining/double buffering, GPU-resident inputs, IOBinding; before/after measurements | |
@@ -45,4 +46,4 @@ Solution skeleton and `doctor` · fixed-point prices, tick tables, calendar, con
 5. **Python 3.12 install** via winget for M2 — OK?
 6. **Data source** for M6 (SGX first or NASDAQ) and whether you already have access to any feed.
 7. **Resting entries**: policy v0 makes every entry marketable (limit ≥ ask). Should the "cutoff price" design post passive entries that rest until the next cycle? That needs a queue/fill-probability-aware policy.
-8. **Kill switch behaviour**: it currently cancels orders and stops trading but keeps positions. Should it also flatten positions, and how (aggressively or passively)?
+8. **Kill switch behaviour**: `risk.kill_switch_action` now offers `hold` (default: cancel orders, stop trading, keep positions) or `flatten` (close positions with marketable limits). Which should be the default?

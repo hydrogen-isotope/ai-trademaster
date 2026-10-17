@@ -42,6 +42,9 @@ public sealed class RunSection
     public int MaxCycles { get; set; }
     public OnMissPolicy OnMiss { get; init; } = OnMissPolicy.CancelExpired;
     public string OutputDir { get; set; } = "private/reports";
+    /// <summary>Write raw per-cycle engine features + mids to features.bin/features.json in the run folder (training data
+    /// for python -m trademaster_ml.engine_train). Contains market data: it stays under private/.</summary>
+    public bool DumpFeatures { get; set; }
     public int ProgressEveryCycles { get; init; } = 60;
 }
 
@@ -49,6 +52,13 @@ public sealed class IngestSection
 {
     /// <summary>How long a sequence gap may stay open waiting for the missing events before they are declared lost.</summary>
     public int ReorderWindowMs { get; init; } = 50;
+    /// <summary>
+    /// sequence: feed sequence numbers drive dedup, reordering and gap detection (default).
+    /// content: for feeds without reliable sequence numbers — exact repeats within <see cref="ContentWindowMs"/> are
+    /// dropped and quotes older (by exchange time) than the last applied one for that instrument are discarded.
+    /// </summary>
+    public string Dedup { get; init; } = "sequence";
+    public int ContentWindowMs { get; init; } = 2000;
 }
 
 public sealed class QualitySection
@@ -66,7 +76,14 @@ public sealed class FeatureSection
 
 public sealed class ModelSection
 {
-    public string Name { get; init; } = "b0_factor_residual";
+    /// <summary>b0_factor_residual (rule baseline) | onnx (cross-stock neural network from <see cref="Path"/>).</summary>
+    public string Name { get; set; } = "b0_factor_residual";
+    /// <summary>onnx: directory with model.onnx + model.spec.json, trained on engine features (private/models/...).</summary>
+    public string Path { get; set; } = "";
+    /// <summary>onnx: CPU threads for inference.</summary>
+    public int Threads { get; init; } = 4;
+    /// <summary>onnx: override the spec's calibrated sigma scale (null = use the spec).</summary>
+    public double? SigmaScale { get; init; }
     public int Lookback { get; init; } = 30;
     public double Kappa { get; init; } = 0.5;
     public int HorizonCycles { get; init; } = 10;
@@ -98,6 +115,13 @@ public sealed class RiskSection
     public int MaxOrdersPerCycle { get; init; } = 20;
     /// <summary>Engine-side collar: limit must be within this % of mid.</summary>
     public double PriceCollarPct { get; init; } = 2.0;
+    /// <summary>
+    /// What the kill switch does after cancelling all working orders:
+    /// hold    — keep open positions (default; a human decides).
+    /// flatten — also close every open position with marketable limit orders at the opposite quote, each cycle until
+    ///           flat (subject to market status, price collar and lot rules; shorts are bought back the same way).
+    /// </summary>
+    public string KillSwitchAction { get; init; } = "hold";
 }
 
 public sealed record DisconnectWindow(double AtS, double DurationS);

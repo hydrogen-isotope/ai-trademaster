@@ -10,7 +10,8 @@ namespace Trademaster.Engine.Stages;
 /// </summary>
 public readonly record struct OrderIntent(
     int Instrument, Side Side, long Qty, Price Limit,
-    float Mu, float Sigma, float Score, float Beta, long Bid, long Ask, string Rule, Price Cutoff = default);
+    float Mu, float Sigma, float Score, float Beta, long Bid, long Ask, string Rule, Price Cutoff = default,
+    int Peer = -1, float PeerWeight = 0);
 
 /// <summary>
 /// Stage 6 — decision policy v0 (long-only, explicit).
@@ -69,13 +70,15 @@ public sealed class DecisionPolicy
                 long target = (long)(targetNotional / limit.ToDouble()) / _lot * _lot;
                 long qty = target - pos;
                 if (qty >= _lot)
-                    intents.Add(new OrderIntent(i, Side.Buy, qty, limit, p.Mu, p.Sigma, (float)score, p.Beta, bid, ask, "entry", cutoff));
+                    intents.Add(new OrderIntent(i, Side.Buy, qty, limit, p.Mu, p.Sigma, (float)score, p.Beta, bid, ask, "entry", cutoff,
+                        p.HasPeer ? p.Peer : -1, p.PeerWeight));
             }
             else if (pos > 0 && score < -_cfg.ExitScore)
             {
                 var cutoff = _ticks.RoundUp(Price.FromDoubleCeiling(mid * (1 + mu + _feeFrac + margin)));
                 var limit = Price.Max(cutoff, new Price(Passive ? ask : bid));
-                intents.Add(new OrderIntent(i, Side.Sell, pos, limit, p.Mu, p.Sigma, (float)score, p.Beta, bid, ask, "exit", cutoff));
+                intents.Add(new OrderIntent(i, Side.Sell, pos, limit, p.Mu, p.Sigma, (float)score, p.Beta, bid, ask, "exit", cutoff,
+                    p.HasPeer ? p.Peer : -1, p.PeerWeight));
             }
         }
     }

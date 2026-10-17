@@ -4,8 +4,9 @@ namespace Trademaster.Engine.Stages;
 
 public sealed class IngestCounters
 {
-    /// <summary>Reordered = applied from the reorder buffer (arrived ahead of a missing sequence number).</summary>
-    public long Received, Applied, Duplicates, LateDropped, GapLost, Reordered, Invalid;
+    /// <summary>Reordered = applied from the reorder buffer (arrived ahead of a missing sequence number).
+    /// StaleDropped (content mode) = quote older than the last applied quote for its instrument.</summary>
+    public long Received, Applied, Duplicates, LateDropped, GapLost, Reordered, Invalid, StaleDropped;
 }
 
 /// <summary>
@@ -31,13 +32,43 @@ public sealed class S1Ingest
     public readonly IngestCounters Counters = new();
     public double CycleMaxFeedLatencyMs { get; private set; }
 
-    public S1Ingest(ReplayReader feed, int instruments, int reorderWindowMs)
+    // Content mode: recent event fingerprints with their arrival time, evicted after the window.
+    private readonly bool _content;
+    private readonly long _contentWindowNs;
+    private readonly HashSet<(int, EventKind, long, long, long, long, long, TradingStatus)> _seen = [];
+    private readonly Queue<((int, EventKind, long, long, long, long, long, TradingStatus) Key, long RecvTs)> _seenOrder = new();
+    private readonly long[] _lastQuoteExchTs;
+
+    public S1Ingest(ReplayReader feed, int instruments, int reorderWindowMs, string dedup = "sequence", int contentWindowMs = 2000)
     {
         _feed = feed;
         _n = instruments;
         _windowNs = reorderWindowMs * Ns.PerMs;
         LastRecvTs = new long[instruments];
         LastExchangeTs = new long[instruments];
+        _content = dedup switch
+        {
+            "sequence" => false, "content" => true,
+            _ => throw new ArgumentException($"ingest.dedup must be 'sequence' or 'content' (got '{dedup}')."),
+        };
+        _contentWindowNs = contentWindowMs * Ns.PerMs;
+        _lastQuoteExchTs = new long[instruments];
+    }
+
+    /// <summary>Content mode: drop exact repeats inside the window and quotes older than the last applied one.</summary>
+    private void OnContentEvent(in MarketEvent ev)
+    {
+        Counters.Received++;
+        while (_seenOrder.TryPeek(out var old) && ev.RecvTs - old.RecvTs > _contentWindowNs) _seen.Remove(_seenOrder.Dequeue().Key);
+        var key = (ev.Instrument, ev.Kind, ev.ExchangeTs, ev.Px1, ev.Px2, ev.Sz1, ev.Sz2, ev.Status);
+        if (!_seen.Add(key)) { Counters.Duplicates++; return; }
+        _seenOrder.Enqueue((key, ev.RecvTs));
+        if (ev.Kind == EventKind.Quote && (uint)ev.Instrument < (uint)_n)
+        {
+            if (ev.ExchangeTs < _lastQuoteExchTs[ev.Instrument]) { Counters.StaleDropped++; return; }
+            _lastQuoteExchTs[ev.Instrument] = ev.ExchangeTs;
+        }
+        Apply(ev);
     }
 
     public int Buffered => _buffer.Count;
@@ -50,9 +81,11 @@ public sealed class S1Ingest
         while (_feed.TryPeek(out var ev) && ev.RecvTs <= cutoff)
         {
             _feed.TryRead(out ev);
+            if (_content) { OnContentEvent(ev); continue; }
             ExpireGaps(ev.RecvTs);
             OnEvent(ev);
         }
+        if (_content) return;
         ExpireGaps(cutoff);
         if (_lost.Count > 100_000) _lost.RemoveWhere(s => s < _expected - 1_000_000);
     }

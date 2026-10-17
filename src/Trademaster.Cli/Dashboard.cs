@@ -161,7 +161,8 @@ public static class Dashboard
                 var manifest = DataManifest.Load(cfg.Data.Dir);
                 var universe = Universe.Load(Path.Combine(cfg.Data.Dir, manifest.UniverseFile));
                 var exchange = ExchangeConfig.Load(Path.Combine(cfg.Data.ExchangesDir, manifest.Exchange + ".json"));
-                IModel model = new B0FactorResidualModel(cfg.Model, cfg.Features.Window, universe);
+                IModel model = Trademaster.Engine.Inference.ModelFactory.Create(cfg, universe);
+                using var disposeModel = model as IDisposable;
                 using var exec = new SimExchange(Path.Combine(cfg.Data.Dir, manifest.ExchangeFile), universe, exchange, cfg.Execution, manifest.StartTs);
                 string outDir = Path.Combine(cfg.Run.OutputDir, $"{DateTime.Now:yyyyMMdd-HHmmss}-dashboard");
                 using var runner = new CycleRunner(cfg, exec, model, new SystemWallClock(), outDir);

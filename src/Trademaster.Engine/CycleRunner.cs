@@ -62,6 +62,10 @@ public sealed class CycleRunner : IDisposable
     private readonly double[] _ageScratch;
     private readonly List<CycleTiming> _timings = [];
     private readonly TextWriter _log;
+    private readonly FeatureDump? _dump;
+    private readonly bool _flattenOnKill;
+    private readonly HashSet<long> _flattenIds = [];
+    private readonly TickTable _ticks;
 
     private readonly long _cadence, _budget, _grace, _virtualLatency;
     private bool _wasConnected = true;
@@ -98,7 +102,7 @@ public sealed class CycleRunner : IDisposable
 
         int n = _u.Count;
         _feed = new ReplayReader(Path.Combine(dir, _manifest.FeedFile));
-        _s1 = new S1Ingest(_feed, n, cfg.Ingest.ReorderWindowMs);
+        _s1 = new S1Ingest(_feed, n, cfg.Ingest.ReorderWindowMs, cfg.Ingest.Dedup, cfg.Ingest.ContentWindowMs);
         _s2 = new S2Evaluate(_u, cfg.Quality);
         _s3 = new S3Features(n, ex.LotSize, _s2);
         if (model.Spec.Window != cfg.Features.Window) throw new InvalidOperationException("Model window does not match features.window.");
@@ -109,6 +113,13 @@ public sealed class CycleRunner : IDisposable
         _audit = new AuditLog(Path.Combine(outputDir, "decisions.jsonl"), _u, model, _manifest);
         _preds = new Prediction[n];
         _ageScratch = new double[n];
+        if (cfg.Run.DumpFeatures) _dump = new FeatureDump(outputDir, _u, _manifest, cfg.Run.CadenceMs);
+        _ticks = ex.BuildTickTable();
+        _flattenOnKill = cfg.Risk.KillSwitchAction switch
+        {
+            "hold" => false, "flatten" => true,
+            _ => throw new InvalidOperationException($"risk.kill_switch_action must be 'hold' or 'flatten' (got '{cfg.Risk.KillSwitchAction}')."),
+        };
 
         _cadence = cfg.Run.CadenceMs * Ns.PerMs;
         _budget = cfg.Run.BudgetMs * Ns.PerMs;
@@ -169,6 +180,7 @@ public sealed class CycleRunner : IDisposable
         {
             GCSettings.LatencyMode = oldMode;
             _audit.Dispose();
+            _dump?.Dispose();
         }
 
         return new RunResult
@@ -201,6 +213,11 @@ public sealed class CycleRunner : IDisposable
         _clock.Lap(Stage.Features);
         var phase = _calendar.Phase(tk);
         bool open = phase == MarketPhase.Open;
+        if (_dump is not null)
+        {
+            _dump.Write(tk, open, _s2, _s3); // before S4: packing resets the one-cycle return reference
+            _clock.Lap(Stage.Audit);
+        }
         var batch = _s4.Pack(k, tk, open);
         _clock.Lap(Stage.Pack);
         _clock.Lap(Stage.HostToDevice); // CPU-only in M1: no transfer
@@ -287,6 +304,7 @@ public sealed class CycleRunner : IDisposable
         // Order interface
         if (connected) Housekeeping(decidedTs, status);
         if (status == CycleStatus.Ok) Submit(k, tk, decidedTs, approved);
+        else if (status == CycleStatus.KillSwitch && connected && _flattenOnKill) Flatten(k, tk, decidedTs);
         _clock.Lap(Stage.OrderInterface);
 
         // Audit record
@@ -379,12 +397,43 @@ public sealed class CycleRunner : IDisposable
                          || (status == CycleStatus.Missed && _cfg.Run.OnMiss == OnMissPolicy.CancelAll);
         foreach (var o in _om.Open.Where(o => o.State != WorkingState.PendingCancel).OrderBy(o => o.Req.OrderId).ToList())
         {
-            if (!cancelAll && o.ValidUntil > ts) continue;
+            bool expired = o.ValidUntil <= ts;
+            if (!cancelAll && !expired) continue;
+            if (!expired && _flattenIds.Contains(o.Req.OrderId)) continue; // kill-switch flatten orders work until they expire
             if (_exec.Cancel(o.Req.OrderId, ts) == SubmitResult.Sent)
             {
                 _om.MarkPendingCancel(o.Req.OrderId);
                 _d.Cancels.Add((o.Req.OrderId, cancelAll ? status.ToString() : "expired"));
             }
+        }
+    }
+
+    /// <summary>
+    /// Kill switch with risk.kill_switch_action = flatten: close every open position with a marketable limit at the
+    /// opposite good quote. One working flatten order per instrument; it is re-sent at the new price once it expires,
+    /// until flat. Never sent for masked (stale/halted) instruments or invalid prices.
+    /// </summary>
+    private void Flatten(long k, long tk, long ts)
+    {
+        long validUntil = tk + _cadence + _grace;
+        for (int i = 0; i < _om.Position.Length; i++)
+        {
+            long pos = _om.Position[i];
+            if (pos == 0 || _s2.Mask[i] != MaskReason.Valid) continue;
+            if (_om.Open.Any(o => o.Req.Instrument == i)) continue; // let the working / cancelling order resolve first
+            var side = pos > 0 ? Side.Sell : Side.Buy;
+            var limit = new Price(side == Side.Sell ? _s2.GoodBid[i] : _s2.GoodAsk[i]);
+            if (!_ticks.IsValid(limit)) continue;
+            var it = new OrderIntent(i, side, Math.Abs(pos), limit, 0, 0, 0, 0, _s2.GoodBid[i], _s2.GoodAsk[i], "kill_flatten", limit);
+            var req = new OrderRequest(_om.NextOrderId(), i, side, Math.Abs(pos), limit, k);
+            if (_exec.Submit(req, ts) == SubmitResult.Sent)
+            {
+                _om.Track(req, ts, validUntil);
+                _flattenIds.Add(req.OrderId);
+                _d.Submitted.Add((req.OrderId, it));
+                _ordersSubmitted++;
+            }
+            else _notSent++;
         }
     }
 
@@ -464,5 +513,6 @@ public sealed class CycleRunner : IDisposable
     {
         _feed.Dispose();
         _audit.Dispose();
+        _dump?.Dispose();
     }
 }
