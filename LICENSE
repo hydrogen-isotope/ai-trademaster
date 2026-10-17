@@ -1,0 +1,107 @@
+AI Trademaster Non-Commercial Research License
+Version 1.0
+
+Copyright (c) 2026 Hollander-Lawn. All rights reserved except as expressly granted below.
+
+This license applies to the software, source code, documentation and other material in this
+repository (the "Software"). It does not apply to third-party components, which remain under their
+own licenses (see section 8).
+
+1. DEFINITIONS
+
+   "Licensor" means the copyright holder named above.
+   "You" means the individual or organisation exercising rights under this license.
+   "Non-Commercial Purpose" means personal study, private research, hobby use, teaching, and
+   academic or non-profit research, in each case where neither You nor anyone else receives
+   payment, revenue or other commercial advantage from the Software, its outputs, or services
+   built on it.
+   "Commercial Purpose" means any purpose that is not a Non-Commercial Purpose, including: selling,
+   licensing or renting the Software or modified versions; offering it, or anything built on it, as
+   a paid product or service (including hosted, signal, copy-trading or advisory services); using
+   it to manage, advise on or trade money or assets for any third party; and use by or for a
+   for-profit organisation in the course of its business.
+
+2. PERMISSIONS
+
+   Subject to the conditions of this license, the Licensor grants You a worldwide, royalty-free,
+   non-exclusive, non-transferable, revocable (only as stated in section 7) license to use, copy,
+   modify, and create derivative works of the Software, and to distribute the Software or Your
+   modified versions, solely for Non-Commercial Purposes.
+
+   Using the Software to make decisions about, or to place orders for, Your own personal account
+   with Your own money is permitted as a Non-Commercial Purpose, entirely at Your own risk (see
+   sections 4 and 5).
+
+3. CONDITIONS
+
+   a. Any copy or distribution of the Software, modified or not, must include this license in full,
+      this copyright notice, and the DISCLAIMER.md file, and must not be offered under different
+      terms.
+   b. Modified versions must carry a prominent notice that they were modified, by whom, and when.
+   c. You may not use the Licensor's name, the name "AI Trademaster", or any associated logos to
+      endorse or promote Your products or modified versions without prior written permission.
+   d. Commercial Purposes require a separate written license from the Licensor.
+   e. You must comply with all laws and regulations that apply to Your use, including securities,
+      trading, financial-services, tax and data-protection laws in Your jurisdiction.
+
+4. NO DATA, NO MODELS, YOUR RESPONSIBILITY
+
+   The Software is distributed without any market data, trained model weights, or results derived
+   from real market data. To use it with real markets You must obtain data under Your own data
+   licenses and train and validate Your own models. You are solely responsible for complying with
+   the terms of every data provider, exchange and broker You use, including any restrictions on
+   redistribution or display of market data.
+
+5. FINANCIAL AND TRADING DISCLAIMER
+
+   a. The Software is a research and engineering project. Nothing in it, its documentation, its
+      outputs, or any communication about it is investment, financial, legal or tax advice, or a
+      recommendation or solicitation to buy or sell any security or other financial instrument.
+   b. The Licensor is not a registered investment adviser, broker-dealer, or financial
+      professional in any jurisdiction.
+   c. Trading securities, including automated and high-frequency trading, involves substantial
+      risk, including the loss of more than Your initial investment where leverage, margin or short
+      selling is used. Past, simulated, backtested or hypothetical performance is not indicative of
+      future results. Simulated results have inherent limitations and do not reflect real
+      execution, liquidity, market impact or costs.
+   d. The Software may contain defects that cause incorrect predictions, unintended orders, missed
+      orders, duplicated orders, or failures to cancel or close positions. Automated systems can
+      lose money very quickly. You must supervise any automated use, apply Your own independent risk
+      limits, and use paper or minimal-size accounts before risking real money.
+   e. You alone decide whether and how to use the Software, and You bear all consequences of
+      those decisions, including all trading losses, fees, taxes and regulatory obligations.
+
+6. NO WARRANTY AND LIMITATION OF LIABILITY
+
+   THE SOFTWARE IS PROVIDED "AS IS" AND "AS AVAILABLE", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+   IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+   PURPOSE, ACCURACY, PROFITABILITY, AND NON-INFRINGEMENT.
+
+   TO THE MAXIMUM EXTENT PERMITTED BY LAW, IN NO EVENT SHALL THE LICENSOR OR ANY CONTRIBUTOR BE
+   LIABLE FOR ANY CLAIM, LOSS OR DAMAGES OF ANY KIND - INCLUDING TRADING OR INVESTMENT LOSSES, LOST
+   PROFITS, LOST DATA, OR DIRECT, INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL OR PUNITIVE DAMAGES -
+   ARISING FROM OR RELATED TO THE SOFTWARE OR ITS USE, WHETHER IN CONTRACT, TORT (INCLUDING
+   NEGLIGENCE) OR OTHERWISE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+   You agree to indemnify and hold harmless the Licensor from any claim by a third party arising
+   from Your use of the Software or Your breach of this license.
+
+7. TERMINATION
+
+   Your rights under this license end automatically if You breach any of its terms. If You cure the
+   breach within 30 days of first becoming aware of it, and it is Your first breach, Your rights
+   are reinstated. Sections 5, 6 and 7 survive termination.
+
+8. THIRD-PARTY COMPONENTS
+
+   The Software depends on third-party components (for example .NET, ONNX Runtime, PyTorch, NumPy,
+   xUnit and lightweight-charts) that are licensed by their own authors under their own terms.
+   This license grants no rights in them.
+
+9. GENERAL
+
+   The Licensor reserves all rights not expressly granted, including the right to use the
+   Software for any purpose, commercial or otherwise, and to offer it under other licenses. If any
+   provision of this license is held unenforceable, the remaining provisions remain in effect.
+   Requests for commercial licenses or other permissions: open an issue on the project's
+   repository addressed to the Licensor.

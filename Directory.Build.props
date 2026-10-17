@@ -6,5 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Deterministic>true</Deterministic>
     <TieredPGO>true</TieredPGO>
+    <Product>AI Trademaster</Product>
+    <Authors>Hollander-Lawn</Authors>
+    <Copyright>Copyright (c) 2026 Hollander-Lawn. AI Trademaster Non-Commercial Research License; see LICENSE and DISCLAIMER.md.</Copyright>
   </PropertyGroup>
 </Project>
