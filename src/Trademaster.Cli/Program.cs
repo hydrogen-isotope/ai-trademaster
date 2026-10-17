@@ -46,7 +46,7 @@ static int Help()
                    [--allow-gpu] [--dump-features]
           verify-audit <run>/decisions.jsonl                 Check the decision log's hash chain
           serve    [--speed 1] [--port 5080]                 Local dashboard
-          app      [--page forward|terminal] [--port 5080]   Dashboard in its own window (closing it stops the dashboard)
+          app      [--page market|forward|sim] [--port 5080]   Dashboard in its own window (closing it stops the dashboard)
           exec-study [--data DIR] [--fill-model queue|touch]  Execution probe
           bench-onnx [--backend cpu|dml|cuda|tensorrt|migraphx[,..]] [--device N] [--allow-gpu]
                      [--n 30,300,1000] [--k 1,10,100,1000]   Inference latency (GPU needs --allow-gpu + safety gate)
@@ -187,7 +187,7 @@ static int Serve(Dictionary<string, string> o)
 static int App(Dictionary<string, string> o)
 {
     int port = Int(o, "port", 5080);
-    string page = o.GetValueOrDefault("page", "forward") switch { "forward" => "/forward", "terminal" or "sim" => "/", var p => "/" + p.TrimStart('/') };
+    string page = o.GetValueOrDefault("page", "market") switch { "market" => "/", "forward" => "/forward", "terminal" or "sim" => "/sim", var p => "/" + p.TrimStart('/') };
     if (Trademaster.Cli.AppWindow.PortInUse(port))
     {
         // A dashboard is already running (e.g. started by tools/forward-live.cmd): just open a window onto it.

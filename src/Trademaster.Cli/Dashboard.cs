@@ -65,7 +65,35 @@ public static class Dashboard
         var app = builder.Build();
         string uiDir = Path.Combine(AppContext.BaseDirectory, "ui");
 
-        app.MapGet("/", () => Results.File(Path.Combine(uiDir, "index.html"), "text/html; charset=utf-8"));
+        app.MapGet("/", () => Results.File(Path.Combine(uiDir, "market.html"), "text/html; charset=utf-8"));
+        app.MapGet("/sim", () => Results.File(Path.Combine(uiDir, "index.html"), "text/html; charset=utf-8"));
+
+        // Real market data (read-only quotes and charts): Alpaca when a key is configured, else the recorded demo.
+        var md = MarketDataFactory.Create();
+        var mdCache = new MdCache();
+        static bool OkSym(string? s) => s is { Length: > 0 and <= 10 } && s.All(c => char.IsAsciiLetterUpper(c) || c is '.' or '-');
+        app.MapGet("/api/md/status", () => Results.Json(new { provider = md.Name, live = md.Live, note = md.Note, universe = md.Universe }, JsonOpts));
+        app.MapGet("/api/md/snapshots", async (string symbols, CancellationToken ct) =>
+        {
+            var list = symbols.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(x => x.ToUpperInvariant()).Where(OkSym).Distinct().Take(200).ToList();
+            try { return Results.Json(await mdCache.Get("s:" + string.Join(',', list), TimeSpan.FromSeconds(1), async () => await md.Snapshots(list, ct)), JsonOpts); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { return Results.Problem(ex.Message, statusCode: 502); }
+        });
+        app.MapGet("/api/md/bars", async (string symbol, string? tf, CancellationToken ct) =>
+        {
+            symbol = symbol.ToUpperInvariant(); tf ??= "1D";
+            if (!OkSym(symbol) || tf is not ("1m" or "5m" or "15m" or "1h" or "1D" or "1W")) return Results.BadRequest();
+            var ttl = TimeSpan.FromSeconds(tf is "1D" or "1W" ? 60 : 5);
+            try { return Results.Json(await mdCache.Get($"b:{symbol}:{tf}", ttl, async () => await md.Bars(symbol, tf, ct)), JsonOpts); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { return Results.Problem(ex.Message, statusCode: 502); }
+        });
+        app.MapGet("/api/md/trades", async (string symbol, CancellationToken ct) =>
+        {
+            symbol = symbol.ToUpperInvariant();
+            if (!OkSym(symbol)) return Results.BadRequest();
+            try { return Results.Json(await mdCache.Get($"t:{symbol}", TimeSpan.FromSeconds(2), async () => await md.Trades(symbol, ct)), JsonOpts); }
+            catch (Exception ex) when (ex is not OperationCanceledException) { return Results.Problem(ex.Message, statusCode: 502); }
+        });
         app.MapGet("/api/info", () => Results.Json(new
         {
             system = sys.Lines().ToArray(), gpu, cadenceMs = cfg.Run.CadenceMs, budgetMs = cfg.Run.BudgetMs, speed = cfg.Run.Speed,

@@ -7,4 +7,4 @@ cd /d "%~dp0.."
 set PYTHONPATH=python
 echo Pulling latest data...
 python\.venv\Scripts\python.exe -W ignore -m trademaster_ml.signals_live prepare
-start "" /b src\Trademaster.Cli\bin\Release\net10.0\trademaster.exe app --page forward
+start "" /b src\Trademaster.Cli\bin\Release\net10.0\trademaster.exe app --page market
