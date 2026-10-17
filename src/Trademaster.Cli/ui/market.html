@@ -53,7 +53,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 #toolbar .sep{width:1px;height:16px;background:var(--line);margin:0 6px}
 #legend{padding:4px 14px;font-size:11px;color:var(--muted);height:22px;white-space:nowrap;overflow:hidden}
 #chartwrap{flex:none;height:calc(100vh - 262px);min-height:300px;position:relative}#chart{position:absolute;inset:0}
-#fchint{flex:none;text-align:center;padding:6px;color:var(--muted);font-size:12px;cursor:pointer;border-top:1px solid var(--line);background:var(--panel)}
+#fchint{flex:none;text-align:center;padding:9px;font-weight:600;color:var(--muted);font-size:12px;cursor:pointer;border-top:1px solid var(--line);background:var(--panel)}
 #fchint:hover{color:var(--accent)}
 #fcsec{flex:none;padding:16px 16px 28px;border-top:1px solid var(--line)}
 #fcsec h2{font-size:16px;margin:0 0 4px;display:flex;align-items:center;gap:10px}
@@ -98,7 +98,40 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
 ::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
 ::-webkit-scrollbar-thumb{background:#2e333c;border-radius:4px;border:2px solid transparent;background-clip:padding-box}
 ::-webkit-scrollbar-thumb:hover{background:#454b56;background-clip:padding-box}
-@media (max-width:1150px){#app{grid-template-columns:56px 250px minmax(0,1fr)}#right{display:none}}
+@media (max-width:1150px){#app{grid-template-columns:56px 250px minmax(0,1fr)}#right{display:none}#app.wide #center{grid-column:3/4}}
+/* full 5-day forecast view: takes the chart area and the right panel */
+#app.wide #center{grid-column:3/5}#app.wide #right{display:none}
+#fcview{display:none;padding:16px 20px 30px;flex:none}
+#fcview .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#fcview .top h2{margin:0;font-size:20px}
+#fcview .sub{color:var(--muted);font-size:13px;margin-top:4px}
+.daypick{display:flex;gap:6px;margin:14px 0 10px;flex-wrap:wrap}
+.daypick button{padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--muted);font-size:12.5px}
+.daypick button.on{border-color:var(--accent);color:var(--text);background:#2a1a0d}
+.answers{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.ans{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;min-width:0}
+.ans .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.4px}
+.ans .v{font-size:clamp(17px,1.55vw,26px);font-weight:700;margin-top:6px;white-space:nowrap}
+.ans .d{color:var(--muted);font-size:12.5px;margin-top:4px;line-height:1.4}
+.ans.main{border-color:#5a3a1a;background:linear-gradient(180deg,#1f160e,#15161a)}
+.bigchart{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px 6px;margin-top:14px}
+#fcbig{width:100%;height:auto;display:block}
+.legend2{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:12px;padding:4px 6px 6px}
+.legend2 i{display:inline-block;width:18px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
+.rows2{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-top:14px}
+.rows2 h3,.read h3{margin:0 0 10px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+.rbar{display:grid;grid-template-columns:110px 150px minmax(0,1fr) 120px;align-items:center;gap:12px;padding:9px 6px 21px;cursor:pointer;border-top:1px solid #1d2026;font-size:13px}
+.rbar:first-of-type{border-top:0}
+.rbar .track{position:relative;height:22px}
+.rbar .b95{position:absolute;top:5px;height:12px;background:rgba(255,107,0,.18);border-radius:6px}
+.rbar .b80{position:absolute;top:5px;height:12px;background:rgba(255,107,0,.45);border-radius:6px}
+.rbar .mid{position:absolute;top:0;width:3px;height:22px;background:#ff9f1c;border-radius:2px;margin-left:-1px}
+.rbar .now{position:absolute;top:-3px;width:0;height:28px;border-left:2px dashed #e9eaee;margin-left:-1px;opacity:.7}
+.rbar .lbl{position:absolute;top:24px;font-size:10.5px;color:var(--dim);transform:translateX(-50%);white-space:nowrap}
+.read{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:14px;margin-top:14px}
+.read .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;min-width:0;overflow-x:auto}
+.read ul{margin:0;padding-left:18px;color:var(--muted);line-height:1.6;font-size:13px}.read b{color:var(--text)}
+@media (max-width:1300px){.ans{padding:11px 12px}.ans .d{font-size:11.5px}.read{grid-template-columns:1fr}}@media (max-width:980px){.answers{grid-template-columns:repeat(2,minmax(0,1fr))}}
 </style>
 </head>
 <body>
@@ -127,7 +160,7 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
 
   <section id="center">
     <div id="qhead"><span id="qsym">—</span><span id="qname"></span><span id="qpx" class="num"></span><span id="qchg" class="num"></span></div>
-    <div class="ctabs"><button class="on" data-c="chart">Chart</button><button data-c="ai">AI Signals</button></div>
+    <div class="ctabs"><button class="on" data-c="chart">Chart</button><button data-c="forecast">5-Day Forecast</button><button data-c="ai">AI Signals</button></div>
     <div id="toolbar">
       <button data-tf="1m">1m</button><button data-tf="5m" class="on">5m</button><button data-tf="15m">15m</button><button data-tf="1h">1h</button>
       <button data-tf="1D">Daily</button><button data-tf="1W">Weekly</button>
@@ -138,18 +171,32 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
     </div>
     <div id="legend" class="num"></div>
     <div id="chartwrap"><div id="chart"></div></div>
-    <div id="fchint" onclick="document.getElementById('fcsec').scrollIntoView()">&#9660; Scroll down for the 5-trading-day forecast</div>
-    <section id="fcsec">
-      <h2><span id="fctitle">5-day forecast</span><span class="chip" id="fcchip"></span></h2>
-      <div class="note" id="fcnote"></div>
-      <div class="fcgrid" id="fcbody">
-        <div class="card2 wide"><h3>Next 5 trading days &middot; closing price</h3><svg id="fcsvg" viewBox="0 0 1000 380" preserveAspectRatio="xMidYMid meet"></svg>
-          <div class="note" style="margin-top:6px">White = past closes &middot; orange dashed = middle forecast &middot; dark band = 80% range &middot; light band = 95% range</div></div>
-        <div class="card2 wide"><h3>Forecast table</h3><table style="min-width:0"><thead><tr><th>Date</th><th>Middle</th><th>80% range</th><th>95% range</th></tr></thead><tbody id="fctable"></tbody></table>
-</div>
-        <div class="card2 wide"><h3>How well it has done</h3><div id="fcval" class="note"></div></div>
+    <div id="fchint" onclick="setCenterTab('forecast')">&#128302; Open the 5-trading-day forecast for this stock &rarr;</div>
+    <section id="fcview">
+      <div class="top"><h2 id="fctitle">5-day forecast</h2><span class="chip" id="fcchip"></span></div>
+      <div class="sub" id="fcsub"></div>
+      <div id="fcnone" class="note" style="margin-top:14px;display:none"></div>
+      <div id="fcbody">
+        <div class="daypick" id="daypick"></div>
+        <div class="answers">
+          <div class="ans main"><div class="k">Middle forecast</div><div class="v num" id="aMid"></div><div class="d" id="aMidD"></div></div>
+          <div class="ans"><div class="k">80% likely range</div><div class="v num" id="a80"></div><div class="d" id="a80D"></div></div>
+          <div class="ans"><div class="k">95% likely range</div><div class="v num" id="a95"></div><div class="d" id="a95D"></div></div>
+          <div class="ans"><div class="k">Chance of closing higher</div><div class="v num" id="aUp"></div><div class="d" id="aUpD"></div></div>
+        </div>
+        <div class="bigchart">
+          <svg id="fcbig" viewBox="0 0 1400 520" preserveAspectRatio="xMidYMid meet"></svg>
+          <div class="legend2"><span><i style="background:#e9eaee;height:3px"></i>past closes</span><span><i style="background:#ff9f1c;height:3px"></i>middle forecast</span>
+            <span><i style="background:rgba(255,107,0,.5)"></i>80% likely range</span><span><i style="background:rgba(255,107,0,.2)"></i>95% likely range</span>
+            <span><i style="border-top:2px dashed #e9eaee;height:0;background:none"></i>last close</span></div>
+        </div>
+        <div class="rows2"><h3>Day by day</h3><div id="fcrows"></div></div>
+        <div class="read">
+          <div class="box"><h3>How to read this</h3><ul id="fcread"></ul></div>
+          <div class="box"><h3>How well it has done</h3><div id="fcval" class="note"></div></div>
+        </div>
+        <div class="read" style="grid-template-columns:1fr"><div class="box"><h3>Last week's test (forecast made before the week, then compared)</h3><div id="fchold"></div></div></div>
       </div>
-      <div class="card2" id="fcholdcard" style="margin-top:14px"><h3>Last week's test (forecast made before the week, then compared)</h3><div id="fchold"></div></div>
     </section>
     <div id="aiview"></div>
   </section>
@@ -358,59 +405,132 @@ document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
   document.querySelectorAll('[data-r]').forEach(x => x.classList.toggle('on', x === b));
   $('ticks').style.display = b.dataset.r === 'ticks' ? 'block' : 'none'; $('aiside').style.display = b.dataset.r === 'ai' ? 'block' : 'none';
 });
-document.querySelectorAll('[data-c]').forEach(b => b.onclick = () => {
-  document.querySelectorAll('[data-c]').forEach(x => x.classList.toggle('on', x === b));
-  const chartOn = b.dataset.c === 'chart';
-  ['toolbar', 'legend', 'chartwrap', 'fchint', 'fcsec'].forEach(id => $(id).style.display = chartOn ? '' : 'none'); $('aiview').style.display = chartOn ? 'none' : 'block';
-});
+document.querySelectorAll('[data-c]').forEach(b => b.onclick = () => setCenterTab(b.dataset.c));
 
-// ---------------------------------------------------------------- 5-day forecast
-function fanSvg(hist, days) {
-  const W = 1000, H = 380, L = 70, R = 90, T = 18, B = 36, n = hist.length, m = days.length;
-  const split = L + 0.6 * (W - L - R);                         // past closes use 60% of the width, the 5 forecast days 40%
+// ---------------------------------------------------------------- 5-day forecast view
+const QL = [[0.025, 'p2_5'], [0.05, 'p5'], [0.10, 'p10'], [0.25, 'p25'], [0.50, 'p50'], [0.75, 'p75'], [0.90, 'p90'], [0.95, 'p95'], [0.975, 'p97_5']];
+const DOW = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', timeZone: 'UTC' });
+const DLONG = d => new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+/** Probability that the close ends above `price`, from the forecast quantiles (linear between them, flat tails). */
+function chanceAbove(day, price) {
+  const pts = QL.filter(([, k]) => day[k] != null).map(([p, k]) => [day[k], p]);
+  if (!pts.length) return null;
+  if (price <= pts[0][0]) return 1 - pts[0][1] / 2;
+  if (price >= pts[pts.length - 1][0]) return (1 - pts[pts.length - 1][1]) / 2;
+  for (let i = 1; i < pts.length; i++) if (price <= pts[i][0]) {
+    const [x0, p0] = pts[i - 1], [x1, p1] = pts[i];
+    return 1 - (p0 + (p1 - p0) * (price - x0) / (x1 - x0));
+  }
+  return null;
+}
+let fcState = null, fcDay = 4;
+
+function bigFan(hist, days, focus) {
+  const W = 1400, H = 520, L = 84, R = 190, T = 26, B = 46, n = hist.length, m = days.length;
+  const split = L + 0.55 * (W - L - R);
   const xs = i => i < n ? L + i / (n - 1) * (split - L) : split + (i - n + 1) / m * (W - R - split);
   const vals = hist.map(h => h.close).concat(days.flatMap(d => [d.p2_5, d.p97_5]));
-  let lo = Math.min(...vals), hi = Math.max(...vals); const pad = (hi - lo) * 0.06; lo -= pad; hi += pad;
+  let lo = Math.min(...vals), hi = Math.max(...vals); const pad = (hi - lo) * 0.07; lo -= pad; hi += pad;
   const ys = v => T + (hi - v) / (hi - lo) * (H - T - B);
-  let g = '';
-  for (let k = 0; k <= 4; k++) { const v = lo + (hi - lo) * k / 4; g += `<line x1="${L}" x2="${W - R}" y1="${ys(v)}" y2="${ys(v)}" stroke="#20242c"/><text x="${L - 8}" y="${ys(v) + 5}" fill="#8a8f99" font-size="14" text-anchor="end">${fmt(v)}</text>`; }
   const last = hist[n - 1].close, x0 = xs(n - 1);
+  let g = '';
+  for (let k = 0; k <= 5; k++) { const v = lo + (hi - lo) * k / 5; g += `<line x1="${L}" x2="${W - R}" y1="${ys(v)}" y2="${ys(v)}" stroke="#1d2027"/><text x="${L - 10}" y="${ys(v) + 5}" fill="#8a8f99" font-size="15" text-anchor="end">${fmt(v)}</text>`; }
+  // shaded forecast region and the focused day
+  g += `<rect x="${x0}" y="${T}" width="${W - R - x0}" height="${H - T - B}" fill="#ffffff" fill-opacity="0.015"/>`;
+  g += `<rect x="${xs(n + focus) - 26}" y="${T}" width="52" height="${H - T - B}" fill="#ff9f1c" fill-opacity="0.07" rx="6"/>`;
   const band = (a, b, op) => {
     const top = [[x0, ys(last)], ...days.map((d, k) => [xs(n + k), ys(d[a])])], bot = [[x0, ys(last)], ...days.map((d, k) => [xs(n + k), ys(d[b])])];
     return `<polygon points="${top.concat(bot.reverse()).map(p => p.join(',')).join(' ')}" fill="#ff6b00" fill-opacity="${op}"/>`;
   };
-  g += band('p97_5', 'p2_5', 0.14) + band('p90', 'p10', 0.30);
-  g += `<polyline points="${hist.map((h, i) => xs(i) + ',' + ys(h.close)).join(' ')}" fill="none" stroke="#e9eaee" stroke-width="1.8"/>`;
-  g += `<polyline points="${[[x0, ys(last)], ...days.map((d, k) => [xs(n + k), ys(d.p50)])].map(p => p.join(',')).join(' ')}" fill="none" stroke="#ff9f1c" stroke-width="2.2" stroke-dasharray="6 4"/>`;
-  days.forEach((d, k) => g += `<circle cx="${xs(n + k)}" cy="${ys(d.p50)}" r="4.5" fill="#ff9f1c"/><text x="${xs(n + k)}" y="${H - 12}" fill="#b6bcc6" font-size="14" text-anchor="middle">${d.date.slice(5)}</text>`);
-  const lastDay = days[m - 1];
-  [['p97_5', '95%'], ['p90', '80%'], ['p50', 'middle'], ['p10', '80%'], ['p2_5', '95%']].forEach(([k, lab]) =>
-    g += `<text x="${W - R + 8}" y="${ys(lastDay[k]) + 5}" fill="${k === 'p50' ? '#ff9f1c' : '#b6bcc6'}" font-size="13">${fmt(lastDay[k])}</text>`);
-  g += `<line x1="${x0}" x2="${x0}" y1="${T}" y2="${H - B}" stroke="#3a4050" stroke-dasharray="3 3"/>`;
-  g += `<text x="${xs(0)}" y="${H - 12}" fill="#8a8f99" font-size="14">${hist[0].date.slice(5)}</text><text x="${x0 - 8}" y="${T + 14}" fill="#b6bcc6" font-size="14" text-anchor="end">last close ${hist[n - 1].date.slice(5)}: ${fmt(last)}</text>`;
+  g += band('p97_5', 'p2_5', 0.16) + band('p90', 'p10', 0.38);
+  g += `<line x1="${L}" x2="${W - R}" y1="${ys(last)}" y2="${ys(last)}" stroke="#e9eaee" stroke-opacity=".55" stroke-dasharray="6 6"/>`;
+  const lt = `last close ${fmt(last)} (${DLONG(hist[n - 1].date)})`, ltw = lt.length * 7.4 + 14;
+  g += `<rect x="${x0 - ltw - 12}" y="${ys(last) + 8}" width="${ltw}" height="24" rx="5" fill="#0d0e11" fill-opacity=".85" stroke="#3a4050"/>`;
+  g += `<text x="${x0 - 19}" y="${ys(last) + 25}" fill="#e9eaee" font-size="14" text-anchor="end">${lt}</text>`;
+  g += `<polyline points="${hist.map((h, i) => xs(i) + ',' + ys(h.close)).join(' ')}" fill="none" stroke="#e9eaee" stroke-width="2.2"/>`;
+  g += `<polyline points="${[[x0, ys(last)], ...days.map((d, k) => [xs(n + k), ys(d.p50)])].map(p => p.join(',')).join(' ')}" fill="none" stroke="#ff9f1c" stroke-width="3" stroke-dasharray="8 5"/>`;
+  days.forEach((d, k) => {
+    const x = xs(n + k), on = k === focus;
+    g += `<circle cx="${x}" cy="${ys(d.p50)}" r="${on ? 7 : 5}" fill="#ff9f1c" stroke="#0d0e11" stroke-width="2"/>`;
+    g += `<text x="${x}" y="${H - 18}" fill="${on ? '#ffffff' : '#b6bcc6'}" font-size="15" font-weight="${on ? 700 : 400}" text-anchor="middle">${DOW(d.date)} ${d.date.slice(8)}</text>`;
+    g += `<rect x="${x - 26}" y="${T}" width="52" height="${H - T}" fill="transparent" style="cursor:pointer" onclick="pickDay(${k})"><title>${DLONG(d.date)}: middle ${fmt(d.p50)}, 80% range ${fmt(d.p10)}–${fmt(d.p90)}</title></rect>`;
+  });
+  // labels for the focused day, with simple collision avoidance
+  const fd = days[focus], fx = xs(n + focus);
+  const labs = [['p97_5', '95% top', '#c9ced6'], ['p90', '80% top', '#ffd2a6'], ['p50', 'middle', '#ff9f1c'], ['p10', '80% bottom', '#ffd2a6'], ['p2_5', '95% bottom', '#c9ced6']]
+    .map(([k, t, c]) => ({ y: ys(fd[k]), v: fd[k], t, c, k }));
+  for (let i = 1; i < labs.length; i++) if (labs[i].y - labs[i - 1].y < 20) labs[i].y = labs[i - 1].y + 20;
+  const lx = W - R + 18;
+  labs.forEach(l => {
+    g += `<line x1="${fx + 8}" x2="${lx - 4}" y1="${ys(l.v)}" y2="${l.y}" stroke="${l.c}" stroke-opacity=".35"/>`;
+    g += `<text x="${lx}" y="${l.y + 5}" fill="${l.c}" font-size="${l.k === 'p50' ? 17 : 14}" font-weight="${l.k === 'p50' ? 700 : 400}">${fmt(l.v)} <tspan fill="#8a8f99" font-size="12">${l.t}</tspan></text>`;
+  });
+  g += `<line x1="${x0}" x2="${x0}" y1="${T}" y2="${H - B}" stroke="#3a4050" stroke-dasharray="3 4"/>`;
+  g += `<text x="${x0 + 8}" y="${T + 16}" fill="#8a8f99" font-size="13">forecast &rarr;</text><text x="${x0 - 8}" y="${T + 16}" fill="#8a8f99" font-size="13" text-anchor="end">&larr; what happened</text>`;
+  g += `<text x="${xs(0)}" y="${H - 18}" fill="#8a8f99" font-size="14">${DLONG(hist[0].date)}</text>`;
   return g;
 }
+
+function renderForecastView() {
+  const f = fcState; if (!f) return;
+  const fc = f.forecast, last = fc.last_close, d = fc.days[fcDay];
+  const pct = v => sgn((v / last - 1) * 100, 1) + '%';
+  $('daypick').innerHTML = fc.days.map((x, k) => `<button class="${k === fcDay ? 'on' : ''}" onclick="pickDay(${k})">${DOW(x.date)} ${x.date.slice(5)}${k === 4 ? ' · end of week' : ''}</button>`).join('');
+  const up = chanceAbove(d, last);
+  $('aMid').innerHTML = `${fmt(d.p50)} <span class="${cls(d.p50 - last)}" style="font-size:16px">${pct(d.p50)}</span>`;
+  $('aMidD').textContent = `${DLONG(d.date)} close. Half the simulated outcomes end above this, half below. It is not a prediction that the price sits still.`;
+  $('a80').textContent = `${fmt(d.p10)} – ${fmt(d.p90)}`;
+  $('a80D').textContent = `${pct(d.p10)} to ${pct(d.p90)}. About 4 times in 5 the close should land in here.`;
+  $('a95').textContent = `${fmt(d.p2_5)} – ${fmt(d.p97_5)}`;
+  $('a95D').textContent = `${pct(d.p2_5)} to ${pct(d.p97_5)}. Outside this happens about 1 time in 20.`;
+  $('aUp').innerHTML = up == null ? '—' : `<span class="${up >= 0.5 ? 'up' : 'down'}">${Math.round(up * 100)}%</span>`;
+  $('aUpD').textContent = `Chance the ${DLONG(d.date)} close is above the last close of ${fmt(last)}. 50% would be a coin flip.`;
+  $('fcbig').innerHTML = bigFan(f.history.slice(-60), fc.days, fcDay);
+  const lo = Math.min(...fc.days.map(x => x.p2_5)), hi = Math.max(...fc.days.map(x => x.p97_5)), sp = hi - lo;
+  const X = v => ((v - lo) / sp * 100).toFixed(2) + '%';
+  $('fcrows').innerHTML = fc.days.map((x, k) => {
+    const u = chanceAbove(x, last);
+    return `<div class="rbar" style="${k === fcDay ? 'background:#1c1712;border-radius:6px' : ''}" onclick="pickDay(${k})">
+      <div><b>${DLONG(x.date)}</b></div>
+      <div class="num">${fmt(x.p50)} <span class="${cls(x.p50 - last)}">${pct(x.p50)}</span></div>
+      <div class="track"><div class="b95" style="left:${X(x.p2_5)};width:${((x.p97_5 - x.p2_5) / sp * 100).toFixed(2)}%"></div>
+        <div class="b80" style="left:${X(x.p10)};width:${((x.p90 - x.p10) / sp * 100).toFixed(2)}%"></div>
+        <div class="now" style="left:${X(last)}" title="last close ${fmt(last)}"></div><div class="mid" style="left:${X(x.p50)}"></div>
+        <span class="lbl" style="left:${X(x.p10)}">${fmt(x.p10)}</span><span class="lbl" style="left:${X(x.p90)}">${fmt(x.p90)}</span></div>
+      <div class="num" style="text-align:right">${u == null ? '' : `<span class="${u >= 0.5 ? 'up' : 'down'}">${Math.round(u * 100)}%</span> <span class="dim">higher</span>`}</div></div>`;
+  }).join('') + `<div class="note" style="margin-top:14px">Bars share one price scale: light = 95% range, dark = 80% range, orange tick = middle, dashed line = last close ${fmt(last)}.</div>`;
+  const wide80 = ((d.p90 - d.p10) / last * 100).toFixed(0);
+  $('fcread').innerHTML = `
+    <li><b>Most likely outcome is a big move, not a flat line.</b> By ${DLONG(d.date)} the 80% range spans about ${wide80}% of the price. The middle line is only the centre of that spread.</li>
+    <li><b>The middle line ${Math.abs(d.p50 / last - 1) < 0.003 ? 'stays near the last close' : (d.p50 > last ? 'tilts up' : 'tilts down')}</b> because ${fc.model === 'v2' ? "the ranges self-correct from the model's own past misses (recently it was too low on the upside). That tilt is not a proven direction call: direction tests came out at about a coin flip" : 'no trend is assumed'}.</li>
+    <li><b>Wider ranges = more risk.</b> The range widens each day ahead because uncertainty adds up. After a sharp selloff it is wider than usual.</li>
+    <li><b>Use it for "how far could it go", not "which way".</b> Research only, not trading advice.</li>`;
+}
+function pickDay(k) { fcDay = k; renderForecastView(); }
+
 async function loadForecast() {
   const r = await fetch('/api/forecast?symbol=' + sel);
-  $('fctitle').textContent = `5-day forecast · ${sel}`;
+  $('fctitle').textContent = `${sel} · next 5 trading days`;
   if (!r.ok) {
-    $('fcchip').textContent = 'NO FORECAST'; $('fcchip').className = 'chip';
-    $('fcnote').innerHTML = `No forecast for ${sel} yet. Forecasts currently cover MU, NVDA, AMD and AAPL; gold and silver follow once a Databento key is added. Run <span class="num">tools\\daily-forecast.cmd</span> after the US close to refresh.`;
-    $('fcbody').style.display = 'none'; $('fcholdcard').style.display = 'none'; return;
+    fcState = null;
+    $('fcchip').textContent = 'NO FORECAST'; $('fcchip').className = 'chip'; $('fcsub').textContent = '';
+    $('fcnone').style.display = 'block'; $('fcbody').style.display = 'none';
+    $('fcnone').innerHTML = `No forecast for ${sel} yet. Forecasts currently cover MU, NVDA, AMD and AAPL; gold and silver follow once a Databento key is added. Run <span class="num">tools\\daily-forecast.cmd</span> after the US close to refresh.`;
+    $('fchint').innerHTML = `No 5-day forecast for ${sel} yet`;
+    return;
   }
   const f = await r.json(), fc = f.forecast, v = f.validation, ok = fc.validated;
-  $('fcbody').style.display = ''; $('fcholdcard').style.display = '';
+  fcState = f;
+  $('fcnone').style.display = 'none'; $('fcbody').style.display = '';
+  $('fchint').innerHTML = `&#128302; Open the 5-trading-day forecast for ${sel} &rarr;`;
   $('fcchip').textContent = ok ? 'VALIDATED' : 'NOT VALIDATED'; $('fcchip').className = 'chip ' + (ok ? 'live' : 'demo');
-  $('fcnote').innerHTML = `Made at the close of ${fc.asof} (last close ${fmt(fc.last_close)}). ${fc.model === 'v2' ? 'Volatility model with self-correcting ranges: they widen or lean when past ranges missed, so the middle line can tilt. That tilt reflects recent misses, not a proven direction call; the ranges carry the information.' : 'No trend is assumed, so the middle line stays near the last close; the ranges carry the information.'}
-    ${ok ? '' : '<span class="bad">This stock failed the 250-day check (its ranges were too narrow), so treat its ranges as too optimistic.</span>'} Research only, not advice.`;
-  $('fcsvg').innerHTML = fanSvg(f.history.slice(-30), fc.days);
-  $('fctable').innerHTML = fc.days.map(d => `<tr><td>${d.date}</td><td class="num">${fmt(d.p50)} <span class="dim">(${sgn((d.p50 / fc.last_close - 1) * 100)}%)</span></td>
-    <td class="num">${fmt(d.p10)} – ${fmt(d.p90)}</td><td class="num dim">${fmt(d.p2_5)} – ${fmt(d.p97_5)}</td></tr>`).join('');
+  $('fcsub').innerHTML = `Made at the close of ${DLONG(fc.asof)} · last close <b class="num">${fmt(fc.last_close)}</b> · ${fc.model === 'v2' ? 'volatility model with self-correcting ranges' : 'volatility model'} · 20,000 simulated paths
+    ${ok ? '' : ' · <span class="bad">failed the 250-day check: treat the ranges as too narrow</span>'}`;
+  renderForecastView();
   if (v) {
-    const c80 = v.h.map(x => x.coverage.in80.toFixed(2)).join(' · '), c95 = v.h.map(x => x.coverage.in95.toFixed(2)).join(' · ');
     const cell = (x, t, tol) => `<td class="num ${Math.abs(x - t) <= tol ? 'ok' : 'bad'}">${(x * 100).toFixed(0)}%</td>`;
     $('fcval').innerHTML = `<div style="margin-bottom:8px">Checked on each of the last ${v.origins} trading days: <b class="${v.passed ? 'ok' : 'bad'}">${v.passed ? 'PASS' : 'FAIL'}</b>.
-      How often the real close landed inside the forecast range:</div>
+      How often the real close landed inside the range:</div>
       <table><thead><tr><th>Range</th>${v.h.map(x => `<th>Day ${x.h}</th>`).join('')}<th>Target</th></tr></thead><tbody>
       <tr><td>80% range</td>${v.h.map(x => cell(x.coverage.in80, 0.80, 0.06)).join('')}<td class="num dim">80%</td></tr>
       <tr><td>95% range</td>${v.h.map(x => cell(x.coverage.in95, 0.95, 0.04)).join('')}<td class="num dim">95%</td></tr></tbody></table>
@@ -419,10 +539,22 @@ async function loadForecast() {
   const h = f.holdout;
   if (h) {
     const inside = h.days.filter(d => d.in80).length;
-    $('fchold').innerHTML = `<div class="note" style="margin-bottom:6px">Fitted only on closes up to ${h.asof} (${fmt(h.last_close)}), then compared with what happened: <b class="${inside >= 4 ? 'ok' : 'bad'}">${inside}/5 closes inside the 80% range</b>.</div>
-      <table><thead><tr><th>Date</th><th>Forecast middle</th><th>80% range</th><th>Actual close</th><th>Result</th></tr></thead><tbody>${h.days.map(d => `<tr><td>${d.date}</td><td class="num">${fmt(d.p50)}</td>
+    $('fchold').innerHTML = `<div class="note" style="margin-bottom:6px">Fitted only on closes up to ${DLONG(h.asof)} (${fmt(h.last_close)}), then compared with what happened: <b class="${inside >= 4 ? 'ok' : 'bad'}">${inside}/5 closes inside the 80% range</b>.</div>
+      ${h.model === 'v2' ? '' : '<div class="note" style="margin-bottom:6px">This test used the earlier model (no self-correcting ranges); the forecast above uses the improved one.</div>'}
+      <table><thead><tr><th>Date</th><th>Forecast middle</th><th>80% range</th><th>Actual close</th><th>Result</th></tr></thead><tbody>${h.days.map(d => `<tr><td>${DLONG(d.date)}</td><td class="num">${fmt(d.p50)}</td>
       <td class="num">${fmt(d.p10)} – ${fmt(d.p90)}</td><td class="num">${fmt(d.actual)}</td><td>${d.in80 ? '<span class="ok">✓ inside</span>' : '<span class="bad">✗ outside</span>'}</td></tr>`).join('')}</tbody></table>`;
   } else $('fchold').innerHTML = '<span class="note">No hold-out test for this stock yet.</span>';
+}
+
+function setCenterTab(c) {
+  document.querySelectorAll('[data-c]').forEach(x => x.classList.toggle('on', x.dataset.c === c));
+  $('app').classList.toggle('wide', c === 'forecast');
+  ['toolbar', 'legend', 'chartwrap', 'fchint'].forEach(id => $(id).style.display = c === 'chart' ? '' : 'none');
+  $('fcview').style.display = c === 'forecast' ? 'block' : 'none';
+  $('aiview').style.display = c === 'ai' ? 'block' : 'none';
+  if (c === 'forecast') { renderForecastView(); $('center').scrollTop = 0; }
+  if (c === 'chart') setTimeout(() => chart.timeScale().fitContent && drawChart(false), 0);
+  try { history.replaceState(null, '', c === 'forecast' ? '#forecast' : location.pathname); } catch {}
 }
 
 // ---------------------------------------------------------------- toolbar
@@ -474,7 +606,7 @@ function tickClock() {
   setInterval(() => loadBars(false), 15000);
   setInterval(loadSignals, 30000);
   setInterval(loadForecast, 300000);
-  if (location.hash === '#forecast') setTimeout(() => $('fcsec').scrollIntoView({ behavior: 'instant' }), 300);
+  if (location.hash === '#forecast') setCenterTab('forecast');
 })();
 </script>
 </body>
