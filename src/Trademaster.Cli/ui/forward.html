@@ -22,6 +22,11 @@ main{padding:14px;display:grid;gap:14px;max-width:1500px;margin:0 auto}
 .chart{height:260px}.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}
 table{width:100%;border-collapse:collapse}th,td{padding:5px 10px;text-align:right;white-space:nowrap}th{color:var(--muted);font-weight:500;font-size:11px;border-bottom:1px solid var(--line)}td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #1a1f25}
 .note{color:var(--muted);font-size:12px;padding:0 2px}.legend{display:flex;gap:14px;font-size:12px;color:var(--muted)}
+.sig{display:inline-block;min-width:92px;text-align:center;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:700}
+.sig.b{color:var(--up);background:#0f2a20;border:1px solid #164d36}.sig.sb{color:#0b0e11;background:var(--up)}
+.sig.s{color:var(--down);background:#2c1217;border:1px solid #5a1f29}.sig.ss{color:#0b0e11;background:var(--down)}
+.board{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;padding:10px 12px}
+.scroll{max-height:420px;overflow:auto}
 </style>
 </head>
 <body>
@@ -36,6 +41,13 @@ table{width:100%;border-collapse:collapse}th,td{padding:5px 10px;text-align:righ
 </header>
 <main>
   <div class="note" id="banner"></div>
+  <div class="panel" id="sigpanel">
+    <div class="ph">Buy / sell indicators · 30-min cross-stock model · research only, not advice
+      <span class="chip" id="sigstatus">—</span><span class="dim" id="sigmeta"></span><div class="spacer"></div><select id="sigrun"></select></div>
+    <div class="note" style="padding:8px 12px 0" id="signote"></div>
+    <div class="board" id="sigboard"></div>
+    <div class="scroll"><table><thead><tr><th>Time ET</th><th>Symbol</th><th style="text-align:center">Signal</th><th>Price</th><th>Predicted vs peers</th><th>Actual 30 min vs peers</th><th>After cost</th><th>Result</th></tr></thead><tbody id="sigrows"></tbody></table></div>
+  </div>
   <div class="cards" id="cards"></div>
   <div class="two">
     <div class="panel"><div class="ph">Cumulative long/short P&amp;L, net of costs (bps of gross) <span class="legend" id="leg1"></span></div><div class="chart" id="cum"></div></div>
@@ -108,6 +120,40 @@ async function refresh() {
     `<div>Target</div><div>${s.target}, ${s.horizon_bars} × ${s.interval} bars</div>` +
     (s.errors && s.errors.length ? `<div>Recent fetch errors</div><div class="down">${s.errors.length}</div>` : '');
 }
+const SIGC = { 'STRONG BUY': 'sb', 'BUY': 'b', 'SELL': 's', 'STRONG SELL': 'ss' };
+async function loadSignals() {
+  const runs = await (await fetch('/api/forward/signals/runs')).json();
+  const cur = $('sigrun').value;
+  $('sigrun').innerHTML = runs.map(r => `<option ${r === cur ? 'selected' : ''}>${r}</option>`).join('') || '<option>no signal runs yet</option>';
+  const run = $('sigrun').value;
+  const r = await fetch('/api/forward/signals' + (runs.length ? '?run=' + encodeURIComponent(run) : ''));
+  if (!r.ok) { $('sigstatus').textContent = 'NO SIGNALS YET'; $('signote').textContent = 'Start: python -m trademaster_ml.signals_live live'; return; }
+  const s = await r.json();
+  const live = s.mode === 'live';
+  $('sigstatus').textContent = (live ? 'LIVE · ' : 'REHEARSAL · ') + s.status.toUpperCase();
+  $('sigstatus').className = 'chip ' + (live && s.status === 'live' ? 'ok' : 'warn');
+  $('sigmeta').textContent = `session ${s.session_date} · ${s.checkpoints_logged} checkpoints · ${s.signals.length} signals · last poll ${s.last_poll_utc ? new Date(s.last_poll_utc).toLocaleTimeString() : '—'}`;
+  $('signote').innerHTML = (live ? '' : '<b>Rehearsal</b> over a past session (pipeline check). ') +
+    `Every 30 min the frozen model (trained ${s.frozen.train[0]} → ${s.frozen.train[1]}, sha256 ${s.frozen.sha256.slice(0, 12)}…) flags stocks expected to beat (BUY) or lag (SELL) the other stocks over the next 30 min by more than the ${2 * s.cost_one_way_bps} bps round-trip cost. ` +
+    `Signals are written before the outcome exists and scored 30 min later. Out-of-sample history so far: right ~51–56%, slightly negative after costs.`;
+  $('sigboard').innerHTML = ['STRONG BUY', 'BUY', 'SELL', 'STRONG SELL'].map(k => {
+    const b = s.scoreboard[k] || {};
+    return `<div class="card"><h3><span class="sig ${SIGC[k]}">${k}</span></h3><div class="kv">
+      <div>Signals / scored</div><div>${b.count ?? 0} / ${b.scored ?? 0}</div>
+      <div>Right (vs peers)</div><div>${b.hit_rate == null ? '—' : (b.hit_rate * 100).toFixed(0) + '%'}</div>
+      <div>Avg after cost</div><div class="${cls(b.avg_net_bps)}">${b.avg_net_bps == null ? '—' : fmt(b.avg_net_bps, 1) + ' bps'}</div></div></div>`;
+  }).join('');
+  const rows = s.signals.slice().sort((a, b) => b.t - a.t || Math.abs(b.pred_bps) - Math.abs(a.pred_bps));
+  $('sigrows').innerHTML = rows.map(x => `<tr><td class="num">${x.time}</td><td>${x.symbol}</td><td style="text-align:center"><span class="sig ${SIGC[x.signal]}">${x.signal}</span></td>
+    <td class="num">${x.price.toFixed(2)}</td><td class="num ${cls(x.pred_bps)}">${fmt(x.pred_bps, 1)} bps</td>
+    <td class="num ${cls(x.actual_rel_bps)}">${x.actual_rel_bps == null ? '<span class="dim">pending</span>' : fmt(x.actual_rel_bps, 1) + ' bps'}</td>
+    <td class="num ${cls(x.net_bps)}">${x.net_bps == null ? '' : fmt(x.net_bps, 1) + ' bps'}</td>
+    <td>${x.right == null ? '<span class="dim">…</span>' : x.right ? '<span class="up">✓ right</span>' : '<span class="down">✗ wrong</span>'}</td></tr>`).join('')
+    || '<tr><td colspan="8" class="dim">No signals yet. The first checkpoint is 09:35 ET.</td></tr>';
+}
+$('sigrun').addEventListener('change', loadSignals);
+loadSignals();
+setInterval(loadSignals, 15000);
 $('run').addEventListener('change', refresh);
 loadRuns().then(refresh);
 setInterval(() => loadRuns().then(refresh), 15000);

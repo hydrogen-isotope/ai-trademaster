@@ -98,6 +98,25 @@ public static class Dashboard
             using var sr = new StreamReader(fs);
             return Results.Text(sr.ReadToEnd(), "application/json");
         });
+        // Buy/sell indicators (research only): files written by python -m trademaster_ml.signals_live
+        IEnumerable<string> SignalRuns() => Directory.Exists(fwdRoot)
+            ? new DirectoryInfo(fwdRoot).GetDirectories("signals-*")
+                .Where(d => File.Exists(Path.Combine(d.FullName, "signals.json")))
+                .OrderByDescending(d => d.Name[^10..]).ThenByDescending(d => d.Name.StartsWith("signals-live-"))
+                .Select(d => d.Name)
+            : [];
+        app.MapGet("/api/forward/signals/runs", () => Results.Json(SignalRuns().ToList()));
+        app.MapGet("/api/forward/signals", (string? run) =>
+        {
+            var name = run ?? SignalRuns().FirstOrDefault();
+            if (name is null || !name.StartsWith("signals-") || name.Contains("..") || name.Contains('/') || name.Contains('\\'))
+                return Results.NotFound();
+            var path = Path.Combine(fwdRoot, name, "signals.json");
+            if (!File.Exists(path)) return Results.NotFound();
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var sr = new StreamReader(fs);
+            return Results.Text(sr.ReadToEnd(), "application/json");
+        });
         app.MapGet("/api/history", (string symbol) =>
         {
             lock (store.Lock)
