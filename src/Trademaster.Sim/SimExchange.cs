@@ -39,7 +39,7 @@ public sealed class SimExchange : IExecutionAdapter, IDisposable
 
     private readonly ReplayReader _md;
     private readonly MarketCalendar _calendar;
-    private readonly TickTable _ticks;
+    private readonly TickTable[] _ticks;
     private readonly ExchangeConfig _ex;
     private readonly ExecutionSection _cfg;
     private readonly long _latency;
@@ -69,7 +69,7 @@ public sealed class SimExchange : IExecutionAdapter, IDisposable
         _md = new ReplayReader(exchangeReplayPath);
         _ex = exchange;
         _calendar = new MarketCalendar(exchange);
-        _ticks = exchange.BuildTickTable();
+        _ticks = exchange.BuildTickTables(universe);
         _cfg = cfg;
         _latency = cfg.OrderLatencyMs * Ns.PerMs;
         _rng = new Random(cfg.Seed);
@@ -305,7 +305,7 @@ public sealed class SimExchange : IExecutionAdapter, IDisposable
         else if (i < 0 || i >= _bid.Length) reason = "UnknownInstrument";
         else if (_calendar.Phase(ts) != MarketPhase.Open) reason = "MarketClosed";
         else if (_halted[i]) reason = "Halted";
-        else if (!_ticks.IsValid(req.Limit)) reason = "InvalidTick";
+        else if (!_ticks[i].IsValid(req.Limit)) reason = "InvalidTick";
         else if (req.Qty <= 0 || req.Qty % Math.Max(1, _ex.LotSize) != 0) reason = "InvalidLot";
         else if (_bid[i] > 0 && _ask[i] > 0)
         {

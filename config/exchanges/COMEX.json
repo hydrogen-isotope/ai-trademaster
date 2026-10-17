@@ -1,0 +1,21 @@
+{
+  // COMEX metals futures on CME Globex. Contract specs (trading hours, tick sizes, multipliers, last trading day) were
+  // checked against CME Group's official contract-spec pages on 2026-10-17:
+  //   https://www.cmegroup.com/markets/metals/precious/gold.contractSpecs.html
+  //   https://www.cmegroup.com/markets/metals/precious/silver.contractSpecs.html
+  // NOT verified yet: the holiday list, exchange/clearing fees and margins. That is why "verified" stays false
+  // and the engine will not trade this venue (futures are also excluded from the decision stage).
+  "id": "COMEX",
+  "name": "COMEX (CME Globex) metals futures",
+  "verified": false,
+  "notes": "Specs verified 2026-10-17 from CME pages; holidays, fees and margins still to verify. Per-instrument tick sizes come from the universe (GC 0.10, SI 0.005).",
+  "time_zone": "America/New_York",
+  "currency": "USD",
+  "sessions": [ { "open": "18:00", "close": "17:00" } ],
+  "holidays": [ "2026-11-26", "2026-12-25", "2027-01-01" ],
+  "tick_table": [ { "from": 0, "tick": 0.005 } ],
+  "lot_size": 1,
+  "price_collar_pct": 0,
+  "fee_bps": 0,
+  "min_fee": 0
+}

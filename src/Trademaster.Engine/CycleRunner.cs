@@ -65,7 +65,7 @@ public sealed class CycleRunner : IDisposable
     private readonly FeatureDump? _dump;
     private readonly bool _flattenOnKill;
     private readonly HashSet<long> _flattenIds = [];
-    private readonly TickTable _ticks;
+    private readonly TickTable[] _ticks;
 
     private readonly long _cadence, _budget, _grace, _virtualLatency;
     private bool _wasConnected = true;
@@ -109,12 +109,12 @@ public sealed class CycleRunner : IDisposable
         _s4 = new S4Pack(n, model.Spec, _s2, _s3, _u.ReferenceEtfs(), cfg.Model.BetaHalflifeCycles);
         _policy = new DecisionPolicy(cfg.Decision, cfg.Risk, ex, _u);
         _om = new OrderManager(n, (decimal)cfg.Account.StartingCash);
-        _risk = new RiskManager(cfg.Risk, ex, _om.StartingCash);
+        _risk = new RiskManager(cfg.Risk, ex, _om.StartingCash, _u);
         _audit = new AuditLog(Path.Combine(outputDir, "decisions.jsonl"), _u, model, _manifest);
         _preds = new Prediction[n];
         _ageScratch = new double[n];
         if (cfg.Run.DumpFeatures) _dump = new FeatureDump(outputDir, _u, _manifest, cfg.Run.CadenceMs);
-        _ticks = ex.BuildTickTable();
+        _ticks = ex.BuildTickTables(_u);
         _flattenOnKill = cfg.Risk.KillSwitchAction switch
         {
             "hold" => false, "flatten" => true,
@@ -423,7 +423,7 @@ public sealed class CycleRunner : IDisposable
             if (_om.Open.Any(o => o.Req.Instrument == i)) continue; // let the working / cancelling order resolve first
             var side = pos > 0 ? Side.Sell : Side.Buy;
             var limit = new Price(side == Side.Sell ? _s2.GoodBid[i] : _s2.GoodAsk[i]);
-            if (!_ticks.IsValid(limit)) continue;
+            if (!_ticks[i].IsValid(limit)) continue;
             var it = new OrderIntent(i, side, Math.Abs(pos), limit, 0, 0, 0, 0, _s2.GoodBid[i], _s2.GoodAsk[i], "kill_flatten", limit);
             var req = new OrderRequest(_om.NextOrderId(), i, side, Math.Abs(pos), limit, k);
             if (_exec.Submit(req, ts) == SubmitResult.Sent)

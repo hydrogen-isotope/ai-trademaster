@@ -26,7 +26,7 @@ public readonly record struct OrderIntent(
 public sealed class DecisionPolicy
 {
     private readonly DecisionSection _cfg;
-    private readonly TickTable _ticks;
+    private readonly TickTable[] _ticks;
     private readonly double _feeFrac, _maxPos;
     private readonly int _lot;
     private readonly bool[] _tradeable;
@@ -36,7 +36,7 @@ public sealed class DecisionPolicy
     public DecisionPolicy(DecisionSection cfg, RiskSection risk, ExchangeConfig exchange, Universe universe)
     {
         _cfg = cfg;
-        _ticks = exchange.BuildTickTable();
+        _ticks = exchange.BuildTickTables(universe);
         _feeFrac = (double)exchange.FeeBps / 1e4;
         _lot = Math.Max(1, exchange.LotSize);
         _maxPos = risk.MaxPositionNotional;
@@ -63,7 +63,7 @@ public sealed class DecisionPolicy
 
             if (mu > cost + margin && score >= _cfg.EntryScore)
             {
-                var cutoff = _ticks.RoundDown(Price.FromDoubleFloor(mid * (1 + mu - _feeFrac - margin)));
+                var cutoff = _ticks[i].RoundDown(Price.FromDoubleFloor(mid * (1 + mu - _feeFrac - margin)));
                 var limit = Price.Min(cutoff, new Price(Passive ? bid : ask));
                 if (!limit.IsPositive) continue;
                 double targetNotional = Math.Min(_maxPos, _cfg.BaseNotional * score / _cfg.EntryScore);
@@ -75,7 +75,7 @@ public sealed class DecisionPolicy
             }
             else if (pos > 0 && score < -_cfg.ExitScore)
             {
-                var cutoff = _ticks.RoundUp(Price.FromDoubleCeiling(mid * (1 + mu + _feeFrac + margin)));
+                var cutoff = _ticks[i].RoundUp(Price.FromDoubleCeiling(mid * (1 + mu + _feeFrac + margin)));
                 var limit = Price.Max(cutoff, new Price(Passive ? ask : bid));
                 intents.Add(new OrderIntent(i, Side.Sell, pos, limit, p.Mu, p.Sigma, (float)score, p.Beta, bid, ask, "exit", cutoff,
                     p.HasPeer ? p.Peer : -1, p.PeerWeight));

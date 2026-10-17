@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace Trademaster.Core;
 
-public enum InstrumentType { Stock, Etf, Index }
+public enum InstrumentType { Stock, Etf, Index, Future }
 
 public enum LiquidityClass { High, Medium, Low }
 
@@ -10,7 +10,20 @@ public enum LiquidityClass { High, Medium, Low }
 /// Public instrument metadata. <see cref="Sector"/> is a public classification; for an ETF it is the
 /// sector (or "MARKET") the fund publicly tracks. ETF holdings are never part of this record.
 /// </summary>
-public sealed record Instrument(int Id, string Symbol, InstrumentType Type, string? Sector, LiquidityClass Liquidity);
+public sealed record Instrument(int Id, string Symbol, InstrumentType Type, string? Sector, LiquidityClass Liquidity)
+{
+    /// <summary>Futures: product root, e.g. "GC". Null for stocks and ETFs.</summary>
+    public string? Root { get; init; }
+    /// <summary>Futures: units per contract (GC 100 troy oz, SI 5,000 troy oz). 1 for stocks.</summary>
+    public decimal Multiplier { get; init; } = 1m;
+    /// <summary>Per-instrument minimum price fluctuation; overrides the exchange tick table when set.</summary>
+    public decimal? TickSize { get; init; }
+    /// <summary>Futures: last trading day of the contract (exchange local date).</summary>
+    public DateOnly? LastTradeDate { get; init; }
+
+    /// <summary>Money value of one tick for one contract (or share).</summary>
+    public decimal? TickValue => TickSize is decimal t ? t * Multiplier : null;
+}
 
 public sealed class Universe
 {

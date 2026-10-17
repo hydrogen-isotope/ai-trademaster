@@ -16,7 +16,8 @@ public enum RiskReason
 public sealed class RiskManager
 {
     private readonly RiskSection _cfg;
-    private readonly TickTable _ticks;
+    private readonly TickTable[]? _ticks;
+    private readonly TickTable _shared;
     private readonly int _lot;
     private readonly decimal _startEquity;
 
@@ -24,10 +25,11 @@ public sealed class RiskManager
     public string? KillReason { get; private set; }
     public Dictionary<RiskReason, long> Rejections { get; } = [];
 
-    public RiskManager(RiskSection cfg, ExchangeConfig exchange, decimal startEquity)
+    public RiskManager(RiskSection cfg, ExchangeConfig exchange, decimal startEquity, Universe? universe = null)
     {
         _cfg = cfg;
-        _ticks = exchange.BuildTickTable();
+        _shared = exchange.BuildTickTable();
+        _ticks = universe is null ? null : exchange.BuildTickTables(universe);
         _lot = Math.Max(1, exchange.LotSize);
         _startEquity = startEquity;
     }
@@ -53,7 +55,7 @@ public sealed class RiskManager
     {
         if (approvedThisCycle >= _cfg.MaxOrdersPerCycle) return RiskReason.OrderRateLimit;
         if (b.Mask[it.Instrument] == 0) return RiskReason.InstrumentMasked;
-        if (!_ticks.IsValid(it.Limit)) return RiskReason.InvalidTick;
+        if (!(_ticks?[it.Instrument] ?? _shared).IsValid(it.Limit)) return RiskReason.InvalidTick;
         if (it.Qty <= 0 || it.Qty % _lot != 0) return RiskReason.InvalidLot;
         double mid = (it.Bid + it.Ask) / (2.0 * Price.Scale);
         if (Math.Abs(it.Limit.ToDouble() - mid) / mid * 100 > _cfg.PriceCollarPct) return RiskReason.PriceCollar;
