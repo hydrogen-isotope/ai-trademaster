@@ -166,6 +166,23 @@ public class DecisionAndRiskTests
     }
 
     [Fact]
+    public void Average_cost_and_realized_pnl_follow_fills()
+    {
+        var om = new OrderManager(1, 100_000m);
+        ExecutionReport F(Side s, long q, decimal px) => new(1, 0, s, ReportKind.Fill, 0, q, P(px), 0m, 0, null);
+        om.Apply(F(Side.Buy, 100, 10m));
+        om.Apply(F(Side.Buy, 100, 12m));
+        Assert.Equal(11m, om.AvgCost[0]);
+        om.Apply(F(Side.Sell, 150, 13m));                  // closes 150 at +2 each
+        Assert.Equal(50, om.Position[0]);
+        Assert.Equal(300m, om.Realized[0]);
+        Assert.Equal(11m, om.AvgCost[0]);
+        om.Apply(F(Side.Sell, 50, 9m));                    // closes the rest at -2 each, now flat
+        Assert.Equal(200m, om.Realized[0]);
+        Assert.Equal(0m, om.AvgCost[0]);
+    }
+
+    [Fact]
     public void Kill_switch_latches_on_daily_loss()
     {
         var risk = new RiskManager(new RiskSection { MaxDailyLoss = 1000 }, Exchange(), 100_000m);

@@ -29,6 +29,7 @@ public static class Dashboard
         public readonly Dictionary<string, List<(long T, double Mu)>> Mu = [];
         public readonly Dictionary<string, List<FillView>> Fills = [];
         public readonly Dictionary<string, double> Open = [];
+        public readonly List<(long T, double Equity)> EquityCurve = [];
         public readonly Queue<double> Latency = new();
         public readonly Dictionary<string, long> StatusCounts = [];
         public long Missed, OverBudget, Cycles;
@@ -40,7 +41,7 @@ public static class Dashboard
 
         public void Reset()
         {
-            Bars.Clear(); Mu.Clear(); Fills.Clear(); Open.Clear(); Latency.Clear(); StatusCounts.Clear();
+            Bars.Clear(); Mu.Clear(); Fills.Clear(); Open.Clear(); Latency.Clear(); StatusCounts.Clear(); EquityCurve.Clear();
             Missed = OverBudget = Cycles = 0;
         }
     }
@@ -106,6 +107,16 @@ public static class Dashboard
                 var fills = store.Fills.TryGetValue(symbol, out var f) ? f.ToList() : [];
                 return Results.Json(new { symbol, bars, mu, fills }, JsonOpts);
             }
+        });
+        app.MapGet("/api/equity", () =>
+        {
+            lock (store.Lock) return Results.Json(store.EquityCurve.Select(e => new { t = e.T, v = e.Equity }).ToList(), JsonOpts);
+        });
+        app.MapGet("/api/sparklines", () =>
+        {
+            lock (store.Lock)
+                return Results.Json(store.Bars.ToDictionary(kv => kv.Key,
+                    kv => kv.Value.Skip(Math.Max(0, kv.Value.Count - 120)).Select(b => Math.Round(b.C, 4)).ToList()), JsonOpts);
         });
         app.MapGet("/api/stream", async (HttpContext ctx) =>
         {
@@ -179,6 +190,8 @@ public static class Dashboard
                 s.StatusCounts[v.Status] = s.StatusCounts.GetValueOrDefault(v.Status) + 1;
                 if (v.Status == "Missed") s.Missed++;
                 if (v.OverBudget) s.OverBudget++;
+                long sec = v.CutoffTs / Ns.PerSec;
+                if (s.EquityCurve.Count == 0 || s.EquityCurve[^1].T < sec) s.EquityCurve.Add((sec, Math.Round(v.Equity, 2)));
                 s.Latency.Enqueue(v.ToOrderMs);
                 while (s.Latency.Count > 300) s.Latency.Dequeue();
                 long bucket = v.CutoffTs / Ns.PerSec / BaseBarSec * BaseBarSec;

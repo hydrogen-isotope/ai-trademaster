@@ -345,7 +345,10 @@ public sealed class CycleRunner : IDisposable
                 _s2.GoodBid[i] / (double)Price.Scale, _s2.GoodAsk[i] / (double)Price.Scale, _s2.GoodBidSize[i], _s2.GoodAskSize[i],
                 lastTrade[i], vol[i],
                 has, has ? p.Mu * 1e4 : 0, has ? p.Sigma * 1e4 : 0, has ? p.Mu / p.Sigma : 0, has ? p.Beta : _s4.Stats.Beta[i],
-                _om.Position[i], _s2.Mask[i].ToString());
+                _om.Position[i], _s2.Mask[i].ToString(),
+                (double)_om.AvgCost[i],
+                _om.Position[i] != 0 && Mark(i) > 0 ? _om.Position[i] * (Mark(i) - (double)_om.AvgCost[i]) : 0,
+                (double)_om.Realized[i]);
         }
         string Sym(int i) => i >= 0 && i < n ? _u.Instruments[i].Symbol : "?";
         var fills = _reports.Where(r => r.Kind == ReportKind.Fill)

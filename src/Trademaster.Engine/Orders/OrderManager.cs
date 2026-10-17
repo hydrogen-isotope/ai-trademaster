@@ -24,6 +24,10 @@ public sealed class OrderManager
     private long _nextId = 1;
 
     public long[] Position { get; }
+    /// <summary>Average entry price of the open position (0 when flat). Fees are tracked separately.</summary>
+    public decimal[] AvgCost { get; }
+    /// <summary>Realized P&amp;L per instrument from closed quantity, before fees.</summary>
+    public decimal[] Realized { get; }
     public decimal Cash { get; private set; }
     public decimal Fees { get; private set; }
     public decimal StartingCash { get; }
@@ -34,6 +38,8 @@ public sealed class OrderManager
     public OrderManager(int instruments, decimal startingCash)
     {
         Position = new long[instruments];
+        AvgCost = new decimal[instruments];
+        Realized = new decimal[instruments];
         Cash = StartingCash = startingCash;
     }
 
@@ -67,6 +73,23 @@ public sealed class OrderManager
         return q;
     }
 
+    /// <summary>Average-cost accounting for a signed fill (call before updating the position).</summary>
+    private void UpdateCost(int i, long signedQty, decimal px)
+    {
+        long pos = Position[i];
+        if (pos == 0 || Math.Sign(pos) == Math.Sign(signedQty))
+        {
+            long newPos = pos + signedQty;
+            AvgCost[i] = (AvgCost[i] * Math.Abs(pos) + px * Math.Abs(signedQty)) / Math.Abs(newPos);
+            return;
+        }
+        long closing = Math.Min(Math.Abs(pos), Math.Abs(signedQty));
+        Realized[i] += closing * (px - AvgCost[i]) * Math.Sign(pos);
+        long rest = Math.Abs(signedQty) - closing;
+        if (rest > 0) AvgCost[i] = px;                    // flipped through zero: the remainder opens at this price
+        else if (Math.Abs(pos) == closing) AvgCost[i] = 0; // flat
+    }
+
     public void Apply(in ExecutionReport r)
     {
         _open.TryGetValue(r.OrderId, out var o);
@@ -87,6 +110,7 @@ public sealed class OrderManager
                 // Applied even if the order already left the book (e.g. removed by reconciliation while
                 // its fill report was still in flight): the report carries side and instrument.
                 int sign = (int)r.Side;
+                UpdateCost(r.Instrument, sign * r.FillQty, (decimal)r.FillPrice.Raw / Price.Scale);
                 Position[r.Instrument] += sign * r.FillQty;
                 Cash -= sign * r.FillQty * (decimal)r.FillPrice.Raw / Price.Scale;
                 Cash -= r.Fee;

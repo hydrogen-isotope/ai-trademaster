@@ -6,7 +6,8 @@ public sealed record InstrumentView(
     double Bid, double Ask, long BidSize, long AskSize,
     double LastTrade, long CycleVolume,
     bool HasPrediction, double MuBps, double SigmaBps, double Score, double Beta,
-    long Position, string Mask);
+    long Position, string Mask,
+    double AvgCost = 0, double UnrealizedPnl = 0, double RealizedPnl = 0);
 
 public sealed record OrderView(long Id, string Symbol, string Side, long Qty, double Limit, double MuBps, double Score, string Rule);
 
