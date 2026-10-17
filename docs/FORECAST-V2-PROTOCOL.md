@@ -52,3 +52,29 @@ results are optimistic.
    beat-or-lag-the-average call was right must be above 50%, with a one-sided t-test over dates at p < 0.05.
 
 Every result is reported, pass or fail. If v2 fails a rule, the dashboard keeps showing which rule failed.
+
+---
+
+## Results (added after the run, 2026-10-17; nothing above was changed)
+**Development (2020-01-02 → 2025-10-10)**
+- Ridge penalty chosen: 10. The pooled IC was +0.0082 (t ≈ 0.5), and the cross-stock direction hit 49.9%: no
+  detectable edge.
+- The mean model did **not** beat zero mean on development CRPS, so per the protocol it is **not used**. The variant
+  shipped is GJR-GARCH-t with self-correcting ranges ("v1cal").
+
+**Final test (2025-10-13 → 2026-10-09, 250 origins)**
+
+| Rule | Result |
+|---|---|
+| 1. Calibration, all 4 stocks, all horizons | **PASS** (MU 80% hit rate 0.76–0.79, AMD 0.75–0.79, NVDA 0.78–0.81, AAPL 0.79–0.82) |
+| 2. Pooled CRPS skill vs random walk > 0 | **PASS** (+0.96%) |
+| 3. Cross-stock direction > 50%, p < 0.05 | **FAIL** (50.56%, p = 0.38; the mean model's IC on the test was +0.040) |
+
+80% hit rates per variant on the test, for comparison:
+- **MU:** v1 0.71–0.74; with self-correcting ranges 0.76–0.79.
+- **AMD:** v1 0.73–0.76; with self-correcting ranges 0.75–0.79.
+
+**Reading.** The self-correcting ranges fixed the calibration failures. Direction remains unpredictable at this
+horizon for these stocks. The median of the recalibrated forecast called the 5-day direction right 57–60% of the time
+for MU, AMD and AAPL in the test year, but that is mostly a strong uptrend leaking into the recalibration. Treat it as
+regime-dependent, not as an edge; it will lag if the trend turns.

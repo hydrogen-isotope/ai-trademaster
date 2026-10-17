@@ -7,5 +7,7 @@ set PYTHONPATH=python
 set PY=python\.venv\Scripts\python.exe -W ignore
 %PY% -m trademaster_ml.databento_client --roots GC SI --start 2019-01-01 --download --incremental --max-cost-usd 1
 %PY% -m trademaster_ml.daily_data
+%PY% -m trademaster_ml.daily_v2 refresh
 %PY% -m trademaster_ml.daily_forecast score
-%PY% -m trademaster_ml.daily_forecast forecast
+rem v2 (GARCH-t + self-correcting ranges) passed its pre-registered test; see docs/FORECAST-V2-PROTOCOL.md
+%PY% -m trademaster_ml.daily_v2 forecast

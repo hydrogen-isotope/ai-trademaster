@@ -333,7 +333,7 @@ function renderQuote() {
   if (s?.bid != null && s?.ask != null) {
     const tot = (s.bidSize || 0) + (s.askSize || 0), pct = tot ? (s.bidSize || 0) / tot * 100 : 50;
     $('ba').innerHTML = `<div class="l"><span class="up">Bid ${fmt(s.bid)} × ${fmt(s.bidSize, 0)}</span><span class="down">Ask ${fmt(s.ask)} × ${fmt(s.askSize, 0)}</span></div>
-      <div class="bar"><i style="width:${pct.toFixed(0)}%"></i></div><div class="l dim"><span>${pct.toFixed(0)}% bid</span><span>spread ${fmt(s.ask - s.bid, 2)} (${fmt((s.ask - s.bid) / ((s.ask + s.bid) / 2) * 1e4, 1)} bps)</span></div>`;
+      <div class="bar"><i style="width:${pct.toFixed(0)}%"></i></div><div class="l dim"><span>${pct.toFixed(0)}% bid</span><span>${marketState()[1] === 'open' ? `spread ${fmt(s.ask - s.bid, 2)} (${fmt((s.ask - s.bid) / ((s.ask + s.bid) / 2) * 1e4, 1)} bps)` : 'last quote · stale while the market is closed'}</span></div>`;
   } else $('ba').innerHTML = `<div class="l dim"><span>Bid / ask</span><span>${status?.live ? 'no quote' : 'not in recorded data'}</span></div>`;
   renderAiSide();
 }
@@ -401,7 +401,7 @@ async function loadForecast() {
   const f = await r.json(), fc = f.forecast, v = f.validation, ok = fc.validated;
   $('fcbody').style.display = ''; $('fcholdcard').style.display = '';
   $('fcchip').textContent = ok ? 'VALIDATED' : 'NOT VALIDATED'; $('fcchip').className = 'chip ' + (ok ? 'live' : 'demo');
-  $('fcnote').innerHTML = `Made at the close of ${fc.asof} (last close ${fmt(fc.last_close)}). ${fc.mean_model === 'random walk' ? 'No trend is assumed, so the middle line stays near the last close; the ranges carry the information.' : ''}
+  $('fcnote').innerHTML = `Made at the close of ${fc.asof} (last close ${fmt(fc.last_close)}). ${fc.model === 'v2' ? 'Volatility model with self-correcting ranges: they widen or lean when past ranges missed, so the middle line can tilt. That tilt reflects recent misses, not a proven direction call; the ranges carry the information.' : 'No trend is assumed, so the middle line stays near the last close; the ranges carry the information.'}
     ${ok ? '' : '<span class="bad">This stock failed the 250-day check (its ranges were too narrow), so treat its ranges as too optimistic.</span>'} Research only, not advice.`;
   $('fcsvg').innerHTML = fanSvg(f.history.slice(-30), fc.days);
   $('fctable').innerHTML = fc.days.map(d => `<tr><td>${d.date}</td><td class="num">${fmt(d.p50)} <span class="dim">(${sgn((d.p50 / fc.last_close - 1) * 100)}%)</span></td>
