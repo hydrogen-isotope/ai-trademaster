@@ -30,6 +30,8 @@ def credentials(root="."):
     if (not kid or not sec) and os.path.exists(path):
         cfg = json.load(open(path, encoding="utf-8"))
         kid, sec, feed = cfg.get("key_id"), cfg.get("secret_key"), feed or cfg.get("feed")
+    if kid and kid.startswith("PASTE_") or sec and sec.startswith("PASTE_"):
+        kid = sec = None                                   # template file not filled in yet
     if not kid or not sec:
         raise AlpacaConfigError("no Alpaca market-data key: set APCA_API_KEY_ID / APCA_API_SECRET_KEY or create "
                                 "private/config/alpaca.json (see docs/MARKET-DATA.md)")

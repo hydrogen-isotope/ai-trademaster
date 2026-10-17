@@ -73,6 +73,7 @@ public sealed class AlpacaMarketData : IMarketData, IDisposable
             secret = r.TryGetProperty("secret_key", out var b) ? b.GetString() : null;
             if (r.TryGetProperty("feed", out var f) && f.GetString() is { Length: > 0 } fs) feed = fs;
         }
+        if (id?.StartsWith("PASTE_") == true || secret?.StartsWith("PASTE_") == true) return null;   // template not filled in yet
         return string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(secret) ? null : new AlpacaMarketData(id!, secret!, feed);
     }
 
