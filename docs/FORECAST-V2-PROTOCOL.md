@@ -78,3 +78,22 @@ Every result is reported, pass or fail. If v2 fails a rule, the dashboard keeps 
 horizon for these stocks. The median of the recalibrated forecast called the 5-day direction right 57–60% of the time
 for MU, AMD and AAPL in the test year, but that is mostly a strong uptrend leaking into the recalibration. Treat it as
 regime-dependent, not as an edge; it will lag if the trend turns.
+
+---
+
+## v3 amendment (written before any v3 result, 2026-10-17)
+**Why.** A hold-out of 12–16 Oct 2026 with the shipped variant ("v1cal") put 10 of 20 closes inside the 80% range
+(the old v1 managed 14 of 20). MU got 0 of 5. Its recalibration had learned "too low on the upside" from an uptrend
+year, so it shifted the whole range up just before a −14.6% week. A shifting recalibration follows trends.
+
+**v3 change (one change only).** The recalibration becomes **symmetric**. From past PIT values *u* (same window of 250,
+same shrinkage n/(n+100), same no-foresight rule), take the distribution of |u − 0.5|. Each central interval of nominal
+coverage *c* is widened or narrowed to the level *c′* = 2 · quantile(|u − 0.5|, c), keeping it centred on the model's
+median. The median itself is never moved. Everything else is v1: GJR-GARCH-t, zero mean.
+
+**Selection and pass rules.**
+- Over the **development** period (2020-01-02 → 2025-10-10), whichever of "v1cal" and "v3sym" has the lower pooled
+  CRPS on the 4 stocks is chosen.
+- The chosen variant then faces **the same final-test rules as before**: calibration for each stock at every horizon,
+  and pooled CRPS skill > 0. If it fails, the dashboard labels the failing stocks NOT VALIDATED.
+- The 12–16 Oct hold-out is reported for information only. It is one week and cannot decide anything.
