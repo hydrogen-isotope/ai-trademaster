@@ -183,6 +183,24 @@ def recal_levels(pits, levels):
     return np.clip((1 - w) * levels + w * np.quantile(pits, levels), 0.001, 0.999)
 
 
+def recal_levels_sym(pits, levels):
+    """v3: symmetric recalibration. Widen or narrow each central interval to the coverage past forecasts actually
+    achieved, keeping it centred on the model's median (the median is never moved)."""
+    n = len(pits)
+    if n < 20:
+        return levels
+    w = n / (n + CAL_SHRINK)
+    dev = np.abs(np.asarray(pits) - 0.5)
+    c = np.abs(2 * levels - 1)                                  # central coverage whose edge is this level
+    c_new = np.clip(2 * np.quantile(dev, c), 0, 0.998)
+    sym = 0.5 + np.sign(levels - 0.5) * c_new / 2
+    return np.clip((1 - w) * levels + w * sym, 0.001, 0.999)
+
+
+def recal_for(variant):
+    return recal_levels_sym if variant == "v3sym" else recal_levels
+
+
 def crps_from_quantiles(q, y):
     """CRPS approximated by the pinball loss averaged over the quantile grid (x2)."""
     return float(2 * np.mean(np.where(y < q, 1 - GRID, GRID) * np.abs(y - q)))
@@ -193,7 +211,7 @@ def eval_symbol(sym, j, L, r1, vol20, P, spy, first, last, dev_last, log=print):
     rng = np.random.default_rng(13)
     r = np.diff(L[:, j])                                          # r[t-1] = return into day t
     recs, model = [], None
-    pits = {v: {h: [] for h in range(H)} for v in ["v1", "v1cal", "v2", "v2cal"]}   # PIT values, in origin order
+    pits = {v: {h: [] for h in range(H)} for v in ["v1", "v1cal", "v2", "v2cal", "v3sym"]}   # PIT values, in origin order
     pit_t = {v: {h: [] for h in range(H)} for v in pits}                                # their origins
     for k, t in enumerate(range(first, last + 1)):
         hist = r[:t][np.isfinite(r[:t])]
@@ -215,7 +233,7 @@ def eval_symbol(sym, j, L, r1, vol20, P, spy, first, last, dev_last, log=print):
                 s = sims[:, h] + (mu[h] if v.startswith("v2") else 0.0)
                 k_known = bisect.bisect_right(pit_t[v][h], t - h - 1)          # outcome day origin+h+1 <= t
                 past = pits[v][h][max(0, k_known - CAL_WINDOW):k_known]
-                lv = recal_levels(np.array(past), GRID) if v.endswith("cal") else GRID
+                lv = recal_for(v)(np.array(past), GRID) if v in ("v1cal", "v2cal", "v3sym") else GRID
                 q = np.quantile(s, lv)
                 pit = float(np.mean(s <= y[h])) if np.isfinite(y[h]) else None
                 if pit is not None:
@@ -224,7 +242,7 @@ def eval_symbol(sym, j, L, r1, vol20, P, spy, first, last, dev_last, log=print):
                     q10, q90 = np.interp([0.10, 0.90], GRID, q)
                     q025, q975 = np.interp([0.025, 0.975], GRID, q)
                     med = np.interp(0.5, GRID, q)
-                    rows.append(dict(crps=crps_from_quantiles(q, y[h]), in80=bool(q10 <= y[h] <= q90), in95=bool(q025 <= y[h] <= q975),
+                    rows.append(dict(qs=np.interp(QS, GRID, q).tolist(), crps=crps_from_quantiles(q, y[h]), in80=bool(q10 <= y[h] <= q90), in95=bool(q025 <= y[h] <= q975),
                                      ape=float(abs(math.exp(med) - math.exp(y[h])) / math.exp(y[h])), dir=float(np.sign(med) == np.sign(y[h]))))
                 else:
                     rows.append(None)
@@ -282,7 +300,8 @@ def refresh(out=UNI, years=10.2):
 # ---------------------------------------------------------------- commands
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["select", "run", "forecast", "refresh"])
+    ap.add_argument("cmd", choices=["select", "run", "forecast", "refresh", "holdout"])
+    ap.add_argument("--asof", help="holdout: last close the model may see (e.g. 2026-10-09)")
     a = ap.parse_args()
     if a.cmd == "refresh":
         refresh()
@@ -322,19 +341,28 @@ def main():
             j = syms.index(sym)
             recs, pits = eval_symbol(sym, j, L, r1, vol20, P, spy, first_dev, test_last, dev_last)
             results[sym] = {v: {"dev": summarize(recs, first_dev, dev_last, v), "test": summarize(recs, test_first, test_last, v)}
-                            for v in ["v1", "v1cal", "v2", "v2cal"]}
+                            for v in ["v1", "v1cal", "v2", "v2cal", "v3sym"]}
+            last_rec = recs[-1]                                     # origin = last test origin (information only)
+            for v in ["v1", "v1cal", "v3sym"]:
+                ins = sum(1 for h in range(H) if last_rec["v"][v][h] and last_rec["v"][v][h]["in80"])
+                print(f"  {sym} hold-out from {dates[last_rec['t']]}: {v} {ins}/5 inside the 80% range")
             pit_store[sym] = pits
         # protocol: adopt the mean model if, over DEVELOPMENT, recalibrated v2 beats recalibrated zero-mean on pooled CRPS
         pooled = lambda v, per: np.mean([np.mean([x["crps"] for x in results[s][v][per]]) for s in TARGETS])
         adopt_mean = pooled("v2cal", "dev") < pooled("v1cal", "dev")
         chosen = "v2cal" if adopt_mean else "v1cal"
+        # v3 amendment: between the shifting and the symmetric recalibration, keep the lower DEVELOPMENT pooled CRPS
+        dev_crps = {v: float(pooled(v, "dev")) for v in ["v1", "v1cal", "v2cal", "v3sym"]}
+        print("development pooled CRPS:", {k: round(v * 1e4, 3) for k, v in dev_crps.items()})
+        if not adopt_mean and dev_crps["v3sym"] < dev_crps["v1cal"]:
+            chosen = "v3sym"
         test_skill = 1 - pooled(chosen, "test") / np.mean([np.mean([x["crps_base"] for x in results[s][chosen]["test"]]) for s in TARGETS])
         rules = {
             "calibration": {s: passes_calibration(results[s][chosen]["test"]) for s in TARGETS},
             "crps_skill_vs_random_walk": float(test_skill), "crps_rule_pass": bool(test_skill > 0),
             "direction": mm["test"], "direction_rule_pass": bool(mm["test"]["hit"] > 0.5 and mm["test"]["hit_p_one_sided"] < 0.05),
         }
-        doc = {"protocol": "docs/FORECAST-V2-PROTOCOL.md", "lambda": lam, "adopted_mean_model": bool(adopt_mean), "chosen_variant": chosen,
+        doc = {"protocol": "docs/FORECAST-V2-PROTOCOL.md (incl. v3 amendment)", "dev_pooled_crps": dev_crps, "lambda": lam, "adopted_mean_model": bool(adopt_mean), "chosen_variant": chosen,
                "dev_period": [dates[first_dev], dates[dev_last]], "test_period": [dates[test_first], dates[test_last]],
                "mean_model": mm, "results": results, "rules": rules, "created_at": datetime.now(timezone.utc).isoformat()}
         json.dump(doc, open(os.path.join(OUT, "v2_results.json"), "w"), indent=1)
@@ -342,16 +370,46 @@ def main():
         # dashboard-compatible validation summary for the chosen variant
         summ = {s: {"symbol": s, "model": "v2", "variant": chosen, "origins": TEST_N, "h": results[s][chosen]["test"],
                     "passed": bool(rules["calibration"][s] and rules["crps_rule_pass"]),
+                    "calibrated": bool(rules["calibration"][s]), "beats_baseline": bool(rules["crps_rule_pass"]),
+                    "pooled_skill": float(rules["crps_skill_vs_random_walk"]),
                     "avg_skill": float(np.mean([x["crps_skill_vs_baseline"] for x in results[s][chosen]["test"]]))} for s in TARGETS}
         json.dump({"validated_at": doc["created_at"], "model": "v2", "symbols": summ}, open(os.path.join(OUT, "validation_summary.json"), "w"), indent=1)
         print(f"adopted mean model: {adopt_mean} -> variant {chosen}")
         for s in TARGETS:
-            for v in ["v1", "v1cal", "v2", "v2cal"]:
+            for v in ["v1", "v1cal", "v2", "v2cal", "v3sym"]:
                 t_ = results[s][v]["test"]
                 print(f"{s:5s} {v:6s} TEST 80%: " + " ".join(f"{x['coverage']['in80']:.2f}" for x in t_) + "  95%: " + " ".join(f"{x['coverage']['in95']:.2f}" for x in t_)
                       + f"  skill {np.mean([x['crps_skill_vs_baseline'] for x in t_]) * 100:+.1f}%  dir {np.mean([x['dir_hit'] for x in t_]) * 100:.1f}%")
         print("RULES:", json.dumps(rules["calibration"]), f"crps skill {test_skill * 100:+.2f}% pass={rules['crps_rule_pass']}",
               f"direction hit {mm['test']['hit'] * 100:.2f}% p={mm['test']['hit_p_one_sided']:.3f} pass={rules['direction_rule_pass']}")
+        return
+
+    if a.cmd == "holdout":
+        # Re-run the shipped variant over the 260 origins up to --asof, so the self-correcting ranges at --asof only
+        # use forecasts whose outcomes were known by then; then show the forecast made at --asof against what happened.
+        chosen = json.load(open(os.path.join(OUT, "v2_results.json")))["chosen_variant"]
+        t_as = dates.index(a.asof)
+        P = {h: np.full(L.shape, np.nan) for h in range(1, H + 1)}
+        if chosen == "v2cal":
+            P, _ = walk_forward_mean(F, Y, t_as - 260, t_as, lam)
+        res = []
+        for sym in TARGETS:
+            j = syms.index(sym)
+            recs, _ = eval_symbol(sym, j, L, r1, vol20, P, spy, t_as - 260, t_as, t_as - 1, log=None)
+            rec = recs[-1]
+            last = float(C[t_as, j])
+            rows = []
+            for h in range(H):
+                x = rec["v"][chosen][h]
+                q = dict(zip(["p2_5", "p5", "p10", "p25", "p50", "p75", "p90", "p95", "p97_5"], (last * math.exp(v) for v in x["qs"])))
+                act = float(C[t_as + h + 1, j])
+                rows.append({"date": dates[t_as + h + 1], **q, "actual": act, "in80": x["in80"], "in95": x["in95"],
+                             "err_pct": (q["p50"] / act - 1) * 100})
+            res.append({"symbol": sym, "asof": a.asof, "last_close": last, "model": "v2", "variant": chosen, "days": rows})
+            print(f"{sym:5s} fit to {a.asof} close {last:.2f}: " + "  ".join(
+                f"{r_['date'][5:]} mid {r_['p50']:.2f} [80% {r_['p10']:.0f}-{r_['p90']:.0f}] act {r_['actual']:.2f} ({'in' if r_['in80'] else 'OUT'})" for r_ in rows))
+        json.dump({"asof": a.asof, "model": "v2", "created_at": datetime.now(timezone.utc).isoformat(), "forecasts": res},
+                  open(os.path.join(OUT, f"holdout_{a.asof}.json"), "w"), indent=1)
         return
 
     # forecast: next 5 trading days for each target from the latest close
@@ -372,7 +430,7 @@ def main():
         rows = []
         for h in range(H):
             mu = (float(x @ W[h + 1]) * vol20[t, j] * math.sqrt(h + 1) if np.isfinite(x).all() and chosen == "v2cal" else 0.0) + (drift * (h + 1) if chosen == "v2cal" else 0.0)
-            lv = recal_levels(np.array(pits[sym][chosen][str(h)]), np.array(QS))
+            lv = recal_for(chosen)(np.array(pits[sym][chosen][str(h)]), np.array(QS))
             q = np.quantile(sims[:, h] + mu, lv)
             last = float(C[t, j])
             rows.append({"date": str(days[h]), **{f"p{int(x_ * 1000) / 10:g}".replace(".", "_"): last * math.exp(v) for x_, v in zip(QS, q)},
@@ -380,6 +438,7 @@ def main():
         val = res["rules"]["calibration"][sym] and res["rules"]["crps_rule_pass"]
         fcs.append({"symbol": sym, "asof": dates[t], "last_close": float(C[t, j]), "kind": "stock", "price_basis": "official close",
                     "validated": bool(val), "garch": g.p, "mean_model": "cross-stock ridge" if chosen == "v2cal" else "random walk",
+                    "recalibration": {"v3sym": "symmetric", "v1cal": "shifting", "v2cal": "shifting"}.get(chosen, "none"),
                     "model": "v2", "days": rows, "source": "Alpaca 1Day bars (SIP)"})
         print(f"{sym:5s} last {C[t, j]:.2f}  " + "  ".join(f"{r_['date'][5:]}: {r_['p50']:.2f} [{r_['p10']:.2f}-{r_['p90']:.2f}]" for r_ in rows))
     os.makedirs(FC_DIR, exist_ok=True)

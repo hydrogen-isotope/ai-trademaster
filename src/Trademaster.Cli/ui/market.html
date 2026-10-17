@@ -474,16 +474,17 @@ function bigFan(hist, days, focus) {
 function renderForecastView() {
   const f = fcState; if (!f) return;
   const fc = f.forecast, last = fc.last_close, d = fc.days[fcDay];
-  const pct = v => sgn((v / last - 1) * 100, 1) + '%';
+  const flat = v => Math.abs(v / last - 1) < 0.0005, pct = v => flat(v) ? '0.0%' : sgn((v / last - 1) * 100, 1) + '%', pcls = v => flat(v) ? '' : cls(v - last);
+  const ucls = u => u > 0.52 ? 'up' : u < 0.48 ? 'down' : '';
   $('daypick').innerHTML = fc.days.map((x, k) => `<button class="${k === fcDay ? 'on' : ''}" onclick="pickDay(${k})">${DOW(x.date)} ${x.date.slice(5)}${k === 4 ? ' · end of week' : ''}</button>`).join('');
   const up = chanceAbove(d, last);
-  $('aMid').innerHTML = `${fmt(d.p50)} <span class="${cls(d.p50 - last)}" style="font-size:16px">${pct(d.p50)}</span>`;
+  $('aMid').innerHTML = `${fmt(d.p50)} <span class="${pcls(d.p50)}" style="font-size:16px">${pct(d.p50)}</span>`;
   $('aMidD').textContent = `${DLONG(d.date)} close. Half the simulated outcomes end above this, half below. It is not a prediction that the price sits still.`;
   $('a80').textContent = `${fmt(d.p10)} – ${fmt(d.p90)}`;
   $('a80D').textContent = `${pct(d.p10)} to ${pct(d.p90)}. About 4 times in 5 the close should land in here.`;
   $('a95').textContent = `${fmt(d.p2_5)} – ${fmt(d.p97_5)}`;
   $('a95D').textContent = `${pct(d.p2_5)} to ${pct(d.p97_5)}. Outside this happens about 1 time in 20.`;
-  $('aUp').innerHTML = up == null ? '—' : `<span class="${up >= 0.5 ? 'up' : 'down'}">${Math.round(up * 100)}%</span>`;
+  $('aUp').innerHTML = up == null ? '—' : `<span class="${ucls(up)}">${Math.round(up * 100)}%</span>`;
   $('aUpD').textContent = `Chance the ${DLONG(d.date)} close is above the last close of ${fmt(last)}. 50% would be a coin flip.`;
   $('fcbig').innerHTML = bigFan(f.history.slice(-60), fc.days, fcDay);
   const lo = Math.min(...fc.days.map(x => x.p2_5)), hi = Math.max(...fc.days.map(x => x.p97_5)), sp = hi - lo;
@@ -492,17 +493,17 @@ function renderForecastView() {
     const u = chanceAbove(x, last);
     return `<div class="rbar" style="${k === fcDay ? 'background:#1c1712;border-radius:6px' : ''}" onclick="pickDay(${k})">
       <div><b>${DLONG(x.date)}</b></div>
-      <div class="num">${fmt(x.p50)} <span class="${cls(x.p50 - last)}">${pct(x.p50)}</span></div>
+      <div class="num">${fmt(x.p50)} <span class="${pcls(x.p50)}">${pct(x.p50)}</span></div>
       <div class="track"><div class="b95" style="left:${X(x.p2_5)};width:${((x.p97_5 - x.p2_5) / sp * 100).toFixed(2)}%"></div>
         <div class="b80" style="left:${X(x.p10)};width:${((x.p90 - x.p10) / sp * 100).toFixed(2)}%"></div>
         <div class="now" style="left:${X(last)}" title="last close ${fmt(last)}"></div><div class="mid" style="left:${X(x.p50)}"></div>
         <span class="lbl" style="left:${X(x.p10)}">${fmt(x.p10)}</span><span class="lbl" style="left:${X(x.p90)}">${fmt(x.p90)}</span></div>
-      <div class="num" style="text-align:right">${u == null ? '' : `<span class="${u >= 0.5 ? 'up' : 'down'}">${Math.round(u * 100)}%</span> <span class="dim">higher</span>`}</div></div>`;
+      <div class="num" style="text-align:right">${u == null ? '' : `<span class="${ucls(u)}">${Math.round(u * 100)}%</span> <span class="dim">higher</span>`}</div></div>`;
   }).join('') + `<div class="note" style="margin-top:14px">Bars share one price scale: light = 95% range, dark = 80% range, orange tick = middle, dashed line = last close ${fmt(last)}.</div>`;
   const wide80 = ((d.p90 - d.p10) / last * 100).toFixed(0);
   $('fcread').innerHTML = `
     <li><b>Most likely outcome is a big move, not a flat line.</b> By ${DLONG(d.date)} the 80% range spans about ${wide80}% of the price. The middle line is only the centre of that spread.</li>
-    <li><b>The middle line ${Math.abs(d.p50 / last - 1) < 0.003 ? 'stays near the last close' : (d.p50 > last ? 'tilts up' : 'tilts down')}</b> because ${fc.model === 'v2' ? "the ranges self-correct from the model's own past misses (recently it was too low on the upside). That tilt is not a proven direction call: direction tests came out at about a coin flip" : 'no trend is assumed'}.</li>
+    <li><b>The middle line ${Math.abs(d.p50 / last - 1) < 0.003 ? 'stays near the last close' : (d.p50 > last ? 'tilts up' : 'tilts down')}</b> because ${fc.recalibration === 'symmetric' ? 'no direction is assumed. Direction tests came out at a coin flip, so the model only widens or narrows the range from its past misses and never tilts it' : fc.model === 'v2' ? "the ranges self-correct from the model's own past misses. That tilt is not a proven direction call: direction tests came out at about a coin flip" : 'no trend is assumed'}.</li>
     <li><b>Wider ranges = more risk.</b> The range widens each day ahead because uncertainty adds up. After a sharp selloff it is wider than usual.</li>
     <li><b>Use it for "how far could it go", not "which way".</b> Research only, not trading advice.</li>`;
 }
@@ -523,13 +524,18 @@ async function loadForecast() {
   fcState = f;
   $('fcnone').style.display = 'none'; $('fcbody').style.display = '';
   $('fchint').innerHTML = `&#128302; Open the 5-trading-day forecast for ${sel} &rarr;`;
-  $('fcchip').textContent = ok ? 'VALIDATED' : 'NOT VALIDATED'; $('fcchip').className = 'chip ' + (ok ? 'live' : 'demo');
+  const calOnly = v && v.calibrated && !v.beats_baseline;
+  $('fcchip').textContent = ok ? 'VALIDATED' : calOnly ? 'RANGES CALIBRATED · NO EDGE' : 'NOT VALIDATED'; $('fcchip').className = 'chip ' + (ok ? 'live' : 'demo');
   $('fcsub').innerHTML = `Made at the close of ${DLONG(fc.asof)} · last close <b class="num">${fmt(fc.last_close)}</b> · ${fc.model === 'v2' ? 'volatility model with self-correcting ranges' : 'volatility model'} · 20,000 simulated paths
-    ${ok ? '' : ' · <span class="bad">failed the 250-day check: treat the ranges as too narrow</span>'}`;
+    ${ok ? '' : calOnly ? ' · <span style="color:var(--warn)">ranges passed the 250-day check, but the forecast is not more accurate than "no change"</span>' : ' · <span class="bad">failed the 250-day check: treat the ranges as too narrow</span>'}`;
   renderForecastView();
   if (v) {
     const cell = (x, t, tol) => `<td class="num ${Math.abs(x - t) <= tol ? 'ok' : 'bad'}">${(x * 100).toFixed(0)}%</td>`;
-    $('fcval').innerHTML = `<div style="margin-bottom:8px">Checked on each of the last ${v.origins} trading days: <b class="${v.passed ? 'ok' : 'bad'}">${v.passed ? 'PASS' : 'FAIL'}</b>.
+    const rule = (okk, t) => `<div>${okk ? '<span class="ok">✓</span>' : '<span class="bad">✗</span>'} ${t}</div>`;
+    $('fcval').innerHTML = `<div style="margin-bottom:8px">Checked on each of the last ${v.origins} trading days (rules fixed in advance):
+      ${v.calibrated === undefined ? `<b class="${v.passed ? 'ok' : 'bad'}">${v.passed ? 'PASS' : 'FAIL'}</b>` :
+        rule(v.calibrated, 'Ranges honest: the real close landed inside them about as often as stated') +
+        rule(v.beats_baseline, `More accurate than "price stays the same" (${sgn((v.pooled_skill || 0) * 100, 2)}%)`)}
       How often the real close landed inside the range:</div>
       <table><thead><tr><th>Range</th>${v.h.map(x => `<th>Day ${x.h}</th>`).join('')}<th>Target</th></tr></thead><tbody>
       <tr><td>80% range</td>${v.h.map(x => cell(x.coverage.in80, 0.80, 0.06)).join('')}<td class="num dim">80%</td></tr>

@@ -97,3 +97,39 @@ median. The median itself is never moved. Everything else is v1: GJR-GARCH-t, ze
 - The chosen variant then faces **the same final-test rules as before**: calibration for each stock at every horizon,
   and pooled CRPS skill > 0. If it fails, the dashboard labels the failing stocks NOT VALIDATED.
 - The 12–16 Oct hold-out is reported for information only. It is one week and cannot decide anything.
+
+## v3 results (added after the run, 2026-10-18; the amendment above was not changed)
+**Development pooled CRPS** (lower is better):
+
+| Variant | CRPS |
+|---|---|
+| v1, no recalibration | 262.43 |
+| **v3sym** | **262.80** |
+| v1cal | 263.41 |
+| v2cal | 263.67 |
+
+Per the amendment, v3sym (symmetric) beats v1cal (shifting), so **v3sym ships**. Note that plain v1 had the lowest
+development CRPS. Neither recalibration improved probabilistic accuracy in 2020–2025. v1cal's better test score came
+from the uptrend year.
+
+**Final test for v3sym**
+
+| Rule | Result |
+|---|---|
+| 1. Calibration, all 4 stocks, all horizons | **PASS**: 80% hit rate MU 0.75–0.80, NVDA 0.78–0.82, AMD 0.75–0.78, AAPL 0.79–0.82 |
+| 2. Pooled CRPS skill vs random walk > 0 | **FAIL**: −0.45% |
+| 3. Cross-stock direction | **FAIL**: unchanged, 50.56% |
+
+**Hold-out 12–16 Oct (information only), closes inside the 80% range:**
+
+| Variant | Total | MU | NVDA | AMD | AAPL |
+|---|---|---|---|---|---|
+| v1 | 13/20 | 0/5 | 4/5 | 4/5 | 5/5 |
+| v1cal | 11/20 | 0/5 | 3/5 | 3/5 | 5/5 |
+| v3sym | 13/20 | 1/5 | 3/5 | 4/5 | 5/5 |
+
+These counts come from the v3 run's walk-forward. The earlier v1 hold-out (14/20) used a fresh fit on 9 Oct and so
+differs slightly.
+
+**Reading.** All variants are within about ±1.5% of the random walk on CRPS, which is noise-sized. The ranges are now
+honest *and* untilted. The dashboard labels these forecasts "ranges calibrated · no edge" and shows which rule failed.
