@@ -29,9 +29,24 @@ A fresh clone has none of it: regenerate synthetic data with `trademaster genera
 - **IBKR:** the app never sees your IBKR password. Login and 2FA happen in TWS / IB Gateway; the app talks to the local API socket.
 - Rotate anything that is ever committed by mistake. Deleting it in a later commit does not remove it from history.
 
-## 3. Pre-commit and CI checks
-- `git config core.hooksPath .githooks` (already set in this clone) runs `tools/precommit_scan.py` on every commit. It blocks data/model paths, files over 2 MB, and patterns for private keys, GitHub/AWS/Google/Slack/API tokens, hard-coded passwords, and IBKR-style account numbers.
-- **GitHub Actions (`.github/workflows/ci.yml`):** the same scan over all tracked files, then build and test. Least-privilege token (`contents: read`), pinned action versions.
+## 3. Pre-commit, pre-push and CI checks
+One scanner (`tools/precommit_scan.py`) runs at three points. **Enable the hooks in every clone:** `git config core.hooksPath .githooks`.
+
+| When | Command | What it scans |
+|---|---|---|
+| `git commit` (hook `.githooks/pre-commit`) | `--` (default) | files being committed |
+| **`git push`** (hook `.githooks/pre-push`) | `--pre-push` | **every commit about to be pushed**: every file version they add, including ones deleted again in a later commit, plus author/committer e-mails and commit messages. **Aborts the push** on any finding. |
+| GitHub CI (`.github/workflows/ci.yml`) | `--history` | the entire history (full clone), then build and test. Least-privilege token (`contents: read`), pinned action versions. |
+
+It blocks:
+- **blocked paths:** `private/`, `data/`, `models/`, `reports/`, data/model file types, credential files;
+- binaries and files over 2 MB;
+- **secrets:** private keys; GitHub/AWS/Google/Slack/API tokens; hard-coded passwords; IBKR-style account numbers;
+- **licensed market data:** long numeric series, `$` prices, ticker-plus-price pairs, real-time unix timestamps, Yahoo payloads;
+- **personal details:** e-mail addresses other than no-reply ones, Windows user paths, PC hostnames;
+- **commit identities** that aren't GitHub no-reply addresses.
+
+If something was already committed locally, fix it by rewriting those local commits (e.g. `git commit --amend`, or an interactive rebase in your own terminal) **before** pushing. Once something is on GitHub, rotate any secret and treat the history as public.
 - **Recommended GitHub settings:** 2FA on the account; branch protection on `main` (require CI, no force-push); Dependabot alerts; secret scanning with push protection and CodeQL where your plan offers them.
 
 ## 4. Live-trading safeguards (for the IBKR adapter — not built yet)

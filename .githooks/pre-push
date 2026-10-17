@@ -1,0 +1,8 @@
+#!/bin/sh
+# Runs before every `git push`: scans every commit being pushed (all file versions + author/committer e-mails)
+# for secrets, licensed market data and personal details, and aborts the push if anything is found.
+# See SECURITY.md. Enabled by: git config core.hooksPath .githooks
+if [ -x python/.venv/Scripts/python.exe ]; then PY=python/.venv/Scripts/python.exe
+elif command -v py >/dev/null 2>&1; then PY="py -3"
+else PY=python3; fi
+exec $PY tools/precommit_scan.py --pre-push

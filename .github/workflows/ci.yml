@@ -13,8 +13,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - name: Secret and data scan
-        run: python3 tools/precommit_scan.py --all
+        with:
+          fetch-depth: 0   # full history, so every commit can be scanned
+      - name: Sensitive-content scan (all history, all file versions, commit metadata)
+        run: python3 tools/precommit_scan.py --history
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
