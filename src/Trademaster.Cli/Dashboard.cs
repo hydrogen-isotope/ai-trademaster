@@ -129,6 +129,14 @@ public static class Dashboard
                 history = dates.Skip(from).Zip(close.Skip(from), (d, c) => new { date = d, close = c }),
             }, JsonOpts);
         });
+        app.MapGet("/api/explain", () =>
+        {
+            var path = Path.Combine("private", "reports", "daily_forecast", "v4_explain.json");
+            if (!File.Exists(path)) return Results.NotFound();
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var sr = new StreamReader(fs);
+            return Results.Text(sr.ReadToEnd(), "application/json");
+        });
         app.MapGet("/api/info", () => Results.Json(new
         {
             system = sys.Lines().ToArray(), gpu, cadenceMs = cfg.Run.CadenceMs, budgetMs = cfg.Run.BudgetMs, speed = cfg.Run.Speed,

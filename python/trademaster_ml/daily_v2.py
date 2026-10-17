@@ -198,7 +198,7 @@ def recal_levels_sym(pits, levels):
 
 
 def recal_for(variant):
-    return recal_levels_sym if variant == "v3sym" else recal_levels
+    return recal_levels_sym if variant in ("v3sym", "v4sym") else recal_levels
 
 
 def crps_from_quantiles(q, y):
@@ -206,12 +206,13 @@ def crps_from_quantiles(q, y):
     return float(2 * np.mean(np.where(y < q, 1 - GRID, GRID) * np.abs(y - q)))
 
 
-def eval_symbol(sym, j, L, r1, vol20, P, spy, first, last, dev_last, log=print):
+def eval_symbol(sym, j, L, r1, vol20, P, spy, first, last, dev_last, log=print,
+                variants=("v1", "v1cal", "v2", "v2cal", "v3sym")):
     """Walk-forward distribution forecasts for one stock; returns per-origin records for 4 variants."""
     rng = np.random.default_rng(13)
     r = np.diff(L[:, j])                                          # r[t-1] = return into day t
     recs, model = [], None
-    pits = {v: {h: [] for h in range(H)} for v in ["v1", "v1cal", "v2", "v2cal", "v3sym"]}   # PIT values, in origin order
+    pits = {v: {h: [] for h in range(H)} for v in variants}                       # PIT values, in origin order
     pit_t = {v: {h: [] for h in range(H)} for v in pits}                                # their origins
     for k, t in enumerate(range(first, last + 1)):
         hist = r[:t][np.isfinite(r[:t])]
@@ -230,10 +231,10 @@ def eval_symbol(sym, j, L, r1, vol20, P, spy, first, last, dev_last, log=print):
         for v in pits:
             rows = []
             for h in range(H):
-                s = sims[:, h] + (mu[h] if v.startswith("v2") else 0.0)
+                s = sims[:, h] + (mu[h] if v.startswith("v2") or v == "v4sym" else 0.0)
                 k_known = bisect.bisect_right(pit_t[v][h], t - h - 1)          # outcome day origin+h+1 <= t
                 past = pits[v][h][max(0, k_known - CAL_WINDOW):k_known]
-                lv = recal_for(v)(np.array(past), GRID) if v in ("v1cal", "v2cal", "v3sym") else GRID
+                lv = recal_for(v)(np.array(past), GRID) if v in ("v1cal", "v2cal", "v3sym", "v4sym") else GRID
                 q = np.quantile(s, lv)
                 pit = float(np.mean(s <= y[h])) if np.isfinite(y[h]) else None
                 if pit is not None:

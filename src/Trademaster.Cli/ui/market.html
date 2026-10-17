@@ -128,6 +128,11 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
 .rbar .mid{position:absolute;top:0;width:3px;height:22px;background:#ff9f1c;border-radius:2px;margin-left:-1px}
 .rbar .now{position:absolute;top:-3px;width:0;height:28px;border-left:2px dashed #e9eaee;margin-left:-1px;opacity:.7}
 .rbar .lbl{position:absolute;top:24px;font-size:10.5px;color:var(--dim);transform:translateX(-50%);white-space:nowrap}
+.whygrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.why{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
+.why .k{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.3px}
+.why .v{font-size:17px;font-weight:700;margin-top:4px}.why .d{color:var(--muted);font-size:12px;margin-top:3px;line-height:1.35}
+@media (max-width:1300px){.whygrid{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .read{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:14px;margin-top:14px}
 .read .box{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;min-width:0;overflow-x:auto}
 .read ul{margin:0;padding-left:18px;color:var(--muted);line-height:1.6;font-size:13px}.read b{color:var(--text)}
@@ -191,6 +196,7 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
             <span><i style="border-top:2px dashed #e9eaee;height:0;background:none"></i>last close</span></div>
         </div>
         <div class="rows2"><h3>Day by day</h3><div id="fcrows"></div></div>
+        <div class="rows2" id="whycard"><h3>Why it's moving · what the model sees</h3><div id="why" class="whygrid"></div><div class="note" id="whynote" style="margin-top:10px"></div></div>
         <div class="read">
           <div class="box"><h3>How to read this</h3><ul id="fcread"></ul></div>
           <div class="box"><h3>How well it has done</h3><div id="fcval" class="note"></div></div>
@@ -509,6 +515,32 @@ function renderForecastView() {
 }
 function pickDay(k) { fcDay = k; renderForecastView(); }
 
+let whyData = null;
+async function loadWhy() {
+  try { const r = await fetch('/api/explain'); whyData = r.ok ? await r.json() : null; } catch { whyData = null; }
+  renderWhy();
+}
+function renderWhy() {
+  const card = $('whycard'); if (!card) return;
+  const st = whyData && whyData.stocks && whyData.stocks[sel];
+  if (!st) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const mk = whyData.market, p = v => sgn(v, 1) + '%';
+  const steep = st.accel_sigma < -0.75 ? 'drop is getting steeper' : st.accel_sigma > 0.75 ? (st.move_3d_pct < 0 ? 'drop is easing' : 'rise is getting steeper') : 'pace is steady';
+  const lev = st.leveraged_etf_pressure_pctile, levTxt = lev == null ? '—' : lev < 0.1 ? 'heavy forced selling' : lev > 0.9 ? 'heavy forced buying' : 'normal';
+  const sent = v => v > 0.25 ? 'positive' : v < -0.25 ? 'negative' : 'neutral';
+  const th = mk.themes || {}, thTxt = Object.entries(th).map(([k, v]) => `${{ai: 'AI', rates: 'rates/Fed', delever: 'margin/deleveraging', export: 'export/tariffs'}[k]} ${v.items_5d}${v.items_5d > 0 && v.vs_normal != null && v.vs_normal > 0.9 ? ' (high)' : ''}`).join(' · ');
+  const box = (k, v, d, c = '') => `<div class="why"><div class="k">${k}</div><div class="v ${c}">${v}</div><div class="d">${d}</div></div>`;
+  $('why').innerHTML =
+    box('Trend', `${p(st.move_10d_pct)} in 10 days`, `last 3 days ${p(st.move_3d_pct)}, 3 before ${p(st.move_prev3d_pct)}: ${steep}`, cls(st.move_10d_pct)) +
+    box('Versus its sector', `${p(st.vs_sector_5d_pct)} vs ${st.sector_etf}`, '5 days. Negative = falling more than the sector, i.e. stock-specific selling on top', cls(st.vs_sector_5d_pct)) +
+    box('Leveraged-ETF pressure', levTxt, lev == null ? '' : `5-day pressure at the ${Math.round(lev * 100)}th percentile of the last 10 years (3× / 2× funds rebalancing at the close)`, lev != null && lev < 0.1 ? 'down' : lev != null && lev > 0.9 ? 'up' : '') +
+    box('Its own news', st.news_today ? `${st.news_today} items · ${sent(st.news_sentiment_today)}` : 'no news today', `5-day tone ${sent(st.news_sentiment_5d)} (${sgn(st.news_sentiment_5d, 2)}). ${st.news_priced_in_5d > 0.3 ? 'Price has already moved with the news (priced in).' : st.news_priced_in_5d < -0.3 ? 'Price moved against the news.' : ''}`) +
+    box('Rates', `2y ${mk.yield_2y.toFixed(2)}% · 10y ${mk.yield_10y.toFixed(2)}%`, `20-day change: 2y ${sgn(mk.yield_2y_change_20d_bp, 0)} bp, 10y ${sgn(mk.yield_10y_change_20d_bp, 0)} bp. Bonds (TLT) ${p(mk.bonds_tlt_20d_pct)}`) +
+    box('Market stress', mk.stress_regime ? 'STRESS' : 'calm', `fear gauge (VIXY) ${p(mk.fear_vixy_5d_pct)} in 5 days · S&P ${p(mk.spy_below_1y_high_pct)} from 1-year high · ${mk.stocks_at_20d_low_pct.toFixed(0)}% of stocks at 20-day lows · news themes (5d): ${thTxt}`, mk.stress_regime ? 'down' : '');
+  $('whynote').textContent = `Inputs as of ${whyData.asof}. These are what the v4 model is tested on. Whether they move the forecast depends on the v4 test result (see the protocol); v3 ranges are unaffected.`;
+}
+
 async function loadForecast() {
   const r = await fetch('/api/forecast?symbol=' + sel);
   $('fctitle').textContent = `${sel} · next 5 trading days`;
@@ -528,7 +560,7 @@ async function loadForecast() {
   $('fcchip').textContent = ok ? 'VALIDATED' : calOnly ? 'RANGES CALIBRATED · NO EDGE' : 'NOT VALIDATED'; $('fcchip').className = 'chip ' + (ok ? 'live' : 'demo');
   $('fcsub').innerHTML = `Made at the close of ${DLONG(fc.asof)} · last close <b class="num">${fmt(fc.last_close)}</b> · ${fc.model === 'v2' ? 'volatility model with self-correcting ranges' : 'volatility model'} · 20,000 simulated paths
     ${ok ? '' : calOnly ? ' · <span style="color:var(--warn)">ranges passed the 250-day check, but the forecast is not more accurate than "no change"</span>' : ' · <span class="bad">failed the 250-day check: treat the ranges as too narrow</span>'}`;
-  renderForecastView();
+  renderForecastView(); renderWhy();
   if (v) {
     const cell = (x, t, tol) => `<td class="num ${Math.abs(x - t) <= tol ? 'ok' : 'bad'}">${(x * 100).toFixed(0)}%</td>`;
     const rule = (okk, t) => `<div>${okk ? '<span class="ok">✓</span>' : '<span class="bad">✗</span>'} ${t}</div>`;
@@ -612,6 +644,7 @@ function tickClock() {
   setInterval(() => loadBars(false), 15000);
   setInterval(loadSignals, 30000);
   setInterval(loadForecast, 300000);
+  loadWhy();
   if (location.hash === '#forecast') setCenterTab('forecast');
 })();
 </script>
