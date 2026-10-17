@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>trademaster</AssemblyName>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <!-- Fully optimise each method on first call. Tiered JIT promotes hot code mid-run, which skews
+         latency measurements (observed: Pack 0.33 ms tiered vs 0.017 ms fully optimised). Costlier warm-up instead. -->
+    <TieredCompilation>false</TieredCompilation>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <None Include="ui\**" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Trademaster.Core\Trademaster.Core.csproj" />
+    <ProjectReference Include="..\Trademaster.Sim\Trademaster.Sim.csproj" />
+    <ProjectReference Include="..\Trademaster.Telemetry\Trademaster.Telemetry.csproj" />
+    <ProjectReference Include="..\Trademaster.Engine\Trademaster.Engine.csproj" />
+  </ItemGroup>
+
+</Project>

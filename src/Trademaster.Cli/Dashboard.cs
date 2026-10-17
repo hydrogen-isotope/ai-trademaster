@@ -1,0 +1,233 @@
+using System.Text.Json;
+using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging;
+using Trademaster.Core;
+using Trademaster.Engine;
+using Trademaster.Engine.Stages;
+using Trademaster.Sim;
+using Trademaster.Telemetry;
+
+namespace Trademaster.Cli;
+
+/// <summary>
+/// Local dashboard: runs the engine in paced (real-time) mode on a background thread and streams one snapshot per
+/// cycle to the browser over Server-Sent Events. Listens on 127.0.0.1 only. Simulation only — no order entry.
+/// </summary>
+public static class Dashboard
+{
+    private const int BaseBarSec = 5;
+    private const int MaxBars = 6000;
+
+    private sealed class Bar { public long T; public double O, H, L, C; public long V; }
+
+    private sealed class Store
+    {
+        public readonly object Lock = new();
+        public readonly Dictionary<string, List<Bar>> Bars = [];
+        public readonly Dictionary<string, List<(long T, double Mu)>> Mu = [];
+        public readonly Dictionary<string, List<FillView>> Fills = [];
+        public readonly Dictionary<string, double> Open = [];
+        public readonly Queue<double> Latency = new();
+        public readonly Dictionary<string, long> StatusCounts = [];
+        public long Missed, OverBudget, Cycles;
+        public string Json = "{}";
+        public long Version;
+        public TaskCompletionSource Changed = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public string RunState = "starting";
+        public int RunNumber;
+
+        public void Reset()
+        {
+            Bars.Clear(); Mu.Clear(); Fills.Clear(); Open.Clear(); Latency.Clear(); StatusCounts.Clear();
+            Missed = OverBudget = Cycles = 0;
+        }
+    }
+
+    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+
+    public static int Run(EngineConfig cfg, int port, bool loop)
+    {
+        cfg.Run.Mode = RunMode.Paced;
+        var store = new Store();
+        var gpu = GpuHealth.Check().Describe();
+        var sys = SystemInfo.Collect();
+
+        var engine = new Thread(() => EngineLoop(cfg, store, loop)) { IsBackground = true, Name = "engine", Priority = ThreadPriority.AboveNormal };
+        engine.Start();
+
+        var builder = WebApplication.CreateBuilder();
+        builder.Logging.SetMinimumLevel(LogLevel.Warning);
+        builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+        var app = builder.Build();
+        string uiDir = Path.Combine(AppContext.BaseDirectory, "ui");
+
+        app.MapGet("/", () => Results.File(Path.Combine(uiDir, "index.html"), "text/html; charset=utf-8"));
+        app.MapGet("/api/info", () => Results.Json(new
+        {
+            system = sys.Lines().ToArray(), gpu, cadenceMs = cfg.Run.CadenceMs, budgetMs = cfg.Run.BudgetMs, speed = cfg.Run.Speed,
+            baseBarSec = BaseBarSec, mode = "simulation", live = false,
+        }, JsonOpts));
+        app.MapGet("/api/state", () => Results.Text(store.Json, "application/json"));
+
+        // Forward test (real data, predictions only): files written by python -m trademaster_ml.forward
+        string fwdRoot = Path.Combine("private", "data", "forward");
+        app.MapGet("/forward", () => Results.File(Path.Combine(uiDir, "forward.html"), "text/html; charset=utf-8"));
+        app.MapGet("/api/forward/runs", () =>
+        {
+            var runs = Directory.Exists(fwdRoot)
+                ? new DirectoryInfo(fwdRoot).GetDirectories()
+                    .Where(d => File.Exists(Path.Combine(d.FullName, "summary.json")))
+                    .OrderByDescending(d => d.Name.StartsWith("live-")).ThenByDescending(d => d.Name)
+                    .Select(d => d.Name).ToList()
+                : [];
+            return Results.Json(runs);
+        });
+        app.MapGet("/api/forward", (string? run) =>
+        {
+            if (!Directory.Exists(fwdRoot)) return Results.NotFound();
+            var name = run ?? new DirectoryInfo(fwdRoot).GetDirectories()
+                .Where(d => File.Exists(Path.Combine(d.FullName, "summary.json")))
+                .OrderByDescending(d => d.Name.StartsWith("live-")).ThenByDescending(d => d.Name).Select(d => d.Name).FirstOrDefault();
+            if (name is null || name.Contains("..") || name.Contains('/') || name.Contains('\\')) return Results.NotFound();
+            var path = Path.Combine(fwdRoot, name, "summary.json");
+            if (!File.Exists(path)) return Results.NotFound();
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var sr = new StreamReader(fs);
+            return Results.Text(sr.ReadToEnd(), "application/json");
+        });
+        app.MapGet("/api/history", (string symbol) =>
+        {
+            lock (store.Lock)
+            {
+                var bars = store.Bars.TryGetValue(symbol, out var b) ? b.Select(x => new { t = x.T, o = x.O, h = x.H, l = x.L, c = x.C, v = x.V }).ToList() : [];
+                var mu = store.Mu.TryGetValue(symbol, out var m) ? m.Select(x => new { t = x.T, v = Math.Round(x.Mu, 2) }).ToList() : [];
+                var fills = store.Fills.TryGetValue(symbol, out var f) ? f.ToList() : [];
+                return Results.Json(new { symbol, bars, mu, fills }, JsonOpts);
+            }
+        });
+        app.MapGet("/api/stream", async (HttpContext ctx) =>
+        {
+            ctx.Response.Headers.ContentType = "text/event-stream";
+            ctx.Response.Headers.CacheControl = "no-cache";
+            long seen = -1;
+            var ct = ctx.RequestAborted;
+            while (!ct.IsCancellationRequested)
+            {
+                string json; long ver; Task wait;
+                lock (store.Lock) { json = store.Json; ver = store.Version; wait = store.Changed.Task; }
+                try
+                {
+                    if (ver != seen)
+                    {
+                        await ctx.Response.WriteAsync("data: " + json + "\n\n", ct);
+                        await ctx.Response.Body.FlushAsync(ct);
+                        seen = ver;
+                    }
+                    else if (await Task.WhenAny(wait, Task.Delay(15_000, ct)) != wait)
+                    {
+                        await ctx.Response.WriteAsync(": ping\n\n", ct);
+                        await ctx.Response.Body.FlushAsync(ct);
+                    }
+                }
+                catch (OperationCanceledException) { break; }
+            }
+        });
+
+        Console.WriteLine($"AI Trademaster dashboard: http://127.0.0.1:{port}/   (SIMULATION, paced x{cfg.Run.Speed}; Ctrl+C to stop)");
+        app.Run();
+        return 0;
+    }
+
+    private static void EngineLoop(EngineConfig cfg, Store store, bool loop)
+    {
+        do
+        {
+            lock (store.Lock) { store.Reset(); store.RunNumber++; store.RunState = "running"; }
+            try
+            {
+                var manifest = DataManifest.Load(cfg.Data.Dir);
+                var universe = Universe.Load(Path.Combine(cfg.Data.Dir, manifest.UniverseFile));
+                var exchange = ExchangeConfig.Load(Path.Combine(cfg.Data.ExchangesDir, manifest.Exchange + ".json"));
+                IModel model = new B0FactorResidualModel(cfg.Model, cfg.Features.Window, universe);
+                using var exec = new SimExchange(Path.Combine(cfg.Data.Dir, manifest.ExchangeFile), universe, exchange, cfg.Execution, manifest.StartTs);
+                string outDir = Path.Combine(cfg.Run.OutputDir, $"{DateTime.Now:yyyyMMdd-HHmmss}-dashboard");
+                using var runner = new CycleRunner(cfg, exec, model, new SystemWallClock(), outDir);
+                runner.OnCycle = v => Publish(store, v);
+                runner.Run();
+                lock (store.Lock) store.RunState = "finished";
+            }
+            catch (Exception e)
+            {
+                lock (store.Lock) store.RunState = "error: " + e.Message;
+                Console.Error.WriteLine($"engine error: {e.Message}");
+                return;
+            }
+            Publish(store, null);
+            if (loop) Thread.Sleep(5000);
+        } while (loop);
+    }
+
+    private static void Publish(Store s, CycleView? v)
+    {
+        lock (s.Lock)
+        {
+            if (v is not null)
+            {
+                s.Cycles++;
+                s.StatusCounts[v.Status] = s.StatusCounts.GetValueOrDefault(v.Status) + 1;
+                if (v.Status == "Missed") s.Missed++;
+                if (v.OverBudget) s.OverBudget++;
+                s.Latency.Enqueue(v.ToOrderMs);
+                while (s.Latency.Count > 300) s.Latency.Dequeue();
+                long bucket = v.CutoffTs / Ns.PerSec / BaseBarSec * BaseBarSec;
+                foreach (var r in v.Rows)
+                {
+                    if (r.Bid <= 0 || r.Ask <= 0) continue;
+                    double mid = (r.Bid + r.Ask) / 2;
+                    s.Open.TryAdd(r.Symbol, mid);
+                    if (!s.Bars.TryGetValue(r.Symbol, out var bars)) s.Bars[r.Symbol] = bars = [];
+                    if (bars.Count > 0 && bars[^1].T == bucket)
+                    {
+                        var b = bars[^1];
+                        b.H = Math.Max(b.H, mid); b.L = Math.Min(b.L, mid); b.C = mid; b.V += r.CycleVolume;
+                    }
+                    else
+                    {
+                        bars.Add(new Bar { T = bucket, O = mid, H = mid, L = mid, C = mid, V = r.CycleVolume });
+                        if (bars.Count > MaxBars) bars.RemoveAt(0);
+                    }
+                    if (r.HasPrediction)
+                    {
+                        if (!s.Mu.TryGetValue(r.Symbol, out var mu)) s.Mu[r.Symbol] = mu = [];
+                        if (mu.Count > 0 && mu[^1].T == bucket) mu[^1] = (bucket, r.MuBps); else mu.Add((bucket, r.MuBps));
+                        if (mu.Count > MaxBars) mu.RemoveAt(0);
+                    }
+                }
+                foreach (var f in v.Fills)
+                {
+                    if (!s.Fills.TryGetValue(f.Symbol, out var list)) s.Fills[f.Symbol] = list = [];
+                    list.Add(f);
+                }
+            }
+            var lat = Percentiles.Of(s.Latency);
+            var payload = new
+            {
+                view = v,
+                opens = v?.Rows.Select(r => s.Open.GetValueOrDefault(r.Symbol)).ToArray(),
+                stats = new
+                {
+                    cycles = s.Cycles, missed = s.Missed, overBudget = s.OverBudget, statusCounts = s.StatusCounts,
+                    p50 = lat.P50, p95 = lat.P95, p99 = lat.P99, max = lat.Max, window = lat.Count,
+                },
+                run = new { state = s.RunState, number = s.RunNumber },
+            };
+            s.Json = JsonSerializer.Serialize(payload, JsonOpts);
+            s.Version++;
+            var old = s.Changed;
+            s.Changed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            old.TrySetResult();
+        }
+    }
+}

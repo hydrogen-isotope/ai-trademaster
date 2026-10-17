@@ -1,0 +1,53 @@
+{
+  // Trademaster M1 default configuration. Simulation only.
+  "data": { "dir": "private/data/synth-default", "exchanges_dir": "config/exchanges" },
+  "run": {
+    "mode": "virtual",
+    "cadence_ms": 1000,
+    "budget_ms": 900,
+    "speed": 1.0,
+    "virtual_decision_latency_ms": 50,
+    "warmup_cycles": 30,
+    "max_cycles": 0,
+    "on_miss": "cancel_expired",
+    "output_dir": "private/reports",
+    "progress_every_cycles": 60
+  },
+  "ingest": { "reorder_window_ms": 50 },
+  "quality": {
+    "jump_sigma": 10.0,
+    "outlier_trade_spreads": 3.0,
+    "feed_timeout_ms": 3000,
+    "max_age_ms": { "high": 5000, "medium": 15000, "low": 60000 }
+  },
+  "features": { "window": 60 },
+  "model": { "name": "b0_factor_residual", "lookback": 30, "kappa": 0.5, "horizon_cycles": 10, "beta_halflife_cycles": 300 },
+  "decision": {
+    "entry_score": 1.0,
+    "exit_score": 0.0,
+    "margin_bps": 2.0,
+    "slippage_bps": 1.0,
+    "base_notional": 10000,
+    "order_grace_ms": 200
+  },
+  "risk": {
+    "max_position_notional": 50000,
+    "max_gross_notional": 500000,
+    "max_daily_loss": 5000,
+    "max_orders_per_cycle": 20,
+    "price_collar_pct": 2.0
+  },
+  "execution": {
+    "adapter": "sim",
+    "order_latency_ms": 5,
+    "participation": 0.5,
+    "touch_fill_prob": 0.3,
+    "cancel_on_disconnect": true,
+    "disconnects": [ { "at_s": 1200, "duration_s": 20 } ],
+    "seed": 7
+  },
+  "trading": { "live_enabled": false, "live_confirm": "" },
+  "account": { "starting_cash": 1000000 },
+  // GPU stays off: this machine's AMD driver has repeatedly hung the whole PC (docs/GPU-STABILITY.md).
+  "compute": { "allow_gpu": false, "override_gpu_stability_check": false }
+}

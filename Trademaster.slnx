@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Trademaster.Cli/Trademaster.Cli.csproj" />
+    <Project Path="src/Trademaster.Core/Trademaster.Core.csproj" />
+    <Project Path="src/Trademaster.Engine/Trademaster.Engine.csproj" />
+    <Project Path="src/Trademaster.Sim/Trademaster.Sim.csproj" />
+    <Project Path="src/Trademaster.Telemetry/Trademaster.Telemetry.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Trademaster.Tests/Trademaster.Tests.csproj" />
+  </Folder>
+</Solution>

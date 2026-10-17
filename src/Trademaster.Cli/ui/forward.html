@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Trademaster Forward Test</title>
+<style>
+:root{--bg:#0b0e11;--panel:#14181d;--panel2:#1b2027;--line:#262c34;--text:#e6e9ee;--muted:#8a93a0;--dim:#5d6672;--up:#16c784;--down:#f6465d;--accent:#3b82f6;--warn:#f0b90b;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font:13px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}.up{color:var(--up)}.down{color:var(--down)}.muted{color:var(--muted)}.dim{color:var(--dim)}
+header{height:48px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--panel);white-space:nowrap;overflow-x:auto}
+.brand{font-weight:600;font-size:15px}.chip{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;border:1px solid var(--line);background:var(--panel2)}
+.chip.real{color:#7cc4ff;border-color:#1d3f63;background:#0f2134}.chip.warn{color:var(--warn);border-color:#5a4a12;background:#2a2410}.chip.ok{color:var(--up);border-color:#164d36}
+a{color:#7cc4ff;text-decoration:none}select{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:4px 6px;font:inherit}
+.spacer{flex:1}
+main{padding:14px;display:grid;gap:14px;max-width:1500px;margin:0 auto}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.card h3{margin:0 0 8px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px}.sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+.kv{display:grid;grid-template-columns:1fr auto;gap:4px 10px}.kv div:nth-child(odd){color:var(--muted)}.kv div:nth-child(even){text-align:right;font-family:var(--mono)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px}.ph{padding:8px 12px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px;display:flex;gap:10px;align-items:center}
+.chart{height:260px}.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}
+table{width:100%;border-collapse:collapse}th,td{padding:5px 10px;text-align:right;white-space:nowrap}th{color:var(--muted);font-weight:500;font-size:11px;border-bottom:1px solid var(--line)}td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #1a1f25}
+.note{color:var(--muted);font-size:12px;padding:0 2px}.legend{display:flex;gap:14px;font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">AI Trademaster</span>
+  <span class="chip real">REAL DATA · DELAYED</span><span class="chip warn">FORWARD TEST · PREDICTIONS ONLY · NO ORDERS</span>
+  <span class="chip" id="status">loading…</span>
+  <span class="muted" id="poll"></span>
+  <div class="spacer"></div>
+  <select id="run"></select>
+  <a href="/">← simulation terminal</a>
+</header>
+<main>
+  <div class="note" id="banner"></div>
+  <div class="cards" id="cards"></div>
+  <div class="two">
+    <div class="panel"><div class="ph">Cumulative long/short P&amp;L, net of costs (bps of gross) <span class="legend" id="leg1"></span></div><div class="chart" id="cum"></div></div>
+    <div class="panel"><div class="ph">Rank IC per bar (prediction vs realized 30-min relative return) <span class="legend" id="leg2"></span></div><div class="chart" id="ic"></div></div>
+  </div>
+  <div class="two">
+    <div class="panel"><div class="ph">Latest B1 predictions — strongest relative <span class="up">up</span> <span class="dim" id="lt1"></span></div><table><thead><tr><th>Symbol</th><th>Close</th><th>B1 μ (bps)</th><th>B1 σ</th><th>Ridge</th><th>B0</th></tr></thead><tbody id="top"></tbody></table></div>
+    <div class="panel"><div class="ph">Latest B1 predictions — strongest relative <span class="down">down</span> <span class="dim" id="lt2"></span></div><table><thead><tr><th>Symbol</th><th>Close</th><th>B1 μ (bps)</th><th>B1 σ</th><th>Ridge</th><th>B0</th></tr></thead><tbody id="bot"></tbody></table></div>
+  </div>
+  <div class="panel"><div class="ph">Frozen artifacts</div><div class="kv" style="padding:10px 12px" id="frozen"></div></div>
+</main>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const COL = { b0: '#eda100', ridge: '#8a93a0', b1: '#3987e5' }, NAME = { b0: 'B0 (rule)', ridge: 'Ridge', b1: 'B1 (neural, frozen)' };
+const fmt = (v, d = 2) => v == null || !isFinite(v) ? '—' : (v > 0 && d >= 0 ? '+' : '') + v.toFixed(d);
+const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+const nyTime = t => new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(t * 1000));
+const opts = { layout: { background: { color: '#14181d' }, textColor: '#8a93a0' }, grid: { vertLines: { color: '#1b2027' }, horzLines: { color: '#1b2027' } },
+  rightPriceScale: { borderColor: '#262c34' }, timeScale: { borderColor: '#262c34', timeVisible: true, tickMarkFormatter: t => nyTime(t) },
+  localization: { timeFormatter: t => nyTime(t) + ' ET' }, autoSize: true };
+const cum = LightweightCharts.createChart($('cum'), opts), ic = LightweightCharts.createChart($('ic'), opts);
+const cumS = {}, icS = {};
+for (const m of ['b0', 'ridge', 'b1']) {
+  cumS[m] = cum.addLineSeries({ color: COL[m], lineWidth: 2, lineStyle: m === 'b1' ? 0 : m === 'ridge' ? 2 : 1, priceLineVisible: false });
+  icS[m] = ic.addLineSeries({ color: COL[m], lineWidth: m === 'b1' ? 2 : 1, lineStyle: m === 'b1' ? 0 : m === 'ridge' ? 2 : 1, priceLineVisible: false });
+}
+const leg = Object.keys(COL).map(m => `<span><span class="sw" style="background:${COL[m]}"></span> ${NAME[m]}</span>`).join('');
+$('leg1').innerHTML = leg; $('leg2').innerHTML = leg;
+
+async function loadRuns() {
+  const runs = await (await fetch('/api/forward/runs')).json();
+  const cur = $('run').value;
+  $('run').innerHTML = runs.map(r => `<option ${r === cur ? 'selected' : ''}>${r}</option>`).join('') || '<option>no runs yet</option>';
+}
+async function refresh() {
+  const run = $('run').value;
+  const r = await fetch('/api/forward' + (run && run !== 'no runs yet' ? '?run=' + encodeURIComponent(run) : ''));
+  if (!r.ok) { $('status').textContent = 'NO FORWARD RUN YET'; return; }
+  const s = await r.json();
+  const live = s.mode === 'live';
+  $('status').textContent = (live ? 'LIVE · ' : 'REHEARSAL · ') + s.status.toUpperCase();
+  $('status').className = 'chip ' + (live && s.status === 'live' ? 'ok' : 'warn');
+  $('poll').textContent = `session ${s.session_date} · ${s.bars_logged} bars logged, ${s.bars_scored} scored · last poll ${s.last_poll_utc ? new Date(s.last_poll_utc).toLocaleTimeString() : '—'}`;
+  $('banner').innerHTML = live
+    ? `Frozen models predict each stock's next-30-minute move relative to the group. Every prediction is written to disk before its outcome exists and scored once the outcome bar completes. Costs assumed ${s.cost_bps_one_way} bps one-way. ${s.data_source}.`
+    : `<b>Rehearsal:</b> the live pipeline replayed over a past session. That session was already inside the research data, so these numbers are a <b>pipeline check, not evidence</b>.`;
+  $('cards').innerHTML = ['b1', 'ridge', 'b0'].map(m => {
+    const v = s.models[m] || {};
+    return `<div class="card"><h3><span class="sw" style="background:${COL[m]}"></span>${NAME[m]}</h3><div class="kv">
+      <div>Rank IC (mean)</div><div class="${cls(v.rank_ic_mean)}">${fmt(v.rank_ic_mean, 4)}</div>
+      <div>t (overlap-adjusted)</div><div>${fmt(v.rank_ic_t_eff, 2)}</div>
+      <div>Direction right</div><div>${v.hit_rate == null ? '—' : (v.hit_rate * 100).toFixed(1) + '%'}</div>
+      <div>L/S gross / rebalance</div><div class="${cls(v.ls_gross_bps_per_rebalance)}">${fmt(v.ls_gross_bps_per_rebalance)} bps</div>
+      <div>L/S net / rebalance</div><div class="${cls(v.ls_net_bps_per_rebalance)}">${fmt(v.ls_net_bps_per_rebalance)} bps</div>
+      <div>Cumulative net</div><div class="${cls(v.ls_cum_net_bps)}">${fmt(v.ls_cum_net_bps, 1)} bps</div>
+      <div>Bars scored / rebalances</div><div>${v.bars_scored ?? 0} / ${v.rebalances ?? 0}</div></div></div>`;
+  }).join('');
+  for (const m of ['b0', 'ridge', 'b1']) {
+    cumS[m].setData(s.series.filter(p => p.cum_net).map(p => ({ time: p.t, value: p.cum_net[m] })));
+    icS[m].setData(s.series.map(p => ({ time: p.t, value: p[m] })));
+  }
+  cum.timeScale().fitContent(); ic.timeScale().fitContent();
+  const rows = (s.latest && s.latest.rows || []).slice().sort((a, b) => b.b1 - a.b1);
+  const tr = x => `<tr><td>${x.symbol}</td><td class="num">${x.close == null ? '—' : x.close.toFixed(2)}</td><td class="num ${cls(x.b1)}">${fmt(x.b1, 2)}</td><td class="num">${x.b1_sigma.toFixed(1)}</td><td class="num ${cls(x.ridge)}">${fmt(x.ridge, 1)}</td><td class="num ${cls(x.b0)}">${fmt(x.b0, 1)}</td></tr>`;
+  $('top').innerHTML = rows.slice(0, 10).map(tr).join(''); $('bot').innerHTML = rows.slice(-10).reverse().map(tr).join('');
+  const lbl = s.latest ? `bar ${s.latest.label} ET` : ''; $('lt1').textContent = lbl; $('lt2').textContent = lbl;
+  $('frozen').innerHTML = `<div>Frozen set</div><div>${s.frozen.path}</div><div>Frozen at</div><div>${s.frozen.frozen_at}</div>` +
+    Object.entries(s.frozen.sha256).map(([k, v]) => `<div>${k} sha256</div><div>${v}</div>`).join('') +
+    `<div>Target</div><div>${s.target}, ${s.horizon_bars} × ${s.interval} bars</div>` +
+    (s.errors && s.errors.length ? `<div>Recent fetch errors</div><div class="down">${s.errors.length}</div>` : '');
+}
+$('run').addEventListener('change', refresh);
+loadRuns().then(refresh);
+setInterval(() => loadRuns().then(refresh), 15000);
+</script>
+</body>
+</html>

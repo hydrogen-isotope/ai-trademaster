@@ -1,0 +1,6 @@
+#!/bin/sh
+# Blocks commits containing secrets or licensed market data (see SECURITY.md).
+if [ -x python/.venv/Scripts/python.exe ]; then PY=python/.venv/Scripts/python.exe
+elif command -v py >/dev/null 2>&1; then PY="py -3"
+else PY=python3; fi
+exec $PY tools/precommit_scan.py

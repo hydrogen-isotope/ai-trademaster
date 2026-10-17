@@ -1,0 +1,41 @@
+# --- build output / IDE
+bin/
+obj/
+.vs/
+*.user
+TestResults/
+
+# --- Python
+.venv/
+__pycache__/
+*.pyc
+
+# --- Everything licensed, derived or personal lives under private/ and is never committed (see SECURITY.md):
+#     private/data (market data, forward-test logs), private/models (weights, stats), private/reports (run outputs)
+private/
+
+# --- Defence in depth: the same kinds of files anywhere else
+data/
+models/
+reports/
+*.tmrp
+*.parquet
+*.feather
+*.dbn
+*.dbn.zst
+*.pcap
+*.jsonl
+
+# --- Secrets and local configuration (never commit; see SECURITY.md)
+.env
+.env.*
+*.env
+secrets/
+*.secret
+*.pfx
+*.p12
+*.pem
+*.key
+config/*.local.json
+config/live*.json
+ibkr*.json

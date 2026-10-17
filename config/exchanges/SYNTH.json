@@ -1,0 +1,22 @@
+{
+  // Synthetic exchange for prototype testing. All values are invented and labelled as such.
+  "id": "SYNTH",
+  "name": "Synthetic Exchange (prototype only)",
+  "synthetic": true,
+  "verified": false,
+  "notes": "Invented values for simulation. Not representative of any real venue.",
+  "time_zone": "UTC",
+  "currency": "XXX",
+  "sessions": [ { "open": "09:00", "close": "12:00" }, { "open": "13:00", "close": "17:00" } ],
+  "holidays": [],
+  "tick_table": [
+    { "from": 0, "tick": 0.001 },
+    { "from": 1.0, "tick": 0.005 },
+    { "from": 10.0, "tick": 0.01 },
+    { "from": 100.0, "tick": 0.05 }
+  ],
+  "lot_size": 100,
+  "price_collar_pct": 10,
+  "fee_bps": 1.0,
+  "min_fee": 1.0
+}

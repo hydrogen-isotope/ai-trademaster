@@ -1,0 +1,18 @@
+{
+  // SKELETON ONLY. Every value below must be filled in from official Nasdaq / SEC documents
+  // (regular and extended hours, holiday calendar, tick rules, fees, broker costs) before use.
+  // The engine refuses to load this file while "verified" is false.
+  "id": "NASDAQ",
+  "name": "Nasdaq Stock Market (skeleton - unverified)",
+  "verified": false,
+  "notes": "TODO: fill sessions, holidays, tick_table, lot_size, limit-up/limit-down handling and fees from official sources.",
+  "time_zone": "America/New_York",
+  "currency": "USD",
+  "sessions": [],
+  "holidays": [],
+  "tick_table": [],
+  "lot_size": 0,
+  "price_collar_pct": 0,
+  "fee_bps": 0,
+  "min_fee": 0
+}

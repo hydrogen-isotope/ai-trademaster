@@ -1,0 +1,18 @@
+{
+  // SKELETON ONLY. Every value below must be filled in from official SGX documents
+  // (trading hours, holiday calendar, minimum bid size table, board lot, fees) before use.
+  // The engine refuses to load this file while "verified" is false.
+  "id": "SGX",
+  "name": "Singapore Exchange (skeleton - unverified)",
+  "verified": false,
+  "notes": "TODO: fill sessions, holidays, tick_table, lot_size, price limits and fees from official SGX sources.",
+  "time_zone": "Asia/Singapore",
+  "currency": "SGD",
+  "sessions": [],
+  "holidays": [],
+  "tick_table": [],
+  "lot_size": 0,
+  "price_collar_pct": 0,
+  "fee_bps": 0,
+  "min_fee": 0
+}

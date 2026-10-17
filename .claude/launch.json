@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "dashboard",
+      "runtimeExecutable": "src/Trademaster.Cli/bin/Release/net10.0/trademaster.exe",
+      "runtimeArgs": ["serve", "--port", "5080"],
+      "port": 5080
+    }
+  ]
+}
