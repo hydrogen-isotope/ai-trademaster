@@ -49,5 +49,5 @@
   "trading": { "live_enabled": false, "live_confirm": "" },
   "account": { "starting_cash": 1000000 },
   // GPU stays off: this machine's AMD driver has repeatedly hung the whole PC (docs/GPU-STABILITY.md).
-  "compute": { "allow_gpu": false, "override_gpu_stability_check": false }
+  "compute": { "allow_gpu": false, "override_gpu_stability_check": false, "backend": "cpu", "device_id": -1 }
 }

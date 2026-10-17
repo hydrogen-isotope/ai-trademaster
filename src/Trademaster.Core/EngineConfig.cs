@@ -134,9 +134,13 @@ public sealed class TradingSection
 /// </summary>
 public sealed class ComputeSection
 {
-    public bool AllowGpu { get; init; }
+    public bool AllowGpu { get; set; }
     /// <summary>Skips the "no driver resets in 7 days" requirement. Only for supervised, on-site runs.</summary>
-    public bool OverrideGpuStabilityCheck { get; init; }
+    public bool OverrideGpuStabilityCheck { get; set; }
+    /// <summary>ONNX Runtime backend: cpu | dml (DirectX 12; AMD now) | cuda | tensorrt (NVIDIA) | migraphx (ROCm on Linux).</summary>
+    public string Backend { get; set; } = "cpu";
+    /// <summary>GPU device id for the backend; -1 = automatic (discrete GPU with the most VRAM).</summary>
+    public int DeviceId { get; set; } = -1;
 }
 
 public sealed class AccountSection

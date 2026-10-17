@@ -5,14 +5,31 @@
     <ProjectReference Include="..\Trademaster.Telemetry\Trademaster.Telemetry.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
+  <!--
+    ONNX Runtime build flavour (one native runtime per build; the C# API and model files are identical):
+      DirectML  default on Windows: CPU + DirectML GPU (AMD/Intel/NVIDIA via DirectX 12). DirectML's last ORT release is 1.24.x.
+      Cpu       default elsewhere (Linux CI): CPU only.
+      Cuda      NVIDIA: CPU + CUDA + TensorRT.   dotnet build -p:OrtFlavor=Cuda
+    The runtime backend is then chosen with compute.backend (cpu | dml | cuda | tensorrt | migraphx).
+  -->
+  <PropertyGroup>
+    <OrtFlavor Condition="'$(OrtFlavor)' == '' and '$(OS)' == 'Windows_NT'">DirectML</OrtFlavor>
+    <OrtFlavor Condition="'$(OrtFlavor)' == ''">Cpu</OrtFlavor>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(OrtFlavor)' == 'DirectML'">
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.DirectML" Version="1.24.4" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(OrtFlavor)' == 'Cpu'">
     <PackageReference Include="Microsoft.ML.OnnxRuntime" Version="1.31.0" />
   </ItemGroup>
-
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-  </PropertyGroup>
+  <ItemGroup Condition="'$(OrtFlavor)' == 'Cuda'">
+    <PackageReference Include="Microsoft.ML.OnnxRuntime.Gpu" Version="1.31.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>OrtFlavor</_Parameter1>
+      <_Parameter2>$(OrtFlavor)</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
 
 </Project>

@@ -98,6 +98,8 @@ private/data/  private/reports/            generated (git-ignored)
 - Real exchange configs (`SGX.json`, `NASDAQ.json`) are empty skeletons and are refused until filled from official sources and marked `verified`.
 - Synthetic data embeds known signals by construction; P&L on it says nothing about real markets.
 - GPU work is gated off until the display driver has been stable for 7 days ([docs/GPU-STABILITY.md](docs/GPU-STABILITY.md)).
+  The AI runs on CPU, AMD (DirectML) or NVIDIA (CUDA/TensorRT) through ONNX Runtime with the same model file:
+  see [docs/GPU-BACKENDS.md](docs/GPU-BACKENDS.md).
 
 ## Licence
 

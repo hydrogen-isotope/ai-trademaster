@@ -40,6 +40,10 @@ static int Help()
                    [--stocks 200] [--sectors 8] [--minutes 30] [--seed 42]
           run      [--config config/default.json] [--data DIR] [--mode virtual|paced]
                    [--speed 1.0] [--max-cycles N] [--out reports/<run-id>]
+          serve    [--speed 1] [--port 5080]                 Local dashboard
+          exec-study [--data DIR] [--fill-model queue|touch]  Execution probe
+          bench-onnx [--backend cpu|dml|cuda|tensorrt|migraphx[,..]] [--device N] [--allow-gpu]
+                     [--n 30,300,1000] [--k 1,10,100,1000]   Inference latency (GPU needs --allow-gpu + safety gate)
         """);
     return 0;
 }
@@ -47,7 +51,12 @@ static int Help()
 static int Doctor()
 {
     foreach (var l in SystemInfo.Collect().Lines()) Console.WriteLine(l);
-    Console.WriteLine("Backends:    CPU (managed C#). No GPU code exists in this build.");
+    var providers = Trademaster.Engine.Inference.OnnxBackend.AvailableProviders();
+    Console.WriteLine($"ONNX:        flavour {Trademaster.Engine.Inference.OnnxBackend.Flavor}; providers {string.Join(", ", providers)}");
+    var adapters = GpuAdapters.Enumerate();
+    int pick = GpuAdapters.PickDiscrete(adapters);
+    foreach (var a in adapters)
+        Console.WriteLine($"  DirectML device {a.Index}: {a.Name} ({a.Vendor}, {a.DedicatedVramGb} GB dedicated){(a.Software ? " [software]" : "")}{(a.Index == pick ? "  <- auto-selected for dml" : "")}");
     Console.WriteLine(GpuHealth.Check().Describe());
     var findings = GpuConfigCheck.Findings();
     Console.WriteLine(findings.Count == 0
@@ -162,8 +171,13 @@ static int BenchOnnx(Dictionary<string, string> o)
     int[] ks = o.GetValueOrDefault("k", "1,10,100,1000").Split(',').Select(int.Parse).ToArray();
     int threads = Int(o, "threads", 4);
     int calls = Int(o, "calls", 200);
-    Console.WriteLine($"ONNX CPU benchmark: {model}, threads={threads} (GPU not used)");
-    var rows = Trademaster.Engine.Inference.OnnxBench.Run(model, ns, ks, threads, calls, Console.Out);
+    // --backend cpu,dml compares backends in one report. GPU backends need --allow-gpu and still pass the GPU safety
+    // gate (no driver resets in 7 days) unless --override-gpu-stability is given for a supervised, on-site run.
+    var backends = o.GetValueOrDefault("backend", "cpu").Split(',').Select(b => new Trademaster.Engine.Inference.OnnxBackend(
+        b.Trim().ToLowerInvariant(), Int(o, "device", -1), o.ContainsKey("allow-gpu"), o.ContainsKey("override-gpu-stability"))).ToList();
+    Console.WriteLine($"ONNX benchmark: {model}, threads={threads}, backends={string.Join(",", backends.Select(b => b.Name))}, ORT flavour {Trademaster.Engine.Inference.OnnxBackend.Flavor}");
+    var rows = new List<Trademaster.Engine.Inference.OnnxBench.Row>();
+    foreach (var be in backends) rows.AddRange(Trademaster.Engine.Inference.OnnxBench.Run(model, ns, ks, threads, calls, Console.Out, be));
     var dir = o.GetValueOrDefault("out", Path.Combine("private", "reports", $"{DateTime.Now:yyyyMMdd-HHmmss}-bench-onnx"));
     Directory.CreateDirectory(dir);
     var md = Path.Combine(dir, "summary.md");
