@@ -20,6 +20,7 @@ try
         "run" => Run(opts),
         "bench-onnx" => BenchOnnx(opts),
         "serve" => Serve(opts),
+        "app" => App(opts),
         "exec-study" => ExecStudy(opts),
         "verify-audit" => VerifyAudit(args.Skip(1).FirstOrDefault()),
         _ => Help(),
@@ -45,6 +46,7 @@ static int Help()
                    [--allow-gpu] [--dump-features]
           verify-audit <run>/decisions.jsonl                 Check the decision log's hash chain
           serve    [--speed 1] [--port 5080]                 Local dashboard
+          app      [--page forward|terminal] [--port 5080]   Dashboard in its own window (closing it stops the dashboard)
           exec-study [--data DIR] [--fill-model queue|touch]  Execution probe
           bench-onnx [--backend cpu|dml|cuda|tensorrt|migraphx[,..]] [--device N] [--allow-gpu]
                      [--n 30,300,1000] [--k 1,10,100,1000]   Inference latency (GPU needs --allow-gpu + safety gate)
@@ -180,6 +182,24 @@ static int Serve(Dictionary<string, string> o)
     if (o.TryGetValue("speed", out var speed)) cfg.Run.Speed = double.Parse(speed, CultureInfo.InvariantCulture);
     cfg.Run.MaxCycles = 0;
     return Trademaster.Cli.Dashboard.Run(cfg, Int(o, "port", 5080), !o.ContainsKey("no-loop"));
+}
+
+static int App(Dictionary<string, string> o)
+{
+    int port = Int(o, "port", 5080);
+    string page = o.GetValueOrDefault("page", "forward") switch { "forward" => "/forward", "terminal" or "sim" => "/", var p => "/" + p.TrimStart('/') };
+    if (Trademaster.Cli.AppWindow.PortInUse(port))
+    {
+        // A dashboard is already running (e.g. started by tools/forward-live.cmd): just open a window onto it.
+        Console.WriteLine($"Dashboard already running on port {port}; opening a window.");
+        var w = Trademaster.Cli.AppWindow.Open($"http://127.0.0.1:{port}{page}");
+        w?.WaitForExit();
+        return 0;
+    }
+    var cfg = EngineConfig.Load(o.GetValueOrDefault("config", "config/default.json"));
+    if (o.TryGetValue("data", out var data)) cfg.Data.Dir = data;
+    cfg.Run.MaxCycles = 0;
+    return Trademaster.Cli.Dashboard.Run(cfg, port, !o.ContainsKey("no-loop"), page);
 }
 
 static int BenchOnnx(Dictionary<string, string> o)

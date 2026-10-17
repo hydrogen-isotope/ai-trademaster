@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Hosting;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -48,7 +49,7 @@ public static class Dashboard
 
     private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
-    public static int Run(EngineConfig cfg, int port, bool loop)
+    public static int Run(EngineConfig cfg, int port, bool loop, string? windowPage = null)
     {
         cfg.Run.Mode = RunMode.Paced;
         var store = new Store();
@@ -166,7 +167,22 @@ public static class Dashboard
         });
 
         Console.WriteLine($"AI Trademaster dashboard: http://127.0.0.1:{port}/   (SIMULATION, paced x{cfg.Run.Speed}; Ctrl+C to stop)");
-        app.Run();
+        if (windowPage is null)
+        {
+            app.Run();
+            return 0;
+        }
+        app.Start();
+        var window = AppWindow.Open($"http://127.0.0.1:{port}{windowPage}");
+        if (window is null)
+        {
+            Console.WriteLine("Window opened (not tracked). The dashboard keeps running until Ctrl+C.");
+            app.WaitForShutdown();
+            return 0;
+        }
+        Console.WriteLine("Window open. Closing the window stops the dashboard.");
+        window.WaitForExit();
+        app.StopAsync().GetAwaiter().GetResult();
         return 0;
     }
 

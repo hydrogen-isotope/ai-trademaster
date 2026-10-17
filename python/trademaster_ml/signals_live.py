@@ -1,6 +1,8 @@
 """
 Live buy/sell indicators for the dashboard's forward-test page (research only: no orders, not trading advice).
 
+  prepare  pull the latest 1-minute bars (merged into private/data/hist_1m_30d), then freeze on the newest
+           complete week if it isn't frozen yet. `live` runs this first unless --no-refresh.
   freeze   fit the 30-minute model + signal thresholds on the most recent full week and save them, hashed
   live     wait for the next NASDAQ session; at each 30-minute checkpoint fetch today's 1-minute bars, compute
            signals from bars up to that minute only, write them to disk, and score each one 30 minutes later
@@ -9,6 +11,7 @@ Live buy/sell indicators for the dashboard's forward-test page (research only: n
 Output: private/data/forward/signals-{live|replay}-<date>/signals.json (read by the dashboard at /forward).
 
 Usage:
+  python -m trademaster_ml.signals_live prepare
   python -m trademaster_ml.signals_live freeze
   python -m trademaster_ml.signals_live live
   python -m trademaster_ml.signals_live replay --date 2026-10-16 --frozen private/models/forward/signals-fit-2026-10-09
@@ -22,6 +25,7 @@ from .weektest import load
 from .rolling import weeks_of, fit, features, FEATS, SKIP
 from .signals import H, STEP, COST_ONE_WAY, predict_rel, checkpoints
 from .forward import keep_awake, next_session
+from .fetch1m import fetch_all
 
 NY = ZoneInfo("America/New_York")
 HIST = "private/data/hist_1m_30d"
@@ -33,9 +37,10 @@ def sha256(path):
 
 
 # ---------------------------------------------------------------- freeze
-def freeze(hist=HIST, week_end=None):
+def freeze(hist=HIST, week_end=None, force=False):
     syms, ts, days, close, vol, ref, stocks = load(hist)
-    wk = weeks_of(sorted(set(days)))
+    today = dt.datetime.now(NY).date()
+    wk = [w for w in weeks_of(sorted(set(days))) if max(w) < today]      # complete weeks only
     if week_end:
         wk = [w for w in wk if max(w) <= dt.date.fromisoformat(week_end)]
     train = wk[-1]
@@ -46,6 +51,9 @@ def freeze(hist=HIST, week_end=None):
     tr = tr[np.isfinite(tr)]
     q = dict(zip(["p1", "p5", "p95", "p99"], map(float, np.percentile(tr, [1, 5, 95, 99]))))
     out = os.path.join("private", "models", "forward", f"signals-fit-{train[-1]}")
+    if os.path.exists(os.path.join(out, "model.json")) and not force:
+        print(f"already frozen: {out}")
+        return out
     os.makedirs(out, exist_ok=True)
     m = dict(kind="signals-30m", symbols=syms, ref=ref.tolist(), stocks=stocks.tolist(), beta=beta.tolist(),
              weights=w.tolist(), features=FEATS, thresholds=q, horizon_min=H, step_min=STEP, skip=SKIP,
@@ -191,6 +199,21 @@ def latest_frozen():
     return os.path.join(root, c[-1])
 
 
+def prepare():
+    """Pull data first, then make sure the newest complete week is frozen. Returns the frozen model path."""
+    print("pulling latest 1-minute bars ...")
+    try:
+        saved, errors = fetch_all(HIST, log=lambda m: None)
+        print(f"  {len(saved)} symbols updated" + (f", {len(errors)} fetch errors (kept previous data)" if errors else ""))
+    except Exception as e:
+        print(f"  data pull failed ({e}); using data already on disk")
+    try:
+        return freeze()
+    except Exception as e:
+        print(f"  freeze failed ({e}); using the newest model already frozen")
+        return latest_frozen()
+
+
 # ---------------------------------------------------------------- modes
 def replay(date_s, frozen):
     f = Frozen(frozen)
@@ -253,17 +276,21 @@ def live(frozen, poll_offset_s=25):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["freeze", "live", "replay"])
+    ap.add_argument("cmd", choices=["prepare", "freeze", "live", "replay"])
+    ap.add_argument("--no-refresh", action="store_true", help="live: skip pulling data / refreezing first")
+    ap.add_argument("--force", action="store_true", help="freeze: refit even if this week is already frozen")
     ap.add_argument("--frozen")
     ap.add_argument("--date")
     ap.add_argument("--week-end", help="freeze: use the last full week ending on/before this date")
     a = ap.parse_args()
-    if a.cmd == "freeze":
-        freeze(week_end=a.week_end)
+    if a.cmd == "prepare":
+        prepare()
+    elif a.cmd == "freeze":
+        freeze(week_end=a.week_end, force=a.force)
     elif a.cmd == "replay":
         replay(a.date, a.frozen or latest_frozen())
     else:
-        live(a.frozen or latest_frozen())
+        live(a.frozen or (latest_frozen() if a.no_refresh else prepare()))
 
 
 if __name__ == "__main__":
