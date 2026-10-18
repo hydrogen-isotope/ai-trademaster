@@ -175,6 +175,11 @@ public static class Dashboard
             return File.Exists(path) ? Results.Text(File.ReadAllText(path), "application/json")
                 : Results.NotFound(new { error = "no rankings yet: run python -m trademaster_ml.v6 rank" });
         });
+        app.MapGet("/api/rankings/status", () =>
+        {
+            var path = Path.Combine("private", "reports", "v6", "refresh_status.json");
+            return File.Exists(path) ? Results.Text(File.ReadAllText(path), "application/json") : Results.Json(new { state = "none" });
+        });
 
         // Forward test (real data, predictions only): files written by python -m trademaster_ml.forward
         string fwdRoot = Path.Combine("private", "data", "forward");

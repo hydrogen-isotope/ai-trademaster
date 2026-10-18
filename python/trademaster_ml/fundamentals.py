@@ -347,7 +347,15 @@ def panel():
     ui = np.array([s in set(uni) for s in syms])
     print(f"fundamentals: {covered} of {len(uni)} ever-in-universe symbols covered; SIC known for {int((sic[ui] >= 0).sum())}", flush=True)
     meta = json.load(open(os.path.join(DIR, "gpu", "meta.json")))
-    mask = np.fromfile(os.path.join(DIR, "gpu", "mask.f32"), np.float32).reshape(meta["T"], meta["N"]) > 0.5
+    if (meta["T"], meta["N"]) != (T, N):              # new days/listings since the last export: coverage on the overlap
+        print(f"  (universe mask is from the previous export, {meta['T']}x{meta['N']}; coverage shown on the overlap)", flush=True)
+    mask = np.zeros((T, N), bool)
+    old = np.fromfile(os.path.join(DIR, "gpu", "mask.f32"), np.float32).reshape(meta["T"], meta["N"]) > 0.5
+    pos = {s: j for j, s in enumerate(syms)}
+    cols = np.array([pos.get(s, -1) for s in meta["symbols"]])
+    tt = min(T, meta["T"])
+    keep = cols >= 0
+    mask[:tt, cols[keep]] = old[:tt][:, keep]
     for k in NAMES:
         print(f"  {k:<20} available on {np.isfinite(F[k][mask]).mean():.0%} of universe stock-days", flush=True)
 

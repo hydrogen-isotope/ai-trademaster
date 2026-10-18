@@ -39,7 +39,7 @@ td.name{text-align:left;color:var(--muted);max-width:150px;overflow:hidden;text-
 <header>
   <span class="brand">AI Trademaster</span>
   <span class="chip real">NASDAQ · END OF DAY</span><span class="chip warn">RESEARCH ONLY · NO ORDERS · NOT ADVICE</span>
-  <span class="chip" id="status">loading…</span><span class="chip warn" id="v7chip" title="v7 price forecasts are in a forward shadow test until 60 trading days are scored">PRICE FORECAST · SHADOW</span>
+  <span class="chip" id="status">loading…</span><span class="chip warn" id="v7chip" title="v7 price forecasts are in a forward shadow test until 60 trading days are scored">PRICE FORECAST · SHADOW</span><span class="chip" id="upd" style="display:none"></span>
   <span class="muted" id="asof"></span>
   <div class="spacer"></div>
   <a href="/">← markets</a> <a href="/forward">AI signals</a>
@@ -168,6 +168,22 @@ async function load() {
 }
 $('q').addEventListener('input', () => DATA && renderAll());
 load();
+// background refresh (started when the app opens): show progress, reload when new data lands
+let wasRunning = false;
+async function pollRefresh() {
+  try {
+    const s = await (await fetch('/api/rankings/status')).json();
+    const el = $('upd');
+    if (s.state === 'running') { el.style.display = ''; el.className = 'chip warn'; el.textContent = 'UPDATING · ' + s.step; wasRunning = true; }
+    else if (s.state === 'error') { el.style.display = ''; el.className = 'chip bad'; el.textContent = 'UPDATE FAILED'; el.title = s.step; }
+    else if (s.state === 'done') {
+      el.style.display = ''; el.className = 'chip ok'; el.textContent = 'UP TO DATE'; el.title = s.step + ' at ' + s.time;
+      if (wasRunning) location.reload();
+    }
+  } catch (e) { }
+  setTimeout(pollRefresh, 10000);
+}
+pollRefresh();
 </script>
 </body>
 </html>

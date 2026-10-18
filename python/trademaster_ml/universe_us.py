@@ -102,6 +102,9 @@ def update():
     known = [s for s in active if s in set(syms)]
     creds = alpaca.credentials()
     end = int(time.time()) - 16 * 60
+    now_ny = datetime.now(NY)
+    if now_ny.hour * 60 + now_ny.minute < 16 * 60 + 20:              # today's daily bar is still forming: leave it out
+        end = min(end, int(now_ny.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()))
     look = int(datetime.fromisoformat(dates[-1] + "T00:00:00+00:00").timestamp()) - 10 * 86400
     recent = alpaca.get_bars(known, "1Day", look, end, feed="sip", creds=creds, pause=0.31)
     si, di = {s: i for i, s in enumerate(syms)}, {d: i for i, d in enumerate(dates)}
@@ -138,6 +141,7 @@ def update():
     os.replace(tmp, path)
     print(f"update: +{len(add_days)} day(s) to {dates2[-1]}, {len(new)} new listing(s), {len(resplit)} re-fetched after splits "
           f"({', '.join(resplit[:10])}{'...' if len(resplit) > 10 else ''})", flush=True)
+    return dates2[-1]
 
 
 # Names that are not operating companies: ETFs/ETNs and funds, leveraged products, warrants, rights, units, notes,

@@ -10,3 +10,10 @@ If Not fso.FileExists(exe) Then
 End If
 sh.CurrentDirectory = root
 sh.Run """" & exe & """ app --page market --hide-console", 0, False
+' Bring the NASDAQ rankings and price forecasts up to date in the background (hidden, CPU only; does nothing when
+' they already cover the latest close). Progress shows on the Rankings page.
+py = root & "\python\.venv\Scripts\python.exe"
+If fso.FileExists(py) Then
+  sh.Environment("Process")("PYTHONPATH") = "python"
+  sh.Run """" & py & """ -W ignore -m trademaster_ml.refresh", 0, False
+End If
