@@ -76,7 +76,28 @@ If any fails, SGX rankings are shown as "not adopted".
   CI excluding 0; 80% coverage within 75–85%).
 
 ## Amendments
-(none yet)
+
+**A (2026-10-18, data cleaning before any model result).** Building the panel and the STI proxy exposed three data
+problems. The fixes:
+1. **One-day spikes:** a close more than 50% away from both its neighbours, in opposite directions, is treated as a
+   bad tick and removed (4,309 stock-days).
+2. **Consolidation-distorted tickers dropped (12):** these are tickers whose adjusted history exceeds 100 in quote
+   currency (5F7, 5JS, AUE, AYV, BAI, BJW, CJN, E6R, PRH, QZG, V3M, XCF). Large share consolidations scale old prices
+   up, but not volumes, so their past traded value is wildly inflated. That corrupted the proxy and the liquidity-based
+   universe. The panel is now 530 tickers.
+3. **STI proxy definition:**
+   - membership: the top 30 stocks priced ≥ 1 by **one-year** average traded value (as of the previous day);
+   - weights: traded value, capped at 15% each;
+   - moves beyond 30% in a day are left out;
+   - the index averages **simple** returns (averaging log returns had added a downward drag of about half the
+     variance per day).
+
+   It tracks the STI's turning points (2003 low, 2007 peak, 2009 low, 2020 low, recovery), with a level of 0.98 by
+   2026-10-16 vs about 1.7 for the real STI. The lower long-run return reflects its composition: no
+   foreign-domiciled heavyweights like Jardines, and capped bank weights.
+
+   It is used for betas, residual momentum, market volatility and the small drift term. **Labelled "STI proxy",
+   not STI.**
 
 ## Results
 (not yet run)
