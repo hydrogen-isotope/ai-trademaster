@@ -465,9 +465,10 @@ def main():
                     print(f"{per:4s} {reg:6s}: IC {m['ic']:+.4f} (t {m['ic_t']:+.2f})  direction hit {m['hit'] * 100:.2f}% (p={m['hit_p_one_sided']:.3f})  "
                           f"windows {m['windows']}", flush=True)
         results, recs_all, pits_store = {}, {}, {}
+        par = v2.eval_symbols_parallel(v2.TARGETS, {x: syms.index(x) for x in v2.TARGETS}, L, r1, vol20, P, spy, first_dev, test_last,
+                                       dev_last, ("v3sym", "v4sym"))
         for sym in v2.TARGETS:
-            j = syms.index(sym)
-            recs, pits = v2.eval_symbol(sym, j, L, r1, vol20, P, spy, first_dev, test_last, dev_last, variants=("v3sym", "v4sym"))
+            recs, pits = par[sym]
             results[sym] = {v: {"dev": v2.summarize(recs, first_dev, dev_last, v), "test": v2.summarize(recs, test_first, test_last, v)}
                             for v in ("v3sym", "v4sym")}
             recs_all[sym], pits_store[sym] = recs, pits

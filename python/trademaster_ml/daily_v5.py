@@ -114,9 +114,10 @@ def main():
             if "ic" in m:
                 print(f"{per:4s} {reg:6s}: IC {m['ic']:+.4f} (t {m['ic_t']:+.2f})  direction hit {m['hit'] * 100:.2f}% (p={m['hit_p_one_sided']:.3f})  windows {m['windows']}", flush=True)
     results, recs_all = {}, {}
+    par = v2.eval_symbols_parallel(v2.TARGETS, {x: syms.index(x) for x in v2.TARGETS}, L, r1, vol20, P, spy, first_dev, test_last, dev_last,
+                                   ("v3sym", "v4sym"))
     for sym in v2.TARGETS:
-        j = syms.index(sym)
-        recs, _ = v2.eval_symbol(sym, j, L, r1, vol20, P, spy, first_dev, test_last, dev_last, log=None, variants=("v3sym", "v4sym"))
+        recs, _ = par[sym]
         results[sym] = {v: {"dev": v2.summarize(recs, first_dev, dev_last, v), "test": v2.summarize(recs, test_first, test_last, v)} for v in ("v3sym", "v4sym")}
         recs_all[sym] = recs
     pooled = lambda v, per: float(np.mean([np.mean([x["crps"] for x in results[s][v][per]]) for s in v2.TARGETS]))
@@ -138,11 +139,13 @@ def main():
         Fg = F.copy()
         drop = [i for i, n in enumerate(names) if n not in keep]
         Fg[:, :, drop] = np.where(np.isfinite(Fg[:, :, drop]), 0.0, np.nan)
-        Pg = v4.walk_forward(Fg, Y, first_dev, test_last, WD, log=None)
+        print(f"  extra check: {g} ...", flush=True)
+        Pg = v4.walk_forward(Fg, Y, first_dev, test_last, WD, log=print)
         extra[g] = {"dev": v4.regime_metrics(Pg, Y, first_dev, dev_last, is_stock, stress)["all"], "test": v4.regime_metrics(Pg, Y, test_first, test_last, is_stock, stress)["all"]}
         if g == "earnings only":
             f17 = next(i for i, d in enumerate(dates) if d >= "2017-01-03")
-            Pf = v4.walk_forward(Fg, Y, f17, test_last, WD, log=None)
+            print("  extra check: earnings only over 2017-2026 ...", flush=True)
+            Pf = v4.walk_forward(Fg, Y, f17, test_last, WD, log=print)
             extra["earnings only, 2017-2026"] = v4.regime_metrics(Pf, Y, f17, test_last, is_stock, stress)["all"]
     rules = {"calibration": {s: v2.passes_calibration(results[s][chosen]["test"]) for s in v2.TARGETS}, "crps_skill_vs_random_walk": float(skill),
              "crps_rule_pass": bool(skill > 0), "direction": mm["test"]["all"],

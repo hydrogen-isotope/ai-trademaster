@@ -257,6 +257,28 @@ def eval_symbol(sym, j, L, r1, vol20, P, spy, first, last, dev_last, log=print,
     return recs, {v: {h: pits[v][h][-CAL_WINDOW:] for h in range(H)} for v in pits}
 
 
+def _eval_worker(args):
+    """Runs eval_symbol in a separate process; each worker gets an equal share of the CPU threads."""
+    sym, j, L, r1, vol20, P, spy, first, last, dev_last, variants, threads = args
+    import torch
+    torch.set_num_threads(threads)
+    print(f"  ranges: {sym} started (process {os.getpid()}, {threads} threads)", flush=True)
+    out = eval_symbol(sym, j, L, r1, vol20, P, spy, first, last, dev_last, log=None, variants=variants)
+    print(f"  ranges: {sym} done", flush=True)
+    return sym, out
+
+
+def eval_symbols_parallel(syms_to_run, sym_index, L, r1, vol20, P, spy, first, last, dev_last, variants, workers=None):
+    """Range simulations for several stocks at once, one process per stock (CPU cores). Results are identical to
+    running eval_symbol one stock at a time: each stock's random numbers come from its own fixed seed."""
+    from concurrent.futures import ProcessPoolExecutor
+    workers = workers or min(len(syms_to_run), max(1, (os.cpu_count() or 4) // 2))
+    threads = max(1, (os.cpu_count() or 4) // workers)
+    jobs = [(s, sym_index[s], L, r1, vol20, P, spy, first, last, dev_last, tuple(variants), threads) for s in syms_to_run]
+    with ProcessPoolExecutor(max_workers=workers) as ex:
+        return dict(ex.map(_eval_worker, jobs))
+
+
 def summarize(recs, lo, hi, variant):
     rows = [r for r in recs if lo <= r["t"] <= hi]
     out = []
