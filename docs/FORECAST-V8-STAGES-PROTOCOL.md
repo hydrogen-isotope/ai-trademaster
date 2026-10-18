@@ -67,7 +67,26 @@ Metric definitions follow v6 and v7: daily rank IC with Newey-West t, and a bloc
 The market prices widely read news quickly, and the window is about 570 days.
 
 ## Amendments
-(none yet)
+
+**A (2026-10-18, after the 200-headline hand check and before any v8 news result).** What the hand check showed:
+- Direction labels were sensible.
+- The LLM's "new vs old" question did not discriminate. It marked about 100% of headlines as new, including
+  "What's Going On With Broadcom Stock?" and "Earnings Scheduled For …".
+- Speed was 0.30 s per headline, about 12 h for the window.
+
+Changes:
+- **Recap / template filter.** P(new) is replaced by a fixed list of Benzinga template patterns (`RECAP` in
+  `llm_news.py`: "What's Going On With", "Why … Shares Are Trading …", "Stocks Moving", "Whale Activity", "Earnings
+  Scheduled For", "Options Activity", "Stocks To Watch", "Preview", 52-week high/low, P/E or short-interest
+  "Insights", "Top N", "N … Stocks", and similar). Matching headlines (18% of the fetched sample) are not scored and
+  get weight 0. Every other headline gets weight 1.
+- **One topic question.** The AI and market questions are merged: "mainly about artificial intelligence, the overall
+  market or economy, or other?"; the answer word is "other", because "neither" is two tokens in Qwen's vocabulary and can't be read from the first token
+  - `ai_anxiety` uses P(ai).
+  - `mkt_news` uses P(market).
+- **Direction** is asked for at most 2 tagged tickers per headline.
+
+Nothing else changes.
 
 ## Results
 (not yet run)
