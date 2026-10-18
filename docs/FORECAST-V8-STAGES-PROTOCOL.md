@@ -89,4 +89,23 @@ Changes:
 Nothing else changes.
 
 ## Results
-(not yet run)
+
+### Test A: staging vs one ridge (no news), run 2026-10-18
+
+| model | dev IC (t) | dev top>bottom | dev L/S Sharpe | seen IC (t) | seen top>bottom | seen L/S Sharpe |
+|---|---|---|---|---|---|---|
+| v6 R (one ridge) | +0.0673 (8.3) | 66% | 1.93 | +0.0588 (5.0) | 67% | 2.83 |
+| S2 price alone | +0.0679 (8.1) | 62% | 1.87 | +0.0612 (5.3) | 70% | 3.27 |
+| S3 fundamentals alone | +0.0401 (6.0) | 59% | 1.04 | +0.0368 (3.3) | 55% | 0.60 |
+| S4 industry alone | +0.0070 (1.1) | 53% | −0.15 | +0.0147 (1.2) | 50% | 0.02 |
+| **S6 combiner of S2–S4** | **+0.0680 (7.8)** | 61% | 1.41 | **+0.0614 (5.0)** | 67% | 2.76 |
+
+**Test A: PASS** by the written rule: the development IC is higher (+0.0680 vs +0.0673), and the seen IC is not lower
+(+0.0614 vs +0.0588).
+
+The gain is negligible, though, and the combiner's development portfolio is weaker (Sharpe 1.41 vs 1.93). Splitting by
+stage adds no information; the price stage carries almost all of it. The combiner's weights at the last refit were
+price +0.055, fundamentals +0.018, industry +0.001.
+
+### Tests B and C
+(pending: news back-scoring)
