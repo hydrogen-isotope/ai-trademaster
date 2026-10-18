@@ -40,7 +40,10 @@ def get(path, params=None):
             if e.code == 429 or e.code >= 500:
                 time.sleep(15 + 15 * a)
                 continue
-            return {"status": "error", "code": e.code, "message": f"HTTP {e.code}"}
+            try:
+                return json.loads(e.read().decode())                          # Twelve Data explains errors in the body
+            except ValueError:
+                return {"status": "error", "code": e.code, "message": f"HTTP {e.code}"}
         except (TimeoutError, ConnectionError, urllib.error.URLError, OSError):
             time.sleep(10 + 10 * a)
     return {"status": "error", "message": "unreachable"}
@@ -54,6 +57,9 @@ def coverage(args):
     print(f"plan: {rep['plan']}", flush=True)
     st = get("stocks", {"mic_code": "XSES"})
     rep["symbols"] = len(st.get("data", [])) if isinstance(st, dict) else None
+    ex = get("exchanges", {"code": "XSES", "show_plan": "true"})
+    rep["sgx_plan_required"] = (ex.get("data") or [{}])[0].get("access")
+    print(f"SGX requires plan: {rep['sgx_plan_required']}", flush=True)
     print(f"SGX symbols visible: {rep['symbols']}", flush=True)
     rep["tickers"] = {}
     for t in TEST:
