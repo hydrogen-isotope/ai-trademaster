@@ -7,7 +7,7 @@ logclose.f32, market.f32, ranks.f32, mask.f32}.
   dev         baselines B1 (momentum), B2 (reversal) and R (ridge) on development, placebo + timing checks, stop gate
   models      all protocol models (B1, B2, R, G, M, E) on --period dev|test; the test runs once
   mlp-export  inputs for the GPU MLP trainer (trademaster gpu-mlp); --period latest = one fit on all data
-  rank        today's rankings for the dashboard (CPU only: LightGBM refit monthly + saved MLP weights)
+  rank        today's rankings for the dashboard with the adopted model (ridge; CPU only)
 
 Usage: python -m trademaster_ml.v6 dev | models --period dev | mlp-export --period dev
 """
@@ -464,50 +464,21 @@ def calibration(P, score, periods):
 
 
 def rank(args):
-    import lightgbm as lgb
+    """Today's rankings with the adopted model (R, ridge: final test 2026-10-18), refit on all labelled rows."""
     t0 = time.time()
     P = Panel()
     last = P.T - 1
-    X = np.hstack([P.X, regime(P)[P.t]]).astype(np.float32)
     sch = latest_schedule(P)
-    os.makedirs(MODELS, exist_ok=True)
-    month = P.dates[last][:7]
-    fset = hashlib.md5(",".join(P.names).encode()).hexdigest()[:8]       # a new feature set means a new model
-    gpath = os.path.join(MODELS, f"lgb_{month}_{fset}.txt")             # protocol: refit monthly
-    if os.path.exists(gpath):
-        gm = lgb.Booster(model_file=gpath)
-    else:
-        tr, va = slice(*sch["train"]), slice(*sch["val"])
-        ok_tr, ok_va = np.isfinite(P.yrank[tr]), np.isfinite(P.yrank[va])
-        params = {**LGB_PARAMS, "num_threads": max(1, (os.cpu_count() or 4) - 2), "seed": 0}
-        rounds = params.pop("n_estimators")
-        dtr = lgb.Dataset(X[tr][ok_tr], P.yrank[tr][ok_tr])
-        gm = lgb.train(params, dtr, num_boost_round=rounds, valid_sets=[lgb.Dataset(X[va][ok_va], P.yrank[va][ok_va], reference=dtr)],
-                       callbacks=[lgb.early_stopping(50, verbose=False)])
-        gm.save_model(gpath, num_iteration=gm.best_iteration)
+    tr = slice(sch["train"][0], sch["val"][1])                          # ridge has no early stopping: train + val
+    ok = np.isfinite(P.yrank[tr])
+    model = ridge()(P.X[tr][ok], P.yrank[tr][ok])
     rows = slice(*sch["pred"])
-    g = gm.predict(X[rows])
-    mpath = os.path.join(MODELS, "mlp_latest.f32")
-    have_m = os.path.exists(mpath)
-    rk = lambda v: (np.argsort(np.argsort(v)) / max(len(v) - 1, 1)) - 0.5
-    if have_m:
-        m = mlp_predict_cpu(X[rows].astype(np.float64), mpath)
-        score, label = rk(g) + rk(m), "E: LightGBM + GPU-trained MLP"
-    else:
-        score, label = rk(g), "G: LightGBM (no MLP weights yet)"
-    # out-of-sample history of the same model, for calibration, IC and portfolio curves
-    hist, periods = None, []
-    for per in ("dev", "test"):
-        gp, mp = os.path.join(OUT, f"pred_G_{per}.npy"), os.path.join(MLP_DIR, f"pred_M_{per}.f32")
-        if not os.path.exists(gp):
-            continue
-        h = xs_rank_pred(P, np.load(gp))
-        if have_m and os.path.exists(mp):
-            h = h + xs_rank_pred(P, np.fromfile(mp, np.float32).astype(float))
-        hist = h if hist is None else np.where(np.isfinite(h), h, hist)
-        periods.append(period_bounds(P, per))
-    cal = calibration(P, hist, periods) if hist is not None else []
-    ev = evaluate(P, hist, periods[-1][0], periods[-1][1], label, series=True) if hist is not None else None
+    score, label = model(P.X[rows]), "R: ridge (adopted after the final test)"
+    # out-of-sample walk-forward history of the same model (2021 -> latest), for calibration, IC and portfolio curves
+    periods = [period_bounds(P, "dev"), period_bounds(P, "test")]
+    hist = walk_forward(P, periods[0][0], periods[1][1], ridge(), log=None)
+    cal = calibration(P, hist, periods)
+    ev = evaluate(P, hist, periods[1][0], periods[1][1], label, series=True)
     # today's table
     names = {a["symbol"]: a.get("name") or "" for a in json.load(open(os.path.join("private", "data", "us", "assets.json")))}
     n_today = P.n[rows]
