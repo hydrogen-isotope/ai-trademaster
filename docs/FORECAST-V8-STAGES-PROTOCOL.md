@@ -109,6 +109,40 @@ The weights are fixed now, as priors, because they cannot be estimated without h
 
   Until then the dashboard labels it "news-adjusted (unproven)".
 
+**C (2026-10-18, before any result of it). Per-stock Qwen analysis that advises the forecast range.** At the user's
+request, the lean comes from a slower, per-stock Qwen analysis that also sees the quantitative stages. The rules are
+fixed now:
+- **Input per stock (one prompt):**
+  - S2–S4 facts as numbers: 1-week, 1-month and 12-1 momentum with their percentile ranks; 60-day volatility;
+    distance from the 52-week high; NASDAQ fundamentals (earnings yield, sales/price, gross profitability, earnings
+    surprise, days since filing); industry 1-month and 6-month moves; rank score and decile;
+  - the v7 model-only median and 80% range;
+  - the market news index;
+  - cross-stock context: up to 5 same-industry peers with the strongest 5-session news, with Qwen's earlier read;
+  - up to 40 of the stock's own headlines from the last 30 days (recap templates removed). SGX has no headline source
+    and gets facts and peers only.
+- **Output:** JSON enforced by a schema, with reasons first (≤ 3 positives, ≤ 3 negatives), then `lean` (strong_down,
+  down, neutral, up, strong_up), `confidence` (low, medium, high) and `risk` (normal, elevated). An unparsable reply
+  is treated as neutral, normal, low.
+- **Mapping:**
+  - the model median m shifts by k·σ, where σ is the stock's v7 5-day standard deviation; k = ±0.30 for strong,
+    ±0.12 for up/down, 0 for neutral;
+  - k is multiplied by 0.5 for low confidence, 1.0 for medium, 1.25 for high;
+  - elevated risk multiplies σ by 1.25;
+  - quantiles and P(up) use v7's recalibration levels for that date.
+- **Logging:** every advised forecast is written with its model-only twin, before outcomes exist, to
+  `private/reports/evals/<market>/advice_shadow.jsonl`.
+- **Promotion**, after ≥ 60 forecast dates and ≥ 300 stock-forecasts, requires all three:
+  1. mean CRPS lower than model-only, with a 95% block-bootstrap CI (blocks of 5 dates) excluding 0;
+  2. an up/down hit rate ≥ model-only's;
+  3. pooled 80% coverage within 75–85%.
+
+  Otherwise the advice weights are set to 0.
+- **Which stocks:**
+  - any stock the user clicks;
+  - at app start (GPU, user present): the top and bottom 25 by rank score, plus the top and bottom 10 by model P(up).
+- Results are cached per stock and close date.
+
 ## Results
 
 ### Test A: staging vs one ridge (no news), run 2026-10-18
