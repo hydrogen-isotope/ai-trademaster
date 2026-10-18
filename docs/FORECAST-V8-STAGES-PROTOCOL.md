@@ -88,6 +88,27 @@ Changes:
 
 Nothing else changes.
 
+**B (2026-10-18, before any news result). The user chose rolling news only; no historical back-scoring.** Headlines are
+fetched and scored each day for the last 7 calendar days and deleted after 10 days. Tests B and C (historical) are
+therefore dropped. The news stage is judged **only by a forward shadow test**, which also removes any LLM look-ahead.
+
+The weights are fixed now, as priors, because they cannot be estimated without history:
+- **Stock news score** `news_dir` (stock i, close t): the sum of direction (P(good) − P(bad)) over its non-recap headlines
+  in the 5 trading days ending at t (same timestamp rule as above), divided by √count, clipped to [−2, 2].
+- **Market direction:** for headlines with P(ai) + P(market) ≥ 0.5, one extra question: good, neutral or bad news for
+  the overall US stock market.
+  - **Market news index** S: the mean of that direction, weighted by P(ai) + P(market), over the same 5 days. S = 0 if
+    there are fewer than 10 such headlines.
+  - **AI-anxiety** (display only): minus the same mean over AI headlines.
+- **News-adjusted forecast ("v7+news"):** the v7 mean + β·(1.0%·S) + 0.25%·`news_dir` (5-day log return), with v7's
+  standard deviation and recalibration. That gives at most ±1% from the market and ±0.5% from stock news.
+- **Forward shadow test:** both v7 and v7+news are logged daily. After ≥ 60 forecast dates, v7+news is promoted only if
+  both hold:
+  1. its mean CRPS is lower than v7's, with a 95% block-bootstrap CI excluding 0;
+  2. its up/down hit rate is ≥ v7's.
+
+  Until then the dashboard labels it "news-adjusted (unproven)".
+
 ## Results
 
 ### Test A: staging vs one ridge (no news), run 2026-10-18
