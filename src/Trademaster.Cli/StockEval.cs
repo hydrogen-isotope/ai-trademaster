@@ -79,6 +79,34 @@ public static partial class StockEval
         catch (Exception) { return false; }
     }
 
+    private static readonly object SymLock = new();
+    private static (DateTime, DateTime) symStamp;
+    private static List<object> symList = [];
+
+    /// <summary>Every ranked stock on NASDAQ and SGX as {s, n, m}, read from the rankings files (cached until they change).</summary>
+    public static List<object> Symbols()
+    {
+        string pn = Path.Combine("private", "reports", "v6", "rankings.json"), ps = Path.Combine("private", "reports", "sgx", "v6", "rankings.json");
+        var stamp = (File.Exists(pn) ? File.GetLastWriteTimeUtc(pn) : default, File.Exists(ps) ? File.GetLastWriteTimeUtc(ps) : default);
+        lock (SymLock)
+        {
+            if (stamp == symStamp && symList.Count > 0) return symList;
+            var list = new List<object>();
+            foreach (var (path, market) in new[] { (pn, "nasdaq"), (ps, "sgx") })
+            {
+                if (!File.Exists(path)) continue;
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var doc = JsonDocument.Parse(fs);
+                if (!doc.RootElement.TryGetProperty("rankings", out var rows)) continue;
+                foreach (var r in rows.EnumerateArray())
+                    list.Add(new { s = r.GetProperty("symbol").GetString(), n = r.TryGetProperty("name", out var n) ? n.GetString() : "", m = market });
+            }
+            symStamp = stamp;
+            symList = list;
+            return list;
+        }
+    }
+
     /// <summary>Start the evaluator (hidden; GPU, since the user is at the PC) unless it is running.</summary>
     public static void EnsureDaemon(int port)
     {

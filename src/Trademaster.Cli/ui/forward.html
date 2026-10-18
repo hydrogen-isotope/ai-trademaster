@@ -45,7 +45,6 @@ table{width:100%;border-collapse:collapse}th,td{padding:5px 10px;text-align:righ
   <span class="muted" id="poll"></span>
   <div class="spacer"></div>
   <select id="run"></select>
-  <a href="/">← watchlist</a> <a href="/markets">markets</a> <a href="/sim">simulation</a>
 </header>
 <main>
   <div class="note" id="banner"></div>
@@ -166,5 +165,6 @@ $('run').addEventListener('change', refresh);
 loadRuns().then(refresh);
 setInterval(() => loadRuns().then(refresh), 15000);
 </script>
+<script src="/nav.js"></script>
 </body>
 </html>

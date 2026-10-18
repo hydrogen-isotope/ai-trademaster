@@ -69,6 +69,7 @@ public static class Dashboard
 
         app.MapGet("/", () => Results.File(Path.Combine(uiDir, "market.html"), "text/html; charset=utf-8"));
         app.MapGet("/favicon.svg", () => Results.File(Path.Combine(uiDir, "favicon.svg"), "image/svg+xml"));
+        app.MapGet("/nav.js", () => Results.File(Path.Combine(uiDir, "nav.js"), "text/javascript; charset=utf-8"));
         app.MapGet("/sim", () => Results.File(Path.Combine(uiDir, "index.html"), "text/html; charset=utf-8"));
 
         // Real market data (read-only quotes and charts): Alpaca when a key is configured, else the recorded demo.
@@ -179,6 +180,8 @@ public static class Dashboard
             return File.Exists(path) ? Results.Text(File.ReadAllText(path), "application/json")
                 : Results.NotFound(new { error = "no rankings yet: run python -m trademaster_ml.v6 rank" });
         });
+        // every ranked stock on both exchanges (symbol, name, market), for the search boxes
+        app.MapGet("/api/symbols", () => Results.Json(StockEval.Symbols()));
         app.MapGet("/api/sgx/momentum", () =>
         {
             var path = Path.Combine("private", "reports", "sgx", "momentum.json");

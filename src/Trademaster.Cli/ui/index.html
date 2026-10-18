@@ -76,7 +76,6 @@ input{width:100%;background:var(--panel2);border:1px solid var(--line);color:var
   <div class="hstat"><b class="num" id="missed">—</b><span>missed deadlines</span></div>
   <div class="spacer"></div>
   <div class="hstat"><b class="num" id="model">—</b><span>model</span></div>
-  <a class="link" href="/">← markets</a> <a class="link" href="/forward">Forward test (real data) →</a>
 </header>
 <div id="strip"></div>
 <div class="banner" id="banner"></div>
@@ -390,5 +389,6 @@ let busy = false;
 es.onmessage = async e => { if (busy) return; busy = true; try { await onTick(JSON.parse(e.data)); } finally { busy = false; } };
 es.onerror = () => { $('status').textContent = 'RECONNECTING…'; $('status').className = 'chip warn'; };
 </script>
+<script src="/nav.js"></script>
 </body>
 </html>

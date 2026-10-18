@@ -85,7 +85,6 @@ td.name{text-align:left;color:var(--muted);max-width:190px;overflow:hidden;text-
   <span class="chip" id="upd" style="display:none"></span>
   <span class="chip warn" title="Research only: no orders are ever placed">RESEARCH ONLY</span>
   <div class="search"><input id="q" placeholder="Search a stock (e.g. NVDA, D05)" autocomplete="off"><div class="sugg" id="sugg"></div></div>
-  <span class="links"><a href="/">Watchlist</a><a href="/forward">AI signals</a><a href="/sim">Simulation</a></span>
 </header>
 <div class="layout">
   <nav id="tree"></nav>
@@ -556,5 +555,6 @@ render();
 Promise.all([data('nasdaq'), data('sgx')]).then(() => buildTree(route()));
 pollRefresh();
 </script>
+<script src="/nav.js"></script>
 </body>
 </html>
