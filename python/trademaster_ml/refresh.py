@@ -73,6 +73,16 @@ def sgx_step():
         v7.use_market("nasdaq")
 
 
+def indexes_step():
+    """NASDAQ index ETFs (ONEQ, QQQ), sector ETFs and our own sector groups for the Markets hub (CPU, optional)."""
+    from . import indexes
+    try:
+        status("running", "indexes and sectors")
+        indexes.update()
+    except Exception as e:  # noqa: BLE001
+        print(f"[refresh] indexes step skipped: {type(e).__name__}: {e}", flush=True)
+
+
 def eval_step(args):
     """v8 amendment C: score the AI-advised forecasts (CPU), and at app start queue the start-up set for the background
     Qwen evaluator, which runs on the GPU only while the app is open."""
@@ -108,6 +118,7 @@ def run(args):
             v7.forecast(None)
             status("running", "rankings")
             v6.rank(None)
+            indexes_step()
             sgx_step()
             eval_step(args)
             status("done", f"news refreshed; prices already up to date (close {last})", asof=last, seconds=round(time.time() - t0))
@@ -125,6 +136,7 @@ def run(args):
         v7.forecast(None)
         status("running", "rankings")
         v6.rank(None)
+        indexes_step()
         sgx_step()
         eval_step(args)
         status("done", f"updated to close {last}", asof=last, seconds=round(time.time() - t0))

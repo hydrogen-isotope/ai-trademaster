@@ -104,7 +104,7 @@ const WHY = { mom12_1: 'momentum', resid_mom12_1: 'own momentum', dist_252_high:
 // ---------------------------------------------------------------- hierarchy
 const MARKETS = {
   nasdaq: { region: 'United States', name: 'NASDAQ', bench: 'QQQ', ccy: '$', periods: ['dev 2021–24', 'test 2025–26'],
-    views: [['overview', 'Overview'], ['rankings', 'Rankings'], ['forecasts', 'Price forecasts'], ['news', 'News (AI read)'], ['record', 'Model record']] },
+    views: [['overview', 'Overview'], ['indexes', 'Indexes & sectors'], ['rankings', 'Rankings'], ['forecasts', 'Price forecasts'], ['news', 'News (AI read)'], ['record', 'Model record']] },
   sgx: { region: 'Singapore', name: 'SGX', bench: 'STI proxy', ccy: 'S$', periods: ['dev 2016–22', 'test 2023–26'],
     views: [['overview', 'Overview'], ['rankings', 'Rankings'], ['forecasts', 'Price forecasts'], ['momentum', 'Momentum test'], ['record', 'Model record']] },
 };
@@ -130,6 +130,8 @@ function route() {
   const m = MARKETS[p[0]] ? p[0] : null;
   if (!m) return { m: null, v: 'all' };
   if (p[1] === 'stock' && p[2]) return { m, v: 'stock', sym: decodeURIComponent(p[2]) };
+  if (p[1] === 'sector' && p[2]) return { m, v: 'sector', key: decodeURIComponent(p[2]) };
+  if (p[1] === 'index' && p[2]) return { m, v: 'index', sym: decodeURIComponent(p[2]) };
   return { m, v: MARKETS[m].views.some(x => x[0] === p[1]) ? p[1] : 'overview' };
 }
 function buildTree(r) {
@@ -144,7 +146,7 @@ function buildTree(r) {
     for (const [v, label] of M.views) opts += `<option value="#/${k}/${v}">${M.name} › ${label}</option>`;
   }
   $('tree').innerHTML = h;
-  $('navsel').innerHTML = opts + (r.v === 'stock' ? `<option value="${location.hash}">${MARKETS[r.m].name} › ${esc(r.sym)}</option>` : '');
+  $('navsel').innerHTML = opts + (['stock', 'sector', 'index'].includes(r.v) ? `<option value="${location.hash}">${MARKETS[r.m].name} › ${esc(r.sym || r.key)}</option>` : '');
   $('navsel').value = location.hash || '#/all';
   for (const k of Object.keys(MARKETS)) if (DATA[k] && !DATA[k].error) {
     const a = DATA[k].status ? DATA[k].status.adopted : null;
@@ -406,6 +408,110 @@ async function viewStock(m, sym) {
     `<div class="two"><div class="panel"><div class="ph">What drives its rank (percentile among peers)</div><table><tbody>${whyList || '<tr><td class="dim">—</td></tr>'}</tbody></table></div>${news || `<div class="panel"><div class="ph">News</div><div class="empty">${m === 'nasdaq' ? 'No headlines in the last 5 sessions.' : 'No SGX news source yet.'}</div></div>`}</div>`;
 }
 
+// ---------------------------------------------------------------- NASDAQ indexes (ETF stand-ins) and sector groups
+let IDX = null;
+async function indexData() {
+  if (IDX) return IDX;
+  try { const r = await fetch('/api/indexes'); IDX = r.ok ? await r.json() : { error: (await r.json()).error }; } catch (e) { IDX = { error: String(e.message || e) }; }
+  return IDX;
+}
+const INDEX_NAMES = { ONEQ: ['Nasdaq Composite', 'ONEQ'], QQQ: ['Nasdaq-100', 'QQQ'], SPY: ['S&P 500 (for context)', 'SPY'] };
+const ret = v => v == null ? '<span class="dim">—</span>' : `<span class="${cls(v)}">${pct(v, 1)}</span>`;
+function lineChart(id, lines, cone, opts = {}) {
+  const el = $(id); if (!el || !window.LightweightCharts) return;
+  const ch = LightweightCharts.createChart(el, { layout: { background: { color: '#14181d' }, textColor: '#8a93a0' },
+    grid: { vertLines: { color: '#1b2027' }, horzLines: { color: '#1b2027' } }, rightPriceScale: { borderColor: '#262c34' },
+    timeScale: { borderColor: '#262c34', rightOffset: 3 }, autoSize: true, crosshair: { mode: 0 }, handleScroll: !opts.mini, handleScale: !opts.mini,
+    ...(opts.mini ? { rightPriceScale: { visible: false }, timeScale: { visible: false }, grid: { vertLines: { visible: false }, horzLines: { visible: false } } } : {}) });
+  charts.push(ch);
+  for (const l of lines) ch.addLineSeries({ color: l.color, lineWidth: l.width || 2, priceLineVisible: false, lastValueVisible: !!l.title, title: l.title || '' })
+    .setData(l.data.map(([t, v]) => ({ time: t, value: v })));
+  if (cone) {
+    const add = (k, style, w, c, title) => ch.addLineSeries({ color: c, lineWidth: w, lineStyle: style, priceLineVisible: false, lastValueVisible: !!title,
+      title: title || '', crosshairMarkerVisible: false }).setData(cone.pts.map(p => ({ time: p.date, value: p[k] })));
+    add('lo95', 1, 1, cone.color + '55'); add('hi95', 1, 1, cone.color + '55'); add('lo80', 2, 1, cone.color + '99'); add('hi80', 2, 1, cone.color + '99');
+    add('lo50', 0, 1, cone.color); add('hi50', 0, 1, cone.color); add('median', 0, 3, cone.color, opts.mini ? '' : '5-day');
+  }
+  const n = lines[0].data.length;
+  requestAnimationFrame(() => opts.all ? ch.timeScale().fitContent() : ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - (opts.days || 70)), to: n + (cone ? 7 : 1) }));
+}
+function fcLine(f, close) {
+  if (!f) return '<span class="dim">no forecast</span>';
+  return `5-day: median ${px(f.median)} <span class="${cls(f.median - close)}">${pct(f.median / close - 1, 1)}</span> · most likely ${px(f.lo50)}–${px(f.hi50)} · P(up) ${pup(f.p_up)}`;
+}
+async function viewIndexes(m) {
+  crumbs({ m }, 'Indexes & sectors');
+  if (m !== 'nasdaq') return '<div class="empty">Indexes and sectors are built for NASDAQ only so far.</div>';
+  const X = await indexData(), d = await data(m);
+  if (X.error) return `<h1>Indexes & sectors</h1><div class="empty">${esc(X.error)}</div>`;
+  const E = X.etfs || {};
+  const card = sym => { const e = E[sym]; if (!e) return ''; const [name, etf] = INDEX_NAMES[sym];
+    return `<div class="card mcard" onclick="location.hash='#/nasdaq/index/${sym}'"><h3>${name} <span class="chip" title="An ETF that tracks the index; the index itself is not in our data">via ${etf} ETF</span></h3>` +
+      `<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px"><b class="num" style="font-size:20px">${px(e.close)}</b>${ret(e.stats.d1)} <span class="dim">today</span></div>` +
+      `<div class="chart" id="mini-${sym}" style="height:110px;margin:0 -4px 8px"></div>` +
+      `<div class="kv"><div>1 week</div><div>${ret(e.stats.w1)}</div><div>1 month</div><div>${ret(e.stats.m1)}</div><div>year to date</div><div>${ret(e.stats.ytd)}</div></div>` +
+      `<div class="muted" style="margin-top:8px;font-size:12px">${fcLine(e.forecast, e.close)}</div></div>`; };
+  const S = UI.sectors || (UI.sectors = { sort: 'd1' });
+  const keyf = { d1: x => -(x.stats.d1 ?? -9), w1: x => -(x.stats.w1 ?? -9), m1: x => -(x.stats.m1 ?? -9), ytd: x => -(x.stats.ytd ?? -9), n: x => -x.n,
+    pup: x => -(x.avg_p_up ?? 0), news: x => -(x.news ? x.news.mean : -9) }[S.sort] || (x => 0);
+  const secs = X.sectors.slice().sort((a, b) => keyf(a) - keyf(b));
+  const th = (k, label, tip) => `<th class="sort ${S.sort === k ? 'on' : ''}" title="${tip || ''}" onclick="UI.sectors.sort='${k}';render()">${label}${S.sort === k ? ' ▼' : ''}</th>`;
+  setTimeout(() => { for (const sym of ['ONEQ', 'QQQ', 'SPY']) if (E[sym]) lineChart('mini-' + sym, [{ data: E[sym].series.slice(-130), color: '#e6e9ee', width: 1.5 }],
+    E[sym].forecast ? { pts: E[sym].forecast.cone, color: E[sym].forecast.median >= E[sym].close ? '#16c784' : '#f6465d' } : null, { mini: true, all: true }); }, 0);
+  return `<h1>NASDAQ indexes & sectors</h1><div class="lead">${esc(X.note)} Close ${esc(X.asof)}.</div>` +
+    `<div class="cards">${card('ONEQ')}${card('QQQ')}${card('SPY')}</div>` +
+    `<div class="panel"><div class="ph">Sector groups (our ${Object.keys(X.members).length} NASDAQ stocks, equal weight) <span class="dim" style="text-transform:none;letter-spacing:0">click a sector for its chart and members</span></div><div style="overflow:auto"><table><thead><tr>` +
+    `<th>Sector</th>${th('n', 'Stocks')}${th('d1', 'Today')}${th('w1', '1 week')}${th('m1', '1 month')}${th('ytd', 'YTD')}<th title="Share of its stocks that rose today">Up today</th>` +
+    `${th('pup', 'Avg P(up) 5d', 'Average model chance of a rise over the next 5 days')}${th('news', 'News (AI)', 'Average news score of its stocks, last 5 sessions (-2 bad to +2 good)')}` +
+    `<th title="Qwen + models research signals among its evaluated stocks">AI signals</th><th>Sector ETF, 1 month</th><th style="text-align:left">Top-ranked</th></tr></thead><tbody>` +
+    secs.map(x => { const e = x.etf && E[x.etf];
+      return `<tr class="click" onclick="location.hash='#/nasdaq/sector/${x.key}'"><td style="text-align:left"><b>${esc(x.label)}</b></td><td class="num">${x.n}</td>` +
+        `<td class="num">${ret(x.stats.d1)}</td><td class="num">${ret(x.stats.w1)}</td><td class="num">${ret(x.stats.m1)}</td><td class="num">${ret(x.stats.ytd)}</td>` +
+        `<td class="num">${x.breadth == null ? '—' : pct(x.breadth, 0, false)}</td><td class="num">${pup(x.avg_p_up)}</td>` +
+        `<td class="num">${x.news ? `<span class="${cls(x.news.mean)}">${x.news.mean > 0 ? '+' : ''}${x.news.mean.toFixed(2)}</span> <span class="dim">(${x.news.n_stocks})</span>` : '<span class="dim">—</span>'}</td>` +
+        `<td class="num">${x.signals.evaluated ? `<span class="up">${x.signals.buy} buy</span> · <span class="down">${x.signals.sell} sell</span> <span class="dim">/ ${x.signals.evaluated}</span>` : '<span class="dim">none yet</span>'}</td>` +
+        `<td class="num">${e ? `<span class="dim">${x.etf}</span> ${ret(e.stats.m1)}` : '—'}</td><td style="text-align:left" class="muted">${x.top.map(esc).join(', ')}</td></tr>`; }).join('') +
+    '</tbody></table></div></div>';
+}
+async function viewSector(m, key) {
+  const X = await indexData(), d = await data(m);
+  const x = !X.error && X.sectors.find(s => s.key === key);
+  crumbs({ m }, x ? x.label : key);
+  if (!x) return `<div class="empty">Unknown sector ${esc(key)}.</div>`;
+  const E = X.etfs, e = x.etf && E[x.etf], q = E.QQQ;
+  const norm = (ser, from) => { const i = ser.findIndex(p => p[0] >= from); const base = ser[Math.max(0, i)][1]; return ser.slice(Math.max(0, i)).map(([t, v]) => [t, 100 * v / base]); };
+  const from = x.series[0][0];
+  const AI = ((await evals(m)) || {}).index || {};
+  const mem = d.rankings.filter(r => X.members[r.symbol] === key);
+  setTimeout(() => lineChart('secchart', [{ data: norm(x.series, from), color: '#3b82f6', title: 'sector' }].concat(e ? [{ data: norm(e.series, from), color: '#eda100', width: 1, title: x.etf }] : [])
+    .concat(q ? [{ data: norm(q.series, from), color: '#8a93a0', width: 1, title: 'QQQ' }] : []), null, { all: true }), 0);
+  return `<h1>${esc(x.label)} <span class="chip">NASDAQ sector group</span></h1>` +
+    `<div class="lead">${x.n} stocks from our NASDAQ universe with these SEC industry codes, equal weight, rebalanced daily. ${e ? `${x.etf} is a sector ETF shown for comparison (it holds S&P / broad US stocks, not only NASDAQ).` : ''}</div>` +
+    `<div class="panel"><div class="ph">Last year, start = 100 <span class="legend"><span><i style="background:#3b82f6"></i>this group</span>${e ? `<span><i style="background:#eda100"></i>${x.etf}</span>` : ''}<span><i style="background:#8a93a0"></i>QQQ</span></span></div><div class="chart" id="secchart" style="height:300px"></div></div>` +
+    `<div class="cards">${card('Performance', [['today', ret(x.stats.d1)], ['1 week', ret(x.stats.w1)], ['1 month', ret(x.stats.m1)], ['3 months', ret(x.stats.m3)], ['year to date', ret(x.stats.ytd)]])}` +
+    card('Today', [['stocks up', x.breadth == null ? '—' : pct(x.breadth, 0, false)], ['avg P(up), 5 days', pup(x.avg_p_up)], ['avg rank score', x.avg_score == null ? '—' : x.avg_score.toFixed(0)],
+      ['news (AI, 5 sessions)', x.news ? `${x.news.mean > 0 ? '+' : ''}${x.news.mean.toFixed(2)} over ${x.news.n_stocks} stocks` : '—']]) +
+    card('AI signals (Qwen + models)', [['buy', x.signals.buy], ['sell', x.signals.sell], ['stocks evaluated', `${x.signals.evaluated} of ${x.n}`], ['', '<span class="dim">click a stock to evaluate it</span>']]) + `</div>` +
+    `<div class="panel"><div class="ph">Its stocks, by rank score</div><div class="scroll"><table><thead>${SHORT_HEAD.replace('<th>Why</th>', '<th>AI</th><th>Why</th>')}</thead><tbody>` +
+    mem.map(r => shortRow(m, r).replace('<td><div class="why">', `<td class="num">${AI[r.symbol] ? pup(AI[r.symbol].p_up) + ' ' + (AI[r.symbol].signal !== 'none' ? sigChip(AI[r.symbol].signal).replace(' SIGNAL', '') : '') : '<span class="dim">—</span>'}</td><td><div class="why">`)).join('') +
+    '</tbody></table></div></div>';
+}
+async function viewIndex(m, sym) {
+  const X = await indexData(), e = !X.error && X.etfs[sym];
+  const [name, etf] = INDEX_NAMES[sym] || [e ? e.label : sym, sym];
+  crumbs({ m }, name);
+  if (!e) return `<div class="empty">No data for ${esc(sym)}.</div>`;
+  const f = e.forecast;
+  setTimeout(() => lineChart('idxchart', [{ data: e.series, color: '#e6e9ee' }], f ? { pts: f.cone, color: f.median >= e.close ? '#16c784' : '#f6465d' } : null, { days: 90 }), 0);
+  return `<h1>${esc(name)} <span class="chip">via ${etf} ETF</span></h1>` +
+    `<div class="lead">${etf} is an exchange-traded fund that tracks the ${esc(name)}; the index itself is not in our data, so its price is the ETF's, not the index level. Close ${esc(e.last)}.</div>` +
+    `<div class="panel"><div class="ph">Last months and the next 5 trading days <span class="legend"><span class="dim">thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div><div class="chart" id="idxchart" style="height:340px"></div></div>` +
+    `<div class="cards">${card('Performance', [['close', px(e.close)], ['today', ret(e.stats.d1)], ['1 week', ret(e.stats.w1)], ['1 month', ret(e.stats.m1)], ['year to date', ret(e.stats.ytd)], ['1 year', ret(e.stats.y1)]])}` +
+    (f ? card('5-day forecast', [['median', `${px(f.median)} (${pct(f.exp_ret, 1)})`], ['most likely (50%)', `${px(f.lo50)} – ${px(f.hi50)}`], ['80% range', `${px(f.lo80)} – ${px(f.hi80)}`],
+      ['95% range', `${px(f.lo95)} – ${px(f.hi95)}`], ['P(up)', pup(f.p_up)], ['beta to QQQ', f.beta.toFixed(2)]]) : '') + `</div>` +
+    (f ? `<div class="lead">${esc(f.note)}: the long-run drift (shrunk) and the volatility model behind every stock forecast. It has no news or AI input and no forward record of its own yet.</div>` : '');
+}
+
 // ---------------------------------------------------------------- per-stock AI evaluation (v8 amendment C)
 const LEANS = { strong_down: ['strongly down', 'down'], down: ['down', 'down'], neutral: ['neutral', ''], up: ['up', 'up'], strong_up: ['strongly up', 'up'] };
 async function loadEval(m, sym, tok) {
@@ -520,7 +626,8 @@ async function render() {
   try {
     html = r.v === 'all' ? await viewAll() : r.v === 'overview' ? await viewOverview(r.m) : r.v === 'rankings' ? await viewRankings(r.m)
       : r.v === 'forecasts' ? await viewForecasts(r.m) : r.v === 'news' ? await viewNews(r.m) : r.v === 'momentum' ? await viewMomentum(r.m)
-      : r.v === 'record' ? await viewRecord(r.m) : await viewStock(r.m, r.sym);
+      : r.v === 'record' ? await viewRecord(r.m) : r.v === 'indexes' ? await viewIndexes(r.m) : r.v === 'sector' ? await viewSector(r.m, r.key)
+      : r.v === 'index' ? await viewIndex(r.m, r.sym) : await viewStock(r.m, r.sym);
   } catch (e) { html = `<div class="empty">Something went wrong: ${esc(e.message)}</div>`; }
   $('view').innerHTML = html;
   buildTree(r);
@@ -575,7 +682,7 @@ async function pollRefresh() {
     else if (s.state === 'error') { el.style.display = ''; el.className = 'chip bad'; el.textContent = 'UPDATE FAILED'; el.title = s.step; }
     else if (s.state === 'done') {
       el.style.display = ''; el.className = 'chip ok'; el.textContent = 'UP TO DATE'; el.title = s.step + ' at ' + s.time;
-      if (wasRunning) { wasRunning = false; for (const k in DATA) delete DATA[k]; for (const k in LOADING) delete LOADING[k]; MOM = null; render(); }
+      if (wasRunning) { wasRunning = false; for (const k in DATA) delete DATA[k]; for (const k in LOADING) delete LOADING[k]; MOM = null; IDX = null; render(); }
     }
   } catch (e) { }
   setTimeout(pollRefresh, 10000);

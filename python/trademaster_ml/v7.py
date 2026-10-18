@@ -339,7 +339,9 @@ def forecast(args):
         rows[sym] = {"close": float(close[k]), "median": px(I50), "lo80": px(I10), "hi80": px(I90), "lo95": px(I025), "hi95": px(I975),
                      "p_up": float(pup[k]), "p_beat_qqq": float(pbeat[k]), "exp_ret": float(math.expm1(q[k, I50]))}
     os.makedirs(OUT, exist_ok=True)
-    out = {"asof": P.dates[last], "model": name, "status": "shadow", "horizon_days": H, "rows": rows}
+    out = {"asof": P.dates[last], "model": name, "status": "shadow", "horizon_days": H, "rows": rows,
+           # the market model itself (benchmark ETF): 5-day drift and GJR-GARCH variance, for the Indexes view
+           "market_model": {"mu5": float(E.mu_m[idx[0]]), "v5": float(E.v_m[idx[0]])}}
     # v8 amendment B: news-adjusted variant from the rolling LLM news (fixed prior weights; forward shadow test only)
     news_path = os.path.join("private", "data", "news", "news_today.json")
     news = json.load(open(news_path)) if os.path.exists(news_path) and v6.MARKET == "nasdaq" else None   # US news only for NASDAQ

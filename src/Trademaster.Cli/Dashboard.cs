@@ -182,6 +182,13 @@ public static class Dashboard
         });
         // every ranked stock on both exchanges (symbol, name, market), for the search boxes
         app.MapGet("/api/symbols", () => Results.Json(StockEval.Symbols()));
+        // NASDAQ index ETFs and sector groups (python -m trademaster_ml.indexes, run by the refresh)
+        app.MapGet("/api/indexes", () =>
+        {
+            var path = Path.Combine("private", "reports", "v6", "indexes.json");
+            return File.Exists(path) ? Results.Text(File.ReadAllText(path), "application/json")
+                : Results.NotFound(new { error = "no index data yet: run python -m trademaster_ml.indexes" });
+        });
         app.MapGet("/api/sgx/momentum", () =>
         {
             var path = Path.Combine("private", "reports", "sgx", "momentum.json");
