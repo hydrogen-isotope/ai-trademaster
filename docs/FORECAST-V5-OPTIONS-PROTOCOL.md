@@ -59,3 +59,9 @@ The development window is short (about 385 days). That is a limitation, and it i
 A dashboard signal predicts "falls further" for any stock that is down 5%+ over 5 days while the VIXY 5-day change is
 in its top 20% (thresholds from past data only). It is scored live against the model from 19 Oct 2026. It is never
 used in the model.
+
+## Amendment B (2026-10-18, still before any v5 result)
+A check of the earnings matcher (6,732 of 329,865 items matched) showed preview articles being matched, e.g. "Ahead Of
+Q1 Earnings" and "Likely To Report Higher Q4 Earnings". Items whose headline also contains any of `ahead of`,
+`likely to`, `preview`, `expect`, `what to watch`, `could`, `will report` or `set to report` are **not** earnings
+items. Nothing else changes.
