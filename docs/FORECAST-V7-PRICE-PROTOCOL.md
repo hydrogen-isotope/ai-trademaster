@@ -65,4 +65,39 @@ a small edge.
 (none yet)
 
 ## Results
-(not yet run)
+
+### Development, 2021-01-04 → 2024-12-31 (956,649 stock-days with a direction)
+
+| model | CRPS | vs RW (95% CI) | 80% cov | 95% cov | up/down hit | Brier skill vs constant |
+|---|---|---|---|---|---|---|
+| RW | 0.04247 | — | 79.5% | 94.8% | — | −0.0005 |
+| MKT | 0.04253 | +5.3e-5 [+0.5e-5, +10.6e-5] (worse) | 79.5% | 94.8% | 49.2% | −0.0021 |
+| v7 s=0.5 | 0.04247 | −0.1e-5 [−3.8e-5, +4.0e-5] | 79.5% | 94.8% | 50.8% | −0.0008 |
+| v7 s=0.75 | 0.04246 | −1.3e-5 [−4.8e-5, +2.4e-5] | 79.5% | 94.8% | 51.1% | −0.0009 |
+| **v7 s=1.0 (chosen)** | **0.04246** | −1.5e-5 [−5.1e-5, +2.2e-5] | 79.5% | 94.8% | **51.3%** (p ≈ 1e-147) | −0.0015 |
+
+v7 s=1.0 by v6 decile (bottom → top):
+- hit rate: 56.3, 53.2, 51.3, 48.6, 49.2, 49.9, 50.4, 50.6, 51.5, 52.3%;
+- mean P(up) vs actual up-rate: 44.4/43.4% (bottom) … 55.4/52.2% (top).
+
+### Seen period, 2025-01-02 → 2026-10-09 (already used by v6's final test; 414,395 stock-days)
+
+| model | CRPS | vs RW (95% CI) | 80% cov | 95% cov | up/down hit | Brier skill |
+|---|---|---|---|---|---|---|
+| RW | 0.04740 | — | 80.2% | 95.4% | — | −0.0001 |
+| MKT | 0.04742 | +2.6e-5 [−4.2e-5, +8.2e-5] | 80.2% | 95.3% | 49.8% | −0.0008 |
+| v7 s=1.0 | 0.04734 | −5.6e-5 [−11.3e-5, +0.3e-5] | 80.2% | 95.4% | 51.3% (p ≈ 1e-59) | −0.0020 |
+
+By decile:
+- hit rate: 57.7% (bottom), then 51.0, 49.5, 48.9, 50.0, 50.7, 50.9, 50.6, 51.7, and 51.6% (top);
+- bottom decile: P(up) 42.6% vs actual 42.1%.
+
+### Reading
+- **Ranges** are well calibrated in both periods: the 80% and 95% intervals cover 79.5–80.2% and 94.8–95.4% of
+  outcomes.
+- **Up/down:** 51.3% overall in both periods. That is statistically real but small. Almost all of the edge is in the
+  bottom decile, where "down" was right 56–58% of the time and P(up) matched reality closely. Middle deciles are coin
+  flips. The top decile is slightly overconfident (P(up) about 3 points too high).
+- **Market drift alone (MKT)** did not help; in development it was significantly worse than zero drift.
+- **Overall CRPS gain vs RW** is not yet significant: both CIs touch 0. Whether v7 is promoted is decided by the forward
+  shadow test from 2026-10-19, as written above.
