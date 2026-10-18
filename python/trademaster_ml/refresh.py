@@ -50,6 +50,11 @@ def sgx_step():
     try:
         status("running", "SGX prices")
         last = sgx.update()
+        try:                                                    # SGX momentum forward test (amendment B): log + score
+            from . import sgx_momentum
+            sgx_momentum.update()
+        except Exception as e:  # noqa: BLE001
+            print(f"[refresh] SGX momentum step failed: {type(e).__name__}: {e}", flush=True)
         p = os.path.join("private", "reports", "sgx", "v6", "rankings.json")
         if os.path.exists(p) and json.load(open(p)).get("asof") == last:
             return

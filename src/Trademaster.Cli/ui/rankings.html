@@ -59,6 +59,14 @@ td.name{text-align:left;color:var(--muted);max-width:150px;overflow:hidden;text-
     <div class="panel"><div class="ph">Top-ranked (expected to beat peers)</div><div class="scroll" style="max-height:420px"><table><thead><tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th title="v7 shadow forecast: median price in 5 trading days and the 80% range">5-day price (80% range)</th><th title="v7 shadow forecast: chance the price is higher in 5 trading days">P(up)</th><th>Why</th></tr></thead><tbody id="top"></tbody></table></div></div>
     <div class="panel"><div class="ph">Bottom-ranked (expected to lag peers)</div><div class="scroll" style="max-height:420px"><table><thead><tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th title="v7 shadow forecast: median price in 5 trading days and the 80% range">5-day price (80% range)</th><th title="v7 shadow forecast: chance the price is higher in 5 trading days">P(up)</th><th>Why</th></tr></thead><tbody id="bot"></tbody></table></div></div>
   </div>
+  <div class="panel" id="momp" style="display:none"><div class="ph">SGX momentum · long-only top 10% by 12-1 momentum · monthly
+    <span class="chip warn" id="momstatus">FORWARD TEST · UNPROVEN</span><span class="dim" id="mommeta"></span></div>
+    <div class="note" style="padding:8px 12px 0" id="momnote"></div>
+    <div class="two" style="padding:8px 12px 12px;gap:12px">
+      <div><div class="muted" style="margin-bottom:4px" id="momphdr">Provisional picks</div>
+        <table><thead><tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>12-1 momentum</th></tr></thead><tbody id="mompicks"></tbody></table></div>
+      <div><div class="muted" style="margin-bottom:4px">Forward record (counted months only)</div>
+        <table><thead><tr><th>Formed</th><th>Ended</th><th>Picks net</th><th>STI proxy</th><th>Excess</th><th>Turnover</th></tr></thead><tbody id="momrec"></tbody></table></div></div></div>
   <div class="panel" id="newsp" style="display:none"><div class="ph">News read by the local AI model (Qwen) · last 5 sessions
     <span class="chip warn">UNPROVEN · FORWARD TEST</span><span class="dim" id="newsmeta"></span></div>
     <div class="note" style="padding:8px 12px 0" id="newsnote"></div>
@@ -198,6 +206,31 @@ async function load() {
 }
 $('q').addEventListener('input', () => DATA && renderAll());
 load();
+
+async function loadMomentum() {
+  if (MARKET !== 'sgx') return;
+  let m;
+  try { m = await (await fetch('/api/sgx/momentum')).json(); } catch (e) { return; }
+  if (!m || m.status === 'none') return;
+  $('momp').style.display = '';
+  const st = m.status || 'forward test, unproven';
+  $('momstatus').textContent = st.toUpperCase();
+  $('momstatus').className = 'chip ' + (st === 'promoted' ? 'ok' : st === 'dropped' ? 'bad' : 'warn');
+  $('mommeta').textContent = `first counted month formed ${m.first_formation} · ${m.matured_months} of ${m.needed_months} months scored`;
+  const rec = m.matured_months ? ` So far: mean monthly excess ${pct(m.mean_monthly_excess, 2)}` +
+    (m.t != null ? ` (t ${m.t.toFixed(1)})` : '') + `, cumulative ${pct(m.cumulative_excess, 1)} vs the STI proxy.` : ' No month has been scored yet.';
+  $('momnote').innerHTML = 'Pre-registered rule (protocol amendment B): each month-end, buy the top 10% of the ~150 most-traded SGX stocks by their ' +
+    'price change from 12 months to 1 month ago, equal weight, hold one month, 30 bps per side. It is promoted only if, after 12+ months, ' +
+    'the average excess over the STI proxy is positive with t &gt; 2.' + rec + ' It only counts months formed from ' + m.first_formation + ' onward.';
+  $('momphdr').textContent = `Provisional picks if the month ended at the ${m.asof} close (not counted; ${m.provisional_universe} stocks in universe)`;
+  $('mompicks').innerHTML = (m.provisional_picks || []).map(x => `<tr><td><b>${esc(x.symbol)}</b></td><td class="name">${esc(x.name)}</td>` +
+    `<td class="num">${x.close.toFixed(3)}</td><td class="num ${cls(x.mom12_1)}">${pct(x.mom12_1, 0)}</td></tr>`).join('');
+  $('momrec').innerHTML = (m.months || []).map(x => `<tr><td class="num">${x.formation}</td><td class="num">${x.end}</td>` +
+    `<td class="num ${cls(x.net)}">${pct(x.net, 1)}</td><td class="num ${cls(x.benchmark)}">${pct(x.benchmark, 1)}</td>` +
+    `<td class="num ${cls(x.excess)}">${pct(x.excess, 1)}</td><td class="num dim">${pct(x.turnover, 0, false)}</td></tr>`).join('') ||
+    `<tr><td colspan="6" class="dim">First month (formed ${m.first_formation}) will be scored at the end of the following month.</td></tr>`;
+}
+loadMomentum();
 // background refresh (started when the app opens): show progress, reload when new data lands
 let wasRunning = false;
 async function pollRefresh() {
