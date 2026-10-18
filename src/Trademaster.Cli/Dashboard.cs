@@ -129,6 +129,27 @@ public static class Dashboard
                 history = dates.Skip(from).Zip(close.Skip(from), (d, c) => new { date = d, close = c }),
             }, JsonOpts);
         });
+        // "My calls": the user's own up/down calls, scored against real closes (research only; no orders)
+        var myCalls = new MyCalls();
+        app.MapGet("/api/mycalls", async (CancellationToken ct) => Results.Json(await myCalls.Scored(md, ct), JsonOpts));
+        app.MapPost("/api/mycalls", async (HttpContext ctx, CancellationToken ct) =>
+        {
+            var body = await JsonSerializer.DeserializeAsync<JsonElement>(ctx.Request.Body, cancellationToken: ct);
+            string sym = (body.TryGetProperty("symbol", out var s1) ? s1.GetString() ?? "" : "").ToUpperInvariant();
+            string dir = body.TryGetProperty("direction", out var d1) ? d1.GetString() ?? "" : "";
+            string by = body.TryGetProperty("byDate", out var b1) ? b1.GetString() ?? "" : "";
+            double? target = body.TryGetProperty("target", out var t1) && t1.ValueKind == JsonValueKind.Number ? t1.GetDouble() : null;
+            string? note = body.TryGetProperty("note", out var n1) ? n1.GetString() : null;
+            if (!OkSym(sym) || dir is not ("up" or "down") || !DateOnly.TryParseExact(by, "yyyy-MM-dd", out var byD)
+                || byD <= DateOnly.FromDateTime(DateTime.UtcNow) || byD > DateOnly.FromDateTime(DateTime.UtcNow.AddDays(120)))
+                return Results.BadRequest(new { error = "need symbol, direction up/down and a future by-date within 120 days" });
+            var snap = await md.Snapshots([sym], ct);
+            if (!snap.TryGetValue(sym, out var sn) || sn.Last is not double entry) return Results.BadRequest(new { error = "no current price for " + sym });
+            var chance = MyCalls.ModelChanceAbove(sym, by, entry);
+            var call = myCalls.Add(sym, dir, entry, by, target, note is { Length: > 300 } ? note[..300] : note, chance);
+            return Results.Json(call, JsonOpts);
+        });
+        app.MapDelete("/api/mycalls/{id}", (string id) => myCalls.Withdraw(id) ? Results.Ok() : Results.BadRequest(new { error = "calls can only be withdrawn within 15 minutes" }));
         app.MapGet("/api/explain", () =>
         {
             var path = Path.Combine("private", "reports", "daily_forecast", "v4_explain.json");

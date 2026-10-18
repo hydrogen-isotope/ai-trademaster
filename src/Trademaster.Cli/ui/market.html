@@ -128,6 +128,13 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
 .rbar .mid{position:absolute;top:0;width:3px;height:22px;background:#ff9f1c;border-radius:2px;margin-left:-1px}
 .rbar .now{position:absolute;top:-3px;width:0;height:28px;border-left:2px dashed #e9eaee;margin-left:-1px;opacity:.7}
 .rbar .lbl{position:absolute;top:24px;font-size:10.5px;color:var(--dim);transform:translateX(-50%);white-space:nowrap}
+.mcform{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.mcbtn{padding:7px 14px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);font-weight:700}
+.mcbtn.up.on{background:#0f2a20;border-color:var(--up);color:var(--up)}.mcbtn.down.on{background:#2c1217;border-color:var(--down);color:var(--down)}
+.mcform select,.mcform input{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:6px 8px}
+#mctarget{width:150px}#mcnote{flex:1;min-width:220px}
+.mcsave{padding:7px 16px;border-radius:6px;background:var(--accent);color:#1a0e05;font-weight:700}
+.mcsum{display:flex;gap:22px;flex-wrap:wrap;margin:8px 0 10px;font-size:13px}.mcsum b{font-size:18px}
 .whygrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
 .why{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
 .why .k{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.3px}
@@ -203,6 +210,20 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
         </div>
         <div class="read" style="grid-template-columns:1fr"><div class="box"><h3>Last week's test (forecast made before the week, then compared)</h3><div id="fchold"></div></div></div>
       </div>
+      <div class="rows2" id="mycard" style="margin-top:14px"><h3>My calls · your read vs the model</h3>
+          <div class="mcform">
+            <span class="note">Your call on <b id="mcsym"></b>:</span>
+            <button class="mcbtn up" onclick="mcDir('up')" id="mcup">&#9650; Goes up</button><button class="mcbtn down" onclick="mcDir('down')" id="mcdown">&#9660; Goes down</button>
+            <span class="note">by</span><select id="mcby"></select>
+            <input id="mctarget" type="number" step="0.01" placeholder="target price (optional)">
+            <input id="mcnote" type="text" maxlength="300" placeholder="why? e.g. product demand, competitor news">
+            <button class="mcsave" onclick="mcSave()">Log call</button>
+          </div>
+          <div id="mcmsg" class="note" style="margin:6px 0"></div>
+          <div id="mcsum" class="mcsum"></div>
+          <div style="overflow-x:auto"><table><thead><tr><th>Made</th><th>Stock</th><th>Call</th><th>From</th><th>By</th><th>Target</th><th>Now</th><th>Model's odds of your call</th><th>Result</th><th></th></tr></thead><tbody id="mcrows"></tbody></table></div>
+          <div class="note" style="margin-top:8px">Calls are scored automatically against the real close on the by-date. You can withdraw a call only within 15 minutes, so the record stays honest. Research only, no orders.</div>
+        </div>
     </section>
     <div id="aiview"></div>
   </section>
@@ -515,6 +536,48 @@ function renderForecastView() {
 }
 function pickDay(k) { fcDay = k; renderForecastView(); }
 
+// ---------------------------------------------------------------- my calls
+let mcD = null;
+function mcDir(d) { mcD = d; $('mcup').classList.toggle('on', d === 'up'); $('mcdown').classList.toggle('on', d === 'down'); }
+function mcDates() {
+  const out = [], d = new Date();
+  for (let i = 1; out.length < 40 && i < 120; i++) {
+    const x = new Date(d.getTime() + i * 864e5), w = x.getUTCDay();
+    if (w !== 0 && w !== 6) out.push(x.toISOString().slice(0, 10));
+  }
+  const fc = fcState && fcState.forecast ? fcState.forecast.days.map(x => x.date) : [];
+  const all = [...new Set([...fc, ...out])].sort();
+  $('mcby').innerHTML = all.map((x, i) => `<option value="${x}" ${x === (fc[4] || all[4]) ? 'selected' : ''}>${DLONG(x)}${fc.includes(x) ? ' · model has odds' : ''}</option>`).join('');
+}
+async function mcSave() {
+  if (!mcD) { $('mcmsg').textContent = 'Pick "Goes up" or "Goes down" first.'; return; }
+  const body = { symbol: sel, direction: mcD, byDate: $('mcby').value, note: $('mcnote').value || null };
+  const t = parseFloat($('mctarget').value); if (isFinite(t)) body.target = t;
+  const r = await fetch('/api/mycalls', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  $('mcmsg').innerHTML = r.ok ? `<span class="ok">Logged: ${sel} ${mcD} from ${fmt(j.entryPrice)} by ${DLONG(j.byDate)}.</span>` : `<span class="bad">${j.error || 'Could not log the call.'}</span>`;
+  if (r.ok) { $('mcnote').value = ''; $('mctarget').value = ''; mcDir(null); loadCalls(); }
+}
+async function mcWithdraw(id) { await fetch('/api/mycalls/' + id, { method: 'DELETE' }); loadCalls(); }
+async function loadCalls() {
+  if (!$('mycard')) return;
+  $('mcsym').textContent = sel; mcDates();
+  const r = await fetch('/api/mycalls'); if (!r.ok) return;
+  const j = await r.json(), s = j.summary;
+  $('mcsum').innerHTML = s.scored ? `<span>Your record: <b class="${s.hitRate >= 0.5 ? 'ok' : 'bad'}">${Math.round(s.hitRate * 100)}%</b> right (${s.right}/${s.scored})</span>
+      ${s.modelAvgChanceYourWay != null ? `<span>Model's average odds for those same calls: <b>${Math.round(s.modelAvgChanceYourWay * 100)}%</b></span>` : ''}
+      ${s.withTarget ? `<span>Targets reached: <b>${s.targetsHit}/${s.withTarget}</b></span>` : ''}<span class="dim">${s.total - s.scored} still open</span>`
+    : `<span class="dim">${s.total ? s.total + ' open call(s), none due yet.' : 'No calls yet. Log one above; it is scored automatically when its date passes.'}</span>`;
+  const st = x => x.status === 'open' ? '<span class="dim">open</span>' : x.status === 'right' ? '<span class="ok">✓ right</span>' : '<span class="bad">✗ wrong</span>';
+  $('mcrows').innerHTML = j.calls.map(x => `<tr><td>${new Date(x.created).toLocaleDateString()}</td><td><b>${x.symbol}</b></td>
+    <td class="${x.direction === 'up' ? 'up' : 'down'}">${x.direction === 'up' ? '▲ up' : '▼ down'}</td><td class="num">${fmt(x.entryPrice)}</td><td>${DLONG(x.byDate)}</td>
+    <td class="num">${x.target ? fmt(x.target) + (x.targetTouched === true ? ' <span class="ok">✓</span>' : '') : '—'}</td>
+    <td class="num">${x.latest ? fmt(x.latest) + ` <span class="${cls(x.moveSoFarPct)}">(${sgn(x.moveSoFarPct, 1)}%)</span>` : '—'}</td>
+    <td class="num">${x.modelChanceYourWay != null ? Math.round(x.modelChanceYourWay * 100) + '%' : '<span class="dim">beyond 5 days</span>'}</td>
+    <td>${st(x)}</td><td>${x.canWithdraw ? `<button class="dim" onclick="mcWithdraw('${x.id}')">withdraw</button>` : ''}</td></tr>`).join('')
+    || '<tr><td colspan="10" class="dim">No calls yet.</td></tr>';
+}
+
 let whyData = null;
 async function loadWhy() {
   try { const r = await fetch('/api/explain'); whyData = r.ok ? await r.json() : null; } catch { whyData = null; }
@@ -560,7 +623,7 @@ async function loadForecast() {
   $('fcchip').textContent = ok ? 'VALIDATED' : calOnly ? 'RANGES CALIBRATED · NO EDGE' : 'NOT VALIDATED'; $('fcchip').className = 'chip ' + (ok ? 'live' : 'demo');
   $('fcsub').innerHTML = `Made at the close of ${DLONG(fc.asof)} · last close <b class="num">${fmt(fc.last_close)}</b> · ${fc.model === 'v2' ? 'volatility model with self-correcting ranges' : 'volatility model'} · 20,000 simulated paths
     ${ok ? '' : calOnly ? ' · <span style="color:var(--warn)">ranges passed the 250-day check, but the forecast is not more accurate than "no change"</span>' : ' · <span class="bad">failed the 250-day check: treat the ranges as too narrow</span>'}`;
-  renderForecastView(); renderWhy();
+  renderForecastView(); renderWhy(); loadCalls();
   if (v) {
     const cell = (x, t, tol) => `<td class="num ${Math.abs(x - t) <= tol ? 'ok' : 'bad'}">${(x * 100).toFixed(0)}%</td>`;
     const rule = (okk, t) => `<div>${okk ? '<span class="ok">✓</span>' : '<span class="bad">✗</span>'} ${t}</div>`;
