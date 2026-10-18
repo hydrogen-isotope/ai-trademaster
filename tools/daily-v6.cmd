@@ -11,4 +11,7 @@ set PY=python\.venv\Scripts\python.exe -W ignore
 %PY% -m trademaster_ml.fundamentals panel
 %PY% -m trademaster_ml.universe_us export || exit /b 1
 src\Trademaster.Cli\bin\Release\net10.0\trademaster.exe gpu-features --cpu || exit /b 1
+rem v7 price forecasts (shadow test, docs/FORECAST-V7-PRICE-PROTOCOL.md): score matured ones, then forecast today
+%PY% -m trademaster_ml.v7 score
+%PY% -m trademaster_ml.v7 forecast
 %PY% -m trademaster_ml.v6 rank

@@ -495,6 +495,18 @@ def rank(args):
                       "exp_rel_5d": cal[dec[k]]["mean_rel_5d"] if cal else None, "p_beat": cal[dec[k]]["p_beat_median"] if cal else None,
                       "why": {w: float(x[fi[w]] + 0.5) for w in why}})
     table.sort(key=lambda r: -r["score_pct"])
+    # v7 price forecasts (shadow), when written for the same close
+    v7 = None
+    fp = os.path.join("private", "reports", "v7", "forecast.json")
+    if os.path.exists(fp):
+        f = json.load(open(fp))
+        if f.get("asof") == P.dates[last]:
+            for r in table:
+                r["fc"] = f["rows"].get(r["symbol"])
+            sp = os.path.join("private", "reports", "v7", "shadow_score.json")
+            v7 = {"model": f["model"], "status": f["status"], "shadow": json.load(open(sp)) if os.path.exists(sp) else None}
+            if v7["shadow"]:
+                v7["shadow"].pop("days", None)
     status = {"adopted": None, "note": "final test not run yet"}
     tp = os.path.join(OUT, "test_models.json")
     if os.path.exists(tp):
@@ -502,7 +514,7 @@ def rank(args):
         status = {"adopted": t.get("adoption", {}).get("adopted"), "note": "per the pre-registered final test", "adoption": t.get("adoption")}
     out = {"asof": P.dates[last], "model": label, "status": status, "universe": len(table), "calibration": cal, "rankings": table,
            "history": ev, "dev": json.load(open(os.path.join(OUT, "dev_models.json")))["results"] if os.path.exists(os.path.join(OUT, "dev_models.json")) else None,
-           "test": json.load(open(tp))["results"] if os.path.exists(tp) else None, "features": P.names,
+           "test": json.load(open(tp))["results"] if os.path.exists(tp) else None, "features": P.names, "v7": v7,
            "generated": datetime.now().isoformat(timespec="seconds"), "seconds": time.time() - t0}
     tmp = os.path.join(OUT, "rankings.json.tmp")
     json.dump(out, open(tmp, "w"))

@@ -64,6 +64,8 @@ public static class Dashboard
         builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
         var app = builder.Build();
         string uiDir = Path.Combine(AppContext.BaseDirectory, "ui");
+        // local dashboard: always revalidate, so an updated page or new daily data shows without a hard refresh
+        app.Use(async (ctx, next) => { ctx.Response.Headers.CacheControl = "no-cache"; await next(); });
 
         app.MapGet("/", () => Results.File(Path.Combine(uiDir, "market.html"), "text/html; charset=utf-8"));
         app.MapGet("/favicon.svg", () => Results.File(Path.Combine(uiDir, "favicon.svg"), "image/svg+xml"));

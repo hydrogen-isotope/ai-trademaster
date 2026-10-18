@@ -39,7 +39,7 @@ td.name{text-align:left;color:var(--muted);max-width:150px;overflow:hidden;text-
 <header>
   <span class="brand">AI Trademaster</span>
   <span class="chip real">NASDAQ · END OF DAY</span><span class="chip warn">RESEARCH ONLY · NO ORDERS · NOT ADVICE</span>
-  <span class="chip" id="status">loading…</span>
+  <span class="chip" id="status">loading…</span><span class="chip warn" id="v7chip" title="v7 price forecasts are in a forward shadow test until 60 trading days are scored">PRICE FORECAST · SHADOW</span>
   <span class="muted" id="asof"></span>
   <div class="spacer"></div>
   <a href="/">← markets</a> <a href="/forward">AI signals</a>
@@ -50,11 +50,13 @@ td.name{text-align:left;color:var(--muted);max-width:150px;overflow:hidden;text-
     It does not predict whether the market goes up; it predicts which stocks do better <i>than the others</i>.
     "Expected vs median" and "chance to beat the median" come from how each score decile actually did out of sample.
     The edge per stock is small (published systems: correlation 0.04–0.05); it only shows up across many stocks and weeks.
+    <br>Price forecasts (v7, shadow): median and ranges for the next 5 trading days and the chance of being up. Ranges were well calibrated in testing
+    (80% range held 80% of the time); "up or down" was right 51% of the time overall and 56–58% for the bottom-ranked stocks. Market direction itself is not predicted.
   </div>
   <div class="cards" id="cards"></div>
   <div class="two">
-    <div class="panel"><div class="ph">Top-ranked (expected to beat peers)</div><div class="scroll" style="max-height:420px"><table><thead><tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>Exp. vs median 5d</th><th>Beat median</th><th>Why</th></tr></thead><tbody id="top"></tbody></table></div></div>
-    <div class="panel"><div class="ph">Bottom-ranked (expected to lag peers)</div><div class="scroll" style="max-height:420px"><table><thead><tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>Exp. vs median 5d</th><th>Beat median</th><th>Why</th></tr></thead><tbody id="bot"></tbody></table></div></div>
+    <div class="panel"><div class="ph">Top-ranked (expected to beat peers)</div><div class="scroll" style="max-height:420px"><table><thead><tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th title="v7 shadow forecast: median price in 5 trading days and the 80% range">5-day price (80% range)</th><th title="v7 shadow forecast: chance the price is higher in 5 trading days">P(up)</th><th>Why</th></tr></thead><tbody id="top"></tbody></table></div></div>
+    <div class="panel"><div class="ph">Bottom-ranked (expected to lag peers)</div><div class="scroll" style="max-height:420px"><table><thead><tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th title="v7 shadow forecast: median price in 5 trading days and the 80% range">5-day price (80% range)</th><th title="v7 shadow forecast: chance the price is higher in 5 trading days">P(up)</th><th>Why</th></tr></thead><tbody id="bot"></tbody></table></div></div>
   </div>
   <div class="two">
     <div class="panel"><div class="ph">Out-of-sample weekly portfolio, cumulative (net of costs) <span class="dim" id="eqnote"></span></div><div class="chart" id="eq"></div></div>
@@ -62,7 +64,7 @@ td.name{text-align:left;color:var(--muted);max-width:150px;overflow:hidden;text-
   </div>
   <div class="panel"><div class="ph">How each score decile did out of sample</div><table><thead><tr><th>Decile</th><th>Avg 5-day return vs median</th><th>Beat the median</th><th>Observations</th><th style="text-align:left"></th></tr></thead><tbody id="cal"></tbody></table></div>
   <div class="panel"><div class="ph">All ranked stocks <div class="spacer"></div><input id="q" placeholder="filter symbol or name"></div>
-    <div class="scroll"><table><thead><tr><th>#</th><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>Decile</th><th>Exp. vs median 5d</th><th>Beat median</th></tr></thead><tbody id="all"></tbody></table></div></div>
+    <div class="scroll"><table><thead><tr><th>#</th><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>Decile</th><th>Exp. vs median 5d</th><th>Beat median</th><th>5-day price</th><th>80% range</th><th>95% range</th><th>P(up)</th><th>P(beats QQQ)</th></tr></thead><tbody id="all"></tbody></table></div></div>
   <div class="panel"><div class="ph">Model comparison (pre-registered protocol)</div><div class="scroll" style="max-height:none"><table><thead><tr><th>Model</th><th>Period</th><th>IC</th><th>t</th><th>Top beats bottom</th><th>L/S Sharpe</th><th>L/S Sharpe, 10% borrow</th><th>Long-only vs QQQ /yr</th></tr></thead><tbody id="models"></tbody></table></div></div>
 </main>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -88,8 +90,21 @@ function row(r, i, full) {
   return `<tr>${full ? `<td class="num dim">${i + 1}</td>` : ''}<td><b>${esc(r.symbol)}</b></td><td class="name">${esc(r.name)}</td>` +
     `<td class="num">${r.close.toFixed(2)}</td><td class="num">${bar} ${r.score_pct.toFixed(0)}</td>` +
     (full ? `<td class="num">${r.decile}</td>` : '') +
-    `<td class="num ${cls(r.exp_rel_5d)}">${pct(r.exp_rel_5d, 2)}</td><td class="num">${pct(r.p_beat, 0, false)}</td>` +
-    (full ? '' : `<td><div class="why">${why(r)}</div></td>`) + '</tr>';
+    (full ? `<td class="num ${cls(r.exp_rel_5d)}">${pct(r.exp_rel_5d, 2)}</td><td class="num">${pct(r.p_beat, 0, false)}</td>` + fcFull(r)
+          : fcShort(r) + `<td><div class="why">${why(r)}</div></td>`) + '</tr>';
+}
+const px = v => v == null || !isFinite(v) ? '—' : v >= 100 ? v.toFixed(1) : v.toFixed(2);
+const pup = p => p == null ? '—' : `<span class="${p >= 0.52 ? 'up' : p <= 0.48 ? 'down' : ''}">${(p * 100).toFixed(0)}%</span>`;
+function fcShort(r) {
+  const f = r.fc;
+  if (!f) return '<td class="num dim">—</td><td class="num dim">—</td>';
+  return `<td class="num"><span class="${cls(f.median - r.close)}">${px(f.median)}</span> <span class="dim">(${px(f.lo80)}–${px(f.hi80)})</span></td><td class="num">${pup(f.p_up)}</td>`;
+}
+function fcFull(r) {
+  const f = r.fc;
+  if (!f) return '<td class="num dim" colspan="5">—</td>';
+  return `<td class="num ${cls(f.median - r.close)}">${px(f.median)}</td><td class="num dim">${px(f.lo80)}–${px(f.hi80)}</td>` +
+    `<td class="num dim">${px(f.lo95)}–${px(f.hi95)}</td><td class="num">${pup(f.p_up)}</td><td class="num">${pup(f.p_beat_qqq)}</td>`;
 }
 function renderAll() {
   const q = $('q').value.trim().toLowerCase();
@@ -121,6 +136,11 @@ async function load() {
     ['top 10% beat bottom 10%', pct(h.top_beats_bottom, 0, false) + ' of weeks'], ['long-only vs QQQ', pct(h.longonly_vs_qqq_ann) + '/yr']]));
   if (h) cards.push(card('Long-short (top − bottom 10%)', [['net, 1% borrow', pct(h.ls_net_ann) + '/yr'], ['Sharpe', h.ls_sharpe.toFixed(2)],
     ['Sharpe, 10% borrow', h.ls_sharpe_borrow10.toFixed(2)], ['max drawdown', pct(h.ls_maxdd, 0, false)]]));
+  if (d.v7) {
+    const sh = d.v7.shadow || {};
+    cards.push(card('Price forecasts (v7)', [['status', 'shadow test'], ['scored so far', `${sh.matured_dates ?? 0} of 60 days`],
+      ['80% range held', sh.cov80 != null ? pct(sh.cov80, 1, false) : 'pending'], ['up/down right', sh.hit != null ? pct(sh.hit, 1, false) : 'pending']]));
+  } else $('v7chip').style.display = 'none';
   cards.push(card('Status', [['protocol', st.adopted === true ? 'adopted' : st.adopted === false ? 'not adopted' : 'final test pending'],
     ['model', esc(d.model.split(':')[0])], ['generated', esc((d.generated || '').replace('T', ' '))], ['universe', d.universe + ' stocks']]));
   $('cards').innerHTML = cards.join('');
