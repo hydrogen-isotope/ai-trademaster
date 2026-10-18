@@ -88,14 +88,19 @@ def _keep(facts):
     out = {}
     g = facts.get("facts", {}).get("us-gaap", {})
     for key, tags in GAAP.items():
-        for tag in tags:                                    # first tag that exists wins
+        # companies switch tags over time (e.g. SalesRevenueNet -> RevenueFromContract... with ASC 606), so all
+        # tags are merged; for the same period and filing the earlier-listed tag wins
+        seen, merged = set(), []
+        for tag in tags:
             units = g.get(tag, {}).get("units", {})
-            rows = units.get("USD") or units.get("USD/shares") or units.get("shares")
-            if rows:
-                out[key] = [[x.get("start"), x["end"], x["val"], x.get("form"), x["filed"]] for x in rows
-                            if x.get("form") in ("10-Q", "10-K", "10-Q/A", "10-K/A", "20-F", "40-F", "10-KT")]
-                if out[key]:
-                    break
+            rows = units.get("USD") or units.get("USD/shares") or units.get("shares") or []
+            for x in rows:
+                k = (x.get("start"), x["end"], x["filed"])
+                if x.get("form") in ("10-Q", "10-K", "10-Q/A", "10-K/A", "20-F", "40-F", "10-KT") and k not in seen:
+                    seen.add(k)
+                    merged.append([x.get("start"), x["end"], x["val"], x.get("form"), x["filed"]])
+        if merged:
+            out[key] = merged
     d = facts.get("facts", {}).get("dei", {}).get(DEI_SHARES, {}).get("units", {}).get("shares")
     if d:
         out["dei_shares"] = [[None, x["end"], x["val"], x.get("form"), x["filed"]] for x in d]
@@ -257,7 +262,10 @@ def panel():
     close = p["close"].astype(np.float64)
     cmap = json.load(open(os.path.join(EDGAR, "cik_map.json")))
     sp = {}
-    for s, ex, r in json.load(open(os.path.join(EDGAR, "splits.json"))):
+    spath = os.path.join(EDGAR, "splits.json")
+    if not os.path.exists(spath):
+        print("warning: no splits.json yet (fetch not finished): share counts are not split-adjusted", flush=True)
+    for s, ex, r in json.load(open(spath)) if os.path.exists(spath) else []:
         sp.setdefault(s, []).append((ex, r))
     F = {k: np.full((T, N), np.nan, np.float32) for k in NAMES}
     sic = np.full(N, -1.0, np.float32)
