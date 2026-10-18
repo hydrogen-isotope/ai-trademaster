@@ -3,6 +3,7 @@
     <Project Path="src/Trademaster.Cli/Trademaster.Cli.csproj" />
     <Project Path="src/Trademaster.Core/Trademaster.Core.csproj" />
     <Project Path="src/Trademaster.Engine/Trademaster.Engine.csproj" />
+    <Project Path="src/Trademaster.Gpu/Trademaster.Gpu.csproj" />
     <Project Path="src/Trademaster.Sim/Trademaster.Sim.csproj" />
     <Project Path="src/Trademaster.Telemetry/Trademaster.Telemetry.csproj" />
   </Folder>

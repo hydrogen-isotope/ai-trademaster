@@ -23,6 +23,7 @@
     <ProjectReference Include="..\..\src\Trademaster.Sim\Trademaster.Sim.csproj" />
     <ProjectReference Include="..\..\src\Trademaster.Telemetry\Trademaster.Telemetry.csproj" />
     <ProjectReference Include="..\..\src\Trademaster.Engine\Trademaster.Engine.csproj" />
+    <ProjectReference Include="..\..\src\Trademaster.Gpu\Trademaster.Gpu.csproj" />
   </ItemGroup>
 
 </Project>

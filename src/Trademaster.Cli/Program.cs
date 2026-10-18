@@ -23,6 +23,7 @@ try
         "app" => App(opts),
         "exec-study" => ExecStudy(opts),
         "verify-audit" => VerifyAudit(args.Skip(1).FirstOrDefault()),
+        "gpu-features" => GpuFeaturesCmd(opts),
         _ => Help(),
     };
 }
@@ -50,6 +51,8 @@ static int Help()
           exec-study [--data DIR] [--fill-model queue|touch]  Execution probe
           bench-onnx [--backend cpu|dml|cuda|tensorrt|migraphx[,..]] [--device N] [--allow-gpu]
                      [--n 30,300,1000] [--k 1,10,100,1000]   Inference latency (GPU needs --allow-gpu + safety gate)
+          gpu-features --in private/data/us/gpu [--out same] [--top 1000] [--min-price 5] [--cpu] [--check]
+                     [--allow-gpu] [--override-gpu-stability]  v6 feature panel + cross-stock ranks (HLSL on the GPU)
         """);
     return 0;
 }
@@ -222,6 +225,81 @@ static int BenchOnnx(Dictionary<string, string> o)
     var md = Path.Combine(dir, "summary.md");
     File.WriteAllText(md, Trademaster.Engine.Inference.OnnxBench.Markdown(rows, SystemInfo.Collect(), model));
     Console.WriteLine($"Report: {md}");
+    return 0;
+}
+
+// Reads <in>/meta.json {"T","N"} + logclose.f32 + volume.f32 ([T,N] float32, written by trademaster_ml.universe_us export);
+// writes raw.f32 and ranks.f32 ([F,T,N]), mask.f32 ([T,N]) and features.json. --check also runs the CPU reference and
+// compares. The GPU path passes the same safety gate as every other GPU use.
+static int GpuFeaturesCmd(Dictionary<string, string> o)
+{
+    string dir = o.GetValueOrDefault("in", Path.Combine("private", "data", "us", "gpu"));
+    string outDir = o.GetValueOrDefault("out", dir);
+    using var meta = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "meta.json")));
+    int T = meta.RootElement.GetProperty("T").GetInt32(), N = meta.RootElement.GetProperty("N").GetInt32();
+    int topK = Int(o, "top", 1000);
+    float minPrice = float.Parse(o.GetValueOrDefault("min-price", "5"), CultureInfo.InvariantCulture);
+    float[] Load(string name)
+    {
+        var bytes = File.ReadAllBytes(Path.Combine(dir, name));
+        if (bytes.Length != (long)T * N * 4) throw new InvalidDataException($"{name}: expected {T}x{N} float32");
+        var a = new float[T * N];
+        Buffer.BlockCopy(bytes, 0, a, 0, bytes.Length);
+        return a;
+    }
+    var lc = Load("logclose.f32");
+    var vol = Load("volume.f32");
+    Console.WriteLine($"panel {T} days x {N} stocks; universe top {topK} by dollar volume, price >= {minPrice}");
+
+    Trademaster.Gpu.GpuFeatures.Result r;
+    if (o.ContainsKey("cpu")) r = Trademaster.Gpu.GpuFeatures.RunCpu(lc, vol, T, N, topK, minPrice);
+    else
+    {
+        GpuGate.Require(o.ContainsKey("allow-gpu"), o.ContainsKey("override-gpu-stability"), GpuHealth.Check());
+        r = Trademaster.Gpu.GpuFeatures.RunGpu(lc, vol, T, N, topK, minPrice, Int(o, "device", -1), Console.Out);
+    }
+    Console.WriteLine($"{r.Device}: {r.Seconds:F2} s");
+
+    if (o.ContainsKey("check") && r.Device != "CPU")
+    {
+        var c = Trademaster.Gpu.GpuFeatures.RunCpu(lc, vol, T, N, topK, minPrice);
+        Console.WriteLine($"CPU reference: {c.Seconds:F2} s ({c.Seconds / r.Seconds:F1}x the GPU time)");
+        int maskDiff = 0;
+        for (int i = 0; i < r.Mask.Length; i++) if (r.Mask[i] != c.Mask[i]) maskDiff++;
+        Console.WriteLine($"universe mask: {maskDiff} of {r.Mask.Length:N0} cells differ");
+        for (int f = 0; f < r.Raw.Length; f++)
+        {
+            (double maxAbs, int nanDiff) Cmp(float[] a, float[] b)
+            {
+                double m = 0; int nd = 0;
+                for (int i = 0; i < a.Length; i++)
+                {
+                    bool fa = float.IsFinite(a[i]), fb = float.IsFinite(b[i]);
+                    if (fa != fb) nd++;
+                    else if (fa) m = Math.Max(m, Math.Abs(a[i] - b[i]));
+                }
+                return (m, nd);
+            }
+            var (rawMax, rawNan) = Cmp(r.Raw[f], c.Raw[f]);
+            var (rankMax, rankNan) = Cmp(r.Ranks[f], c.Ranks[f]);
+            Console.WriteLine($"  {Trademaster.Gpu.GpuFeatures.Names[f],-18} raw max|diff| {rawMax:E2} (NaN mismatches {rawNan}),  rank max|diff| {rankMax:E2} (NaN mismatches {rankNan})");
+        }
+    }
+
+    Directory.CreateDirectory(outDir);
+    void Save(string name, IEnumerable<float[]> parts)
+    {
+        using var fs = File.Create(Path.Combine(outDir, name));
+        foreach (var p in parts) fs.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(p.AsSpan()));
+    }
+    Save("raw.f32", r.Raw);
+    Save("ranks.f32", r.Ranks);
+    Save("mask.f32", [r.Mask]);
+    File.WriteAllText(Path.Combine(outDir, "features.json"), System.Text.Json.JsonSerializer.Serialize(new
+    {
+        T, N, features = Trademaster.Gpu.GpuFeatures.Names, top = topK, min_price = minPrice, device = r.Device, seconds = r.Seconds,
+    }));
+    Console.WriteLine($"wrote {outDir}");
     return 0;
 }
 
