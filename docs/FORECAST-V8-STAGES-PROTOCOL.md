@@ -161,6 +161,45 @@ of the forward test.
 Also found during the hand check: with only `-ngl 0`, the Vulkan llama.cpp build still sends prompt batches to the GPU.
 "CPU" runs now pass `--device none --no-op-offload` (true CPU: about 160 prompt tokens/s instead of about 800).
 
+**E (2026-10-18, at the user's request, before any advised forecast matured). Qwen first, then our models; a
+research signal; three views.** This replaces the lean → k·σ mapping of amendment C. Inputs, schema-enforced reasons,
+the cache and the logging rule are unchanged.
+- **Qwen's probability.** After the JSON verdict, one more question in the same conversation: "what is the chance
+  (0 to 100) that the price is higher in 5 trading days than at the last close? Answer with a whole number only."
+  - Qwen writes numbers digit by digit, so the first answer token is the tens digit.
+  - P_qwen is the expectation over that token's digit probabilities (digit d counts as 10d + 5).
+  - A first version asked "rise or fall?" (one word). On the first hand-check stock it just repeated the verdict with
+    about 100% certainty (MU: P(rise) = 0.00), so it was replaced before any other stock was run. That output is in
+    `evals/handcheck3/`.
+- **Post-processing by our models.** P_total = P_model + w · (P_qwen − 0.5), clipped to [0.05, 0.95]:
+  - P_model is the v7 model-only P(up);
+  - w is a fixed shrinkage, because Qwen has no track record. It is set once from the hand check's raw P_qwen spread,
+    which involves no outcomes: w = 0.12 / (90th percentile of |P_qwen − 0.5| over the 10 hand-check stocks), capped at
+    0.5.
+  - After ≥ 60 matured dates, w may be re-fitted once, by a logistic regression of the up/down outcome on
+    (P_qwen − 0.5) with offset logit(P_model). It is then frozen again and reported as a new amendment.
+- **Distribution.** The v7 shape and recalibration levels are kept, with the median shifted so that the calibrated
+  P(up) equals P_total. Elevated risk still widens σ by 25%.
+  - The headline band is the 50% range; the 80% and 95% ranges stay as outer bands.
+  - The ranges are not narrowed: they matched their nominal coverage in testing.
+- **Views** (all logged per stock and close):
+  - *Total*: the above;
+  - *Qwen only*: P_qwen without shrinkage, on the same shape;
+  - *Model only*: v7.
+- **Research signal** (not advice), from P_total: **buy** if ≥ 0.58, **sell** if ≤ 0.42, otherwise none.
+- **Forward test.** The promotion rule of amendment C applies to *Total* vs *Model only*. Also reported:
+  - *Qwen only*'s CRPS and hit rate;
+  - each signal's hit rate (buy: the 5-day return > 0; sell: < 0) with a binomial 95% CI.
+- The amendment C/D outputs (12 stocks) were moved to `evals/handcheck2/` and are not part of the forward test.
+- **Hand check (10 NASDAQ stocks, CPU, no outcomes).**
+  - P_qwen took only three values, one per verdict: 45% for "down" (MU, AVGO, CRWV, SNDK), 55% for "neutral"
+    (INTC), and 64–66% for "up" (NVDA, AAPL, TSLA, AMD, COST).
+  - So it is graded only by its verdict, and it leans up: "up" sits 15 points above 50, "down" only 5 below.
+  - The 90th percentile of |P_qwen − 0.5| is 0.155. By the rule, w = 0.12 / 0.155 = 0.77, so **w = 0.5** (the cap).
+  - Resulting signals: buy for NVDA, AAPL, TSLA and AMD (60–62%); none for the rest; no sell.
+  - The asymmetry is a known weakness. The 60-day re-fit may add an intercept to correct it.
+  - These outputs are in `evals/handcheck4/` and are not part of the forward test.
+
 ## Results
 
 ### Test A: staging vs one ridge (no news), run 2026-10-18

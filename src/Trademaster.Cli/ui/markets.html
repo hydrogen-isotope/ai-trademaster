@@ -275,13 +275,14 @@ async function viewForecasts(m) {
     `Ranges have been well calibrated in testing; up/down is right ~51–52% on a typical stock and 56–58% on the bottom-ranked ones.${news ? ' "With news" adds the local AI model\'s read of the last 5 sessions (unproven).' : ''}</div>` +
     `<div class="panel"><div class="ph"><span>${rows.length} stocks</span><div class="spacer"></div><span class="tools"><input id="fq" placeholder="filter symbol or name" value="${esc(s.q)}" oninput="UI.forecasts.q=this.value;rerenderKeep('fq')"></span></div>` +
     `<div class="scroll"><table><thead><tr>${th('sym', 'Symbol')}<th style="text-align:left">Company</th><th>Close</th>${th('move', '5-day median')}<th>Range</th>` +
-    `<th>80% range</th>${th('width', '80% width')}${th('pup', 'P(up)')}<th>P(beats ${M.bench})</th>${news ? '<th>News</th><th>P(up) with news</th>' : ''}<th title="Qwen-advised P(up), for stocks already evaluated (click a stock to evaluate it)">AI P(up)</th></tr></thead><tbody>` +
+    `<th>80% range</th>${th('width', '80% width')}${th('pup', 'P(up)')}<th>P(beats ${M.bench})</th>${news ? '<th>News</th><th>P(up) with news</th>' : ''}<th title="Qwen + models P(up) and research signal, for stocks already evaluated (click a stock to evaluate it)">AI P(up) · signal</th></tr></thead><tbody>` +
     rows.slice(0, 600).map(r => { const f = r.fc, n = f.news;
       return `<tr class="click" onclick="${go(m, r.symbol)}"><td><b>${esc(r.symbol)}</b></td><td class="name">${esc(r.name)}</td><td class="num">${px(r.close)}</td>` +
         `<td class="num ${cls(f.median - r.close)}">${px(f.median)} <span class="dim">${pct(f.exp_ret, 1)}</span></td><td>${rangeBar(r)}</td>` +
         `<td class="num dim">${px(f.lo80)}–${px(f.hi80)}</td><td class="num dim">${pct((f.hi80 - f.lo80) / r.close, 0, false)}</td><td class="num">${pup(f.p_up)}</td><td class="num">${pup(f.p_beat_qqq)}</td>` +
         (news ? (n && n.n ? `<td class="num ${cls(n.news_dir)}">${n.news_dir > 0 ? '+' : ''}${n.news_dir.toFixed(1)} <span class="dim">(${n.n})</span></td><td class="num">${pup(n.p_up)}</td>` : '<td class="num dim">—</td><td class="num dim">—</td>') : '') +
-        (AI[r.symbol] ? `<td class="num" title="Qwen: ${esc(AI[r.symbol].lean)}, ${esc(AI[r.symbol].confidence)} confidence; model only ${(f.p_up * 100).toFixed(0)}%">${pup(AI[r.symbol].p_up)} <span class="chip" style="font-size:9px;padding:0 4px">AI</span></td>` : '<td class="num dim">—</td>') + '</tr>'; }).join('') +
+        (AI[r.symbol] ? `<td class="num" title="Qwen + models (Qwen alone: ${AI[r.symbol].p_qwen != null ? (AI[r.symbol].p_qwen * 100).toFixed(0) + '% rise' : '—'}; model alone ${(f.p_up * 100).toFixed(0)}%)">${pup(AI[r.symbol].p_up)} ` +
+          `${AI[r.symbol].signal && AI[r.symbol].signal !== 'none' ? sigChip(AI[r.symbol].signal).replace(' SIGNAL', '') : ''}</td>` : '<td class="num dim">—</td>') + '</tr>'; }).join('') +
     '</tbody></table></div></div>';
 }
 
@@ -394,10 +395,10 @@ async function viewStock(m, sym) {
   return `<h1>${esc(sym)} <span class="muted" style="font-weight:400">${esc(r.name)}</span> <span class="chip">${M.name}</span>${inMom ? ' <span class="chip warn">IN MOMENTUM PICKS</span>' : ''}</h1>` +
     `<div class="lead">Close ${esc(d.asof)}. Forecasts are for the next 5 trading days and are in a forward test.` +
     (m === 'nasdaq' ? ` <a href="/?symbol=${encodeURIComponent(sym)}">Open chart in Watchlist →</a>` : '') + `</div>` +
-    `<div class="panel"><div class="ph"><span>Last year and the next 5 trading days</span><div class="spacer"></div><span class="legend">` +
-    `<span><i style="background:#6b7684"></i>model only</span><span><i id="lgAi" style="background:var(--accent)"></i>AI-advised (Qwen)</span><span class="dim">solid = median · dashed = 80% · dotted = 95%</span></span></div>` +
+    `<div class="panel"><div class="ph"><span>Last year and the next 5 trading days</span><div class="spacer"></div><span class="legend"><span id="vtoggles" style="display:flex;gap:14px;flex-wrap:wrap"></span>` +
+    `<span class="dim">thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div>` +
     `<div style="position:relative"><div class="chart" id="stockchart" style="height:340px"></div><div class="spinwrap" id="spin"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub">asking for the analysis</div></div></div></div></div>` +
-    `<div class="panel" id="aipanel" style="position:relative;min-height:120px"><div class="ph">AI analysis (Qwen, local) <span class="chip warn">UNPROVEN · FORWARD TEST</span></div>` +
+    `<div class="panel" id="aipanel" style="position:relative;min-height:120px"><div class="ph">AI analysis (Qwen, local, post-processed by our models) <span class="chip warn">UNPROVEN · FORWARD TEST</span></div>` +
     `<div class="spinwrap" id="spin2"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub2">Qwen is reading ${m === 'nasdaq' ? 'its news, ' : ''}the numbers and its peers</div></div></div><div class="pad" id="aibody"></div></div>` +
     (f ? `<div class="panel pad big"><div class="muted" style="margin-bottom:6px">5-day range: thin = 95%, thick = 80%, white line = today's close, dot = median</div>${rangeBar(r)}` +
       `<div style="display:flex;justify-content:space-between" class="num dim"><span>${px(f.lo95)}</span><span>${px(f.hi95)}</span></div></div>` : '') +
@@ -428,6 +429,12 @@ async function loadEval(m, sym, tok) {
   if (r && r.history) $('spin').style.display = 'none';                 // the chart is ready; the AI panel keeps spinning
   setTimeout(() => loadEval(m, sym, tok), 2000);
 }
+// three views of the same 5-day forecast (v8 amendment E): Qwen post-processed by our models, Qwen alone, the model alone
+const VIEWS = [['total', 'Qwen + models', null], ['qwen', 'Qwen only', '#a78bfa'], ['model', 'Model only (v7)', '#8a93a0']];
+let SHOWN = (() => { try { return JSON.parse(localStorage.getItem('tm.views')) || { total: true }; } catch (e) { return { total: true }; } })();
+const viewsOf = r => r.views || { model: r.model, ...(r.advised ? { total: r.advised } : {}) };
+const SIGNAL = { buy: ['BUY SIGNAL', 'ok'], sell: ['SELL SIGNAL', 'bad'], none: ['NO SIGNAL', ''] };
+const sigChip = s => s ? `<span class="chip ${SIGNAL[s][1]}">${SIGNAL[s][0]}</span>` : '';
 function drawStock(r, m) {
   if (!window.LightweightCharts || !$('stockchart')) return;
   charts.forEach(c => { try { c.remove(); } catch (e) { } }); charts = [];
@@ -437,30 +444,52 @@ function drawStock(r, m) {
     timeScale: { borderColor: '#262c34', rightOffset: 3 }, autoSize: true, crosshair: { mode: 0 } });
   charts.push(ch);
   ch.addLineSeries({ color: '#e6e9ee', lineWidth: 2, priceLineVisible: false, lastValueVisible: false }).setData(r.history.map(([t, v]) => ({ time: t, value: v })));
-  const band = (cone, color, label) => {
-    const ln = (k, style) => ch.addLineSeries({ color, lineWidth: 1, lineStyle: style, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
-      .setData(cone.map(p => ({ time: p.date, value: p[k] })));
-    ln('lo95', 1); ln('hi95', 1); ln('lo80', 2); ln('hi80', 2);
-    ch.addLineSeries({ color, lineWidth: 2, priceLineVisible: false, lastValueVisible: true, title: label, crosshairMarkerVisible: false })
-      .setData(cone.map(p => ({ time: p.date, value: p.median })));
-  };
-  band(r.model.cone, '#6b7684', 'model');
-  if (r.advised) {
-    const c = r.advised.median >= r.close ? '#16c784' : '#f6465d';
-    band(r.advised.cone, c, 'AI');
-    if ($('lgAi')) $('lgAi').style.background = c;
+  const V = viewsOf(r), avail = VIEWS.filter(([k]) => V[k]);
+  const only = avail.length === 1;                                       // still evaluating: just the model
+  drawStock.series = {};
+  for (const [k, label, col0] of avail) {
+    const v = V[k], color = col0 || (v.median >= r.close ? '#16c784' : '#f6465d'), alpha = a => color + a;
+    const ss = [];
+    const add = (key, style, w, c, title) => { const se = ch.addLineSeries({ color: c, lineWidth: w, lineStyle: style, priceLineVisible: false,
+      lastValueVisible: !!title, title: title || '', crosshairMarkerVisible: false }); se.setData(v.cone.filter(p => p[key] != null).map(p => ({ time: p.date, value: p[key] }))); ss.push(se); };
+    add('lo95', 1, 1, alpha('55')); add('hi95', 1, 1, alpha('55')); add('lo80', 2, 1, alpha('99')); add('hi80', 2, 1, alpha('99'));
+    if (v.cone[1] && v.cone[1].lo50 != null) { add('lo50', 0, 1, color); add('hi50', 0, 1, color); }
+    add('median', 0, 3, color, k === 'total' ? 'AI' : k === 'qwen' ? 'Qwen' : 'model');
+    drawStock.series[k] = ss;
+    const on = only || !!SHOWN[k];
+    ss.forEach(se => se.applyOptions({ visible: on }));
+    if (k === 'total' && $('lgTotal')) $('lgTotal').style.background = color;
   }
   const n = r.history.length;
   requestAnimationFrame(() => ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 70), to: n + 7 }));   // ~3 months + the 5-day cone
+  if ($('vtoggles')) $('vtoggles').innerHTML = avail.length > 1 ? avail.map(([k, label, col0]) =>
+    `<label style="cursor:pointer;white-space:nowrap"><input type="checkbox" ${SHOWN[k] ? 'checked' : ''} onchange="toggleView('${k}',this.checked)"> ` +
+    `<i ${k === 'total' ? 'id="lgTotal"' : ''} style="background:${col0 || (V.total.median >= r.close ? '#16c784' : '#f6465d')}"></i>${label}</label>`).join('')
+    : '<span><i style="background:#8a93a0"></i>model only (Qwen still evaluating)</span>';
+}
+function toggleView(k, on) {
+  SHOWN[k] = on; try { localStorage.setItem('tm.views', JSON.stringify(SHOWN)); } catch (e) { }
+  (drawStock.series && drawStock.series[k] || []).forEach(se => se.applyOptions({ visible: on }));
 }
 function aiBody(r, m) {
-  const a = r.ai, ad = r.advised, mo = r.model, M = MARKETS[m], L = LEANS[a.lean] || [a.lean, ''];
+  const a = r.ai, V = viewsOf(r), t = V.total, M = MARKETS[m], L = LEANS[a.lean] || [a.lean, ''];
+  const sig = r.signal || t.signal;
   const head = `<div class="cards" style="margin-bottom:12px">` +
-    card('Qwen\'s verdict', [['lean', `<b class="${L[1]}">${esc(L[0])}</b>`], ['confidence', esc(a.confidence)], ['risk', a.risk === 'elevated' ? '<span style="color:var(--warn)">elevated (wider range)</span>' : 'normal'],
-      ['shift applied', `${a.parse_ok ? '' : '(unreadable reply: neutral) '}${(ad.k_sd >= 0 ? '+' : '') + ad.k_sd.toFixed(2)} sd`]]) +
-    card('AI-advised, 5 days', [['median', `${M.ccy}${px(ad.median)} (${pct(ad.exp_ret, 1)})`], ['80% range', `${px(ad.lo80)} – ${px(ad.hi80)}`], ['95% range', `${px(ad.lo95)} – ${px(ad.hi95)}`], ['P(up)', pup(ad.p_up)]]) +
-    card('Model only, 5 days', [['median', `${M.ccy}${px(mo.median)} (${pct(mo.exp_ret, 1)})`], ['80% range', `${px(mo.lo80)} – ${px(mo.hi80)}`], ['95% range', `${px(mo.lo95)} – ${px(mo.hi95)}`], ['P(up)', pup(mo.p_up)]]) +
+    `<div class="card"><h3>Research signal ${sigChip(sig)}</h3><div class="kv">` +
+      `<div>chance of a rise (5 days)</div><div>${pup(t.p_up)}</div>` +
+      (a.p_qwen != null ? `<div>Qwen alone said</div><div>${pup(a.p_qwen)} rise</div>` : '') +
+      `<div>model alone</div><div>${pup(V.model.p_up)}</div></div>` +
+      `<div class="dim" style="margin-top:6px;font-size:11.5px">Buy at ≥ 58%, sell at ≤ 42% (fixed in advance). A research indicator in a forward test, not advice.</div></div>` +
+    card('Qwen + models, 5 days', [['median', `${M.ccy}${px(t.median)} (${pct(t.exp_ret, 1)})`], ['most likely (50%)', t.lo50 != null ? `${px(t.lo50)} – ${px(t.hi50)}` : '—'],
+      ['80% range', `${px(t.lo80)} – ${px(t.hi80)}`], ['95% range', `${px(t.lo95)} – ${px(t.hi95)}`]]) +
+    card('Qwen\'s read', [['lean', `<b class="${L[1]}">${esc(L[0])}</b>`], ['confidence', esc(a.confidence)],
+      ['risk', a.risk === 'elevated' ? '<span style="color:var(--warn)">elevated (wider range)</span>' : 'normal'], ['reply', a.parse_ok ? 'ok' : 'unreadable (neutral)']]) +
     `</div>`;
+  const row = (k, label) => { const v = V[k]; if (!v) return '';
+    return `<tr><td style="text-align:left">${label}</td><td class="num">${pup(v.p_up)}</td><td class="num ${cls(v.median - r.close)}">${px(v.median)} <span class="dim">${pct(v.exp_ret, 1)}</span></td>` +
+      `<td class="num">${v.lo50 != null ? px(v.lo50) + ' – ' + px(v.hi50) : '—'}</td><td class="num dim">${px(v.lo80)} – ${px(v.hi80)}</td><td>${sigChip(v.signal)}</td></tr>`; };
+  const cmp = `<table style="margin-bottom:12px"><thead><tr><th style="text-align:left">View</th><th>P(up)</th><th>Median</th><th>50% range</th><th>80% range</th><th>Signal</th></tr></thead><tbody>` +
+    row('total', 'Qwen + models') + row('qwen', 'Qwen only') + row('model', 'Model only (v7)') + '</tbody></table>';
   const li = xs => xs.length ? xs.map(x => `<li>${esc(x)}</li>`).join('') : '<li class="dim">none given</li>';
   const reasons = `<div class="reasons"><div><b class="up">Positives</b><ul>${li(a.positives)}</ul></div><div><b class="down">Negatives</b><ul>${li(a.negatives)}</ul></div></div>`;
   const nw = r.news;
@@ -469,9 +498,10 @@ function aiBody(r, m) {
       : '<div class="dim" style="margin-top:10px">No headlines about this stock in the last 30 days.</div>')
     : '<div class="dim" style="margin-top:10px">No news available for this market: Qwen judged from the numbers only.</div>';
   const peers = r.peers && r.peers.length ? `<div class="muted" style="margin-top:10px">Same-industry peers it considered: ${r.peers.map(p => `<a href="#/${m}/stock/${encodeURIComponent(p.symbol)}">${esc(p.symbol)}</a> <span class="${cls(p.news_dir)}">${p.news_dir > 0 ? '+' : ''}${p.news_dir.toFixed(1)}</span>`).join(' · ')}</div>` : '';
-  return head + reasons + hl + peers +
-    `<div class="dim" style="margin-top:10px">${esc(a.model)} on ${esc(a.device)} · ${a.seconds}s · ${esc((r.generated || '').replace('T', ' '))}. The shift is a fixed rule written before any result; ` +
-    `both forecasts are logged and a forward test decides whether the AI-advised one is kept.</div>`;
+  return head + cmp + reasons + hl + peers +
+    `<div class="dim" style="margin-top:10px">${esc(a.model)} on ${esc(a.device)} · ${a.seconds}s · ${esc((r.generated || '').replace('T', ' '))}. ` +
+    `Qwen's chance of a rise is shrunk by a fixed weight (${t.w ?? '—'}) and added to the model's; the model sets the width of the range. ` +
+    `All three views are logged before the outcome, and a forward test decides which is kept.</div>`;
 }
 const EVX = {};
 async function evals(m) {                                       // cached AI evaluations for the latest close + forward-test score

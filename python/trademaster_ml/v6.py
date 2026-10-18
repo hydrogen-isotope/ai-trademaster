@@ -22,6 +22,7 @@ H = 5
 TRAIN_START, DEV_START, DEV_END, TEST_START = "2017-01-03", "2021-01-04", "2024-12-31", "2025-01-02"
 RIDGE_ALPHA = 10.0
 COST, BORROW = 0.0010, 0.01        # per side on traded weight; per year on the short side
+_NASDAQ_PERIODS, _NASDAQ_COST = (TRAIN_START, DEV_START, DEV_END, TEST_START), COST
 CANDIDATE = "R ridge"                # amendment C (before the final test): best development IC
 MARKET = "nasdaq"
 NAMES_FILE = os.path.join("private", "data", "us", "assets.json")
@@ -40,6 +41,14 @@ def use_market(market):
         NAMES_FILE = os.path.join("private", "data", "sgx", "assets.json")
         V7_OUT = os.path.join("private", "reports", "sgx", "v7")
         MODELS = os.path.join("private", "models", "sgx")
+    else:                                                    # back to the NASDAQ defaults (also after an SGX step)
+        GPU_DIR = os.path.join("private", "data", "us", "gpu")
+        OUT = os.path.join("private", "reports", "v6")
+        TRAIN_START, DEV_START, DEV_END, TEST_START = _NASDAQ_PERIODS
+        COST = _NASDAQ_COST
+        NAMES_FILE = os.path.join("private", "data", "us", "assets.json")
+        V7_OUT = os.path.join("private", "reports", "v7")
+        MODELS = os.path.join("private", "models", "v6")
     MLP_DIR = os.path.join(OUT, "mlp")
 BORROW_HARD = 0.10                 # amendment A: realistic borrow for the speculative short leg
 

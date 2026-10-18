@@ -12,22 +12,20 @@ from trademaster_ml.daily_v2 import GRID  # noqa: E402
 close = lambda a, b, tol=1e-9: math.isclose(a, b, rel_tol=tol, abs_tol=tol)
 
 
-def test_advise_mapping_follows_amendment_c():
-    m, sd = 0.01, 0.05
-    assert se.advise(m, sd, {"lean": "neutral", "confidence": "high", "risk": "normal"}) == (m, sd, 0.0)
-    m2, sd2, k = se.advise(m, sd, {"lean": "strong_up", "confidence": "high", "risk": "elevated"})
-    assert close(k, 0.375) and close(m2, m + 0.375 * sd) and close(sd2, sd * 1.25)
-    m2, _, k = se.advise(m, sd, {"lean": "down", "confidence": "low", "risk": "normal"})
-    assert close(k, -0.06) and m2 < m
+def test_combine_shrinks_qwen_onto_the_model_and_clips():
+    assert close(se.combine(0.53, 0.45, w=0.5), 0.505)
+    assert close(se.combine(0.53, 0.5, w=0.5), 0.53)
+    assert se.combine(0.9, 1.0, w=0.5) == 0.95 and se.combine(0.1, 0.0, w=0.5) == 0.05
+    assert [se.signal(p) for p in (0.58, 0.57, 0.43, 0.42)] == ["buy", "none", "none", "sell"]
 
 
-def test_p_up_moves_with_lean_but_stays_bounded():
+def test_centre_matches_the_target_probability_and_bands_nest():
     R = GRID.copy()
-    assert abs(se.dist(100.0, 0.0, 0.05, R)["p_up"] - 0.5) < 0.01
-    hi = se.dist(100.0, *se.advise(0.0, 0.05, {"lean": "strong_up", "confidence": "high", "risk": "normal"})[:2], R)
-    lo = se.dist(100.0, *se.advise(0.0, 0.05, {"lean": "strong_down", "confidence": "high", "risk": "normal"})[:2], R)
-    assert 0.6 < hi["p_up"] < 0.7 and 0.3 < lo["p_up"] < 0.4
-    assert lo["lo95"] < lo["lo80"] < lo["median"] < lo["hi80"] < lo["hi95"]
+    for p in (0.3, 0.5, 0.64):
+        m = se.m_for_p_up(p, 0.05, R)
+        assert abs(se.p_up(m, 0.05, R) - p) < 1e-6
+    d = se.dist(100.0, se.m_for_p_up(0.4, 0.05, R), 0.05, R)
+    assert d["lo95"] < d["lo80"] < d["lo50"] < d["median"] < d["hi50"] < d["hi80"] < d["hi95"] and d["median"] < 100
 
 
 def test_unparsable_or_off_schema_reply_is_neutral():

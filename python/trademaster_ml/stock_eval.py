@@ -1,12 +1,14 @@
 """
-v8 amendment C: a per-stock Qwen analysis that advises the 5-day forecast range (research only; no orders).
+v8 amendments C-E: a per-stock Qwen analysis that leads the 5-day forecast (research only; no orders).
 
 For one stock, Qwen (local, llama.cpp) reads the quantitative facts of stages 2-4 (price/momentum, fundamentals,
 industry and cross-stock rank), the v7 model-only forecast, the market news index, same-industry peers with the
-strongest recent news, and the stock's own headlines of the last 30 days. It answers in schema-enforced JSON: reasons
-first, then lean / confidence / risk. The lean shifts the v7 median by a fixed fraction of the stock's own 5-day sd, and
-elevated risk widens the range (fixed priors, docs/FORECAST-V8-STAGES-PROTOCOL.md amendment C). Every advised forecast
-is logged with its model-only twin before the outcome exists; `score` runs the forward test.
+strongest recent news, and the stock's own headlines of the last 30 days. It answers in schema-enforced JSON (reasons
+first, then lean / confidence / risk), then one more question: the chance (0-100) that the price is higher in 5 trading
+days. Its probability P_qwen is post-processed by our models (amendment E): P_total = P_model + W_QWEN * (P_qwen - 0.5), and the v7
+distribution is re-centred so that its calibrated P(up) equals P_total. Three views are kept: total, Qwen only, model
+only, plus a research signal (buy / sell / none). Every forecast is logged before the outcome exists; `score` runs the
+forward test.
 
   eval SYM [--market nasdaq|sgx] --allow-gpu|--cpu   evaluate one stock now and print the verdict
   serve --allow-gpu|--cpu [--app-url URL]            work through the queue while the app is open; the model is
@@ -33,10 +35,15 @@ REFRESH_STATUS = os.path.join("private", "reports", "v6", "refresh_status.json")
 PORT, SLOTS, CTX = 8766, 2, 6144
 MODEL_NAME = "Qwen2.5-7B-Instruct (Q4_K_M, local)"
 
-# amendment C priors (fixed before any result)
+# amendment C answer scale (its k values were replaced by amendment E; the lean is shown, not mapped)
 LEAN_K = {"strong_down": -0.30, "down": -0.12, "neutral": 0.0, "up": 0.12, "strong_up": 0.30}
 CONF_MULT = {"low": 0.5, "medium": 1.0, "high": 1.25}
 RISK_SD = {"normal": 1.0, "elevated": 1.25}
+# amendment E
+W_QWEN = 0.5                        # amendment E rule: 0.12 / p90|P_qwen - 0.5| over the hand check = 0.12 / 0.155 = 0.77, capped at 0.5
+BUY_AT, SELL_AT = 0.58, 0.42        # research signal thresholds on P_total
+P_CLIP = (0.05, 0.95)
+I25, I75 = (int(np.argmin(np.abs(v7.GRID - x))) for x in (0.25, 0.75))
 FALLBACK = {"lean": "neutral", "confidence": "low", "risk": "normal"}
 NEWS_DAYS, MAX_HEADLINES, MAX_PEERS = 30, 40, 5
 HISTORY_DAYS, IDLE_EXIT_S = 260, 300
@@ -234,29 +241,49 @@ def dist(close, m, sd, R):
     """Price quantiles and P(up) of the v7 Student-t with recalibration levels R."""
     q = v7.quantiles(np.array([m]), np.array([sd]), R)[0]
     px = lambda i: float(close * math.exp(q[i]))
-    return {"median": px(v7.I50), "lo80": px(v7.I10), "hi80": px(v7.I90), "lo95": px(v7.I025), "hi95": px(v7.I975),
-            "p_up": float(1 - v7.p_le(0.0, np.array([m]), np.array([sd]), R)[0]), "exp_ret": float(math.expm1(q[v7.I50]))}
+    return {"median": px(v7.I50), "lo50": px(I25), "hi50": px(I75), "lo80": px(v7.I10), "hi80": px(v7.I90), "lo95": px(v7.I025),
+            "hi95": px(v7.I975), "p_up": p_up(m, sd, R), "exp_ret": float(math.expm1(q[v7.I50]))}
 
 
-def advise(m, sd, verdict):
-    """Amendment C mapping: median + k * sd (k by lean x confidence); elevated risk widens sd by 25%."""
-    k = LEAN_K[verdict["lean"]] * CONF_MULT[verdict["confidence"]]
-    return m + k * sd, sd * RISK_SD[verdict["risk"]], k
+def p_up(m, sd, R):
+    return float(1 - v7.p_le(0.0, np.array([m]), np.array([sd]), R)[0])
+
+
+def m_for_p_up(p, sd, R):
+    """The centre m at which the calibrated P(up) equals p (P(up) increases with m; bisection)."""
+    lo, hi = -6 * sd, 6 * sd
+    for _ in range(60):
+        mid = (lo + hi) / 2
+        if p_up(mid, sd, R) < p:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+def combine(p_model, p_qwen, w=None):
+    """Amendment E: Qwen first, post-processed by our models."""
+    w = W_QWEN if w is None else w
+    return float(np.clip(p_model + w * (p_qwen - 0.5), *P_CLIP))
+
+
+def signal(p):
+    return "buy" if p >= BUY_AT else "sell" if p <= SELL_AT else "none"
 
 
 def cone(close, asof, m, sd, R, days=5):
     """Daily points from the close to the 5-day horizon for the chart. Only the day-5 values are the forecast; the
     days in between scale the centre by h/5 and the spread by sqrt(h/5) (illustrative)."""
     q = v7.quantiles(np.array([m]), np.array([sd]), R)[0]
-    pts, d = [{"date": asof, "median": close, "lo80": close, "hi80": close, "lo95": close, "hi95": close}], datetime.fromisoformat(asof)
+    pts, d = [{"date": asof, **{k: close for k in ("median", "lo50", "hi50", "lo80", "hi80", "lo95", "hi95")}}], datetime.fromisoformat(asof)
     for h in range(1, days + 1):
         d += timedelta(days=1)
         while d.weekday() >= 5:
             d += timedelta(days=1)
         a, b = h / days, math.sqrt(h / days)
         f = lambda i: float(close * math.exp(a * q[v7.I50] + b * (q[i] - q[v7.I50])))
-        pts.append({"date": d.strftime("%Y-%m-%d"), "median": f(v7.I50), "lo80": f(v7.I10), "hi80": f(v7.I90),
-                    "lo95": f(v7.I025), "hi95": f(v7.I975)})
+        pts.append({"date": d.strftime("%Y-%m-%d"), "median": f(v7.I50), "lo50": f(I25), "hi50": f(I75), "lo80": f(v7.I10),
+                    "hi80": f(v7.I90), "lo95": f(v7.I025), "hi95": f(v7.I975)})
     return pts
 
 
@@ -318,6 +345,41 @@ def parse_verdict(text):
     return {**FALLBACK, "positives": [], "negatives": []}, False
 
 
+def ask_probability(prompt, json_text, sym, slot=0):
+    """Amendment E: after its verdict, Qwen's own chance (0-100) that the price is higher in 5 trading days. Qwen writes
+    numbers digit by digit, so the first answer token is the tens digit: P_qwen is the expectation over that digit's
+    probabilities (digit d counts as 10d + 5; "1" may also start 100, which is rare). This is graded, unlike a one-word
+    rise/fall answer, which simply repeated the verdict with ~100% certainty in the hand check.
+    Returns (P_qwen, probability mass on digit tokens)."""
+    follow = (f"{prompt}{json_text}<|im_end|>\n<|im_start|>user\nGiven all of this, what is the chance (0 to 100) that {sym}'s "
+              "price is higher in 5 trading days than at the last close? Answer with a whole number only.<|im_end|>\n"
+              "<|im_start|>assistant\n")
+    body = {"prompt": follow, "n_predict": 1, "temperature": 0, "n_probs": 30, "cache_prompt": True, "id_slot": slot}
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}/completion", json.dumps(body).encode(), {"Content-Type": "application/json"})
+    r = json.load(urllib.request.urlopen(req, timeout=600))
+    pr = np.zeros(10)
+    for x in r["completion_probabilities"][0]["top_logprobs"]:
+        w = x["token"].strip()
+        if len(w) == 1 and w.isdigit():
+            pr[int(w)] += math.exp(x["logprob"])
+    mass = float(pr.sum())
+    return (float(np.dot(pr / mass, np.arange(10) * 10 + 5)) / 100 if mass > 0 else 0.5), mass
+
+
+def views(ctx, p_qwen, risk):
+    """The three logged views: total (Qwen post-processed by our models), Qwen only, model only."""
+    close, m, sd, R, asof = ctx["close"], ctx["m"], ctx["sd"], ctx["R"], ctx["asof"]
+    p_model = p_up(m, sd, R)
+    p_tot = combine(p_model, p_qwen)
+    sd_t = sd * RISK_SD[risk]
+    m_t = m_for_p_up(p_tot, sd_t, R)
+    m_q = m_for_p_up(float(np.clip(p_qwen, 0.02, 0.98)), sd, R)
+    mk = lambda mm, ss: {**dist(close, mm, ss, R), "cone": cone(close, asof, mm, ss, R), "m": mm, "sd": ss}
+    return {"total": {**mk(m_t, sd_t), "signal": signal(p_tot), "w": W_QWEN, "sd_mult": RISK_SD[risk]},
+            "qwen": {**mk(m_q, sd), "signal": signal(float(np.clip(p_qwen, *P_CLIP)))},
+            "model": {**mk(m, sd), "signal": signal(p_model)}}
+
+
 def generate(prompt, slot=0):
     body = {"prompt": prompt, "n_predict": 700, "temperature": 0, "cache_prompt": True, "id_slot": slot, "json_schema": SCHEMA}
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}/completion", json.dumps(body).encode(), {"Content-Type": "application/json"})
@@ -359,27 +421,31 @@ def evaluate(market, sym, device="GPU", log=print):
     prompt, user = build_prompt(ctx, news)
     text, timing = generate(prompt)
     verdict, ok = parse_verdict(text)
-    m2, sd2, k = advise(ctx["m"], ctx["sd"], verdict)
+    p_q, mass = ask_probability(prompt, text, sym)
+    vw = views(ctx, p_q, verdict["risk"])
     out = partial(ctx)
-    out.update({"status": "done", "generated": datetime.now().isoformat(timespec="seconds"),
-                "advised": {**dist(ctx["close"], m2, sd2, ctx["R"]), "cone": cone(ctx["close"], ctx["asof"], m2, sd2, ctx["R"]),
-                            "k_sd": k, "sd_mult": RISK_SD[verdict["risk"]]},
-                "ai": {**verdict, "parse_ok": ok, "model": MODEL_NAME, "device": device, "seconds": round(time.time() - t0, 1), **timing},
-                "news": news, "status_note": "Qwen-advised range: unproven (forward shadow test, v8 amendment C)"})
+    out.update({"status": "done", "version": 2, "generated": datetime.now().isoformat(timespec="seconds"),
+                "views": vw, "advised": vw["total"], "model": vw["model"], "signal": vw["total"]["signal"],
+                "ai": {**verdict, "parse_ok": ok, "p_qwen": p_q, "p_mass": round(mass, 3), "model": MODEL_NAME, "device": device,
+                       "seconds": round(time.time() - t0, 1), **timing},
+                "news": news, "status_note": "Qwen + models: unproven (forward shadow test, v8 amendment E)"})
+    m2, sd2 = vw["total"]["m"], vw["total"]["sd"]
     _dump(out, cache_path(market, sym, ctx["asof"]))
     try:
         os.remove(cache_path(market, sym, ctx["asof"], "partial.json"))
     except OSError:
         pass
-    _shadow(market, ctx, m2, sd2, verdict, ok)
+    _shadow(market, ctx, m2, sd2, verdict, ok, extra={"p_qwen": p_q, "p_total": vw["total"]["p_up"], "m_qwen": vw["qwen"]["m"],
+                                                       "signal": vw["total"]["signal"], "w": W_QWEN})
     _index_add(market, ctx["asof"], sym, out)
     log(f"[eval] {market} {sym} {ctx['asof']}: {verdict['lean']} / {verdict['confidence']} / {verdict['risk']}"
-        f"{'' if ok else ' (unparsable -> neutral)'}; P(up) {out['model']['p_up']:.0%} -> {out['advised']['p_up']:.0%}; "
+        f"{'' if ok else ' (unparsable -> neutral)'}; Qwen chance of rise {p_q:.0%} (digit mass {mass:.2f}); P(up) model {out['model']['p_up']:.0%} "
+        f"-> total {out['advised']['p_up']:.0%} [{out['signal']}]; "
         f"{len(news['headlines']) if news else 0} headlines; {time.time() - t0:.1f}s", flush=True)
     return out
 
 
-def _shadow(market, ctx, m2, sd2, verdict, ok):
+def _shadow(market, ctx, m2, sd2, verdict, ok, extra=None):
     path = os.path.join(EVALS, market, "advice_shadow.jsonl")
     key = f'"asof": "{ctx["asof"]}", "symbol": "{ctx["symbol"]}"'
     if os.path.exists(path) and key in open(path, encoding="utf-8").read():
@@ -387,14 +453,16 @@ def _shadow(market, ctx, m2, sd2, verdict, ok):
     with open(path, "a", encoding="utf-8") as f:
         f.write(json.dumps({"asof": ctx["asof"], "symbol": ctx["symbol"], "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                             "close": ctx["close"], "m": ctx["m"], "sd": ctx["sd"], "m_adv": m2, "sd_adv": sd2,
-                            "lean": verdict["lean"], "confidence": verdict["confidence"], "risk": verdict["risk"], "parse_ok": ok}) + "\n")
+                            "lean": verdict["lean"], "confidence": verdict["confidence"], "risk": verdict["risk"], "parse_ok": ok,
+                            **(extra or {})}) + "\n")
 
 
 def _index_add(market, asof, sym, out):
     path = os.path.join(EVALS, market, f"index_{asof}.json")
     idx = json.load(open(path)) if os.path.exists(path) else {}
     idx[sym] = {"p_up": out["advised"]["p_up"], "median": out["advised"]["median"], "lo80": out["advised"]["lo80"],
-                "hi80": out["advised"]["hi80"], "lean": out["ai"]["lean"], "confidence": out["ai"]["confidence"], "risk": out["ai"]["risk"]}
+                "hi80": out["advised"]["hi80"], "lean": out["ai"]["lean"], "confidence": out["ai"]["confidence"], "risk": out["ai"]["risk"],
+                "signal": out["signal"], "p_qwen": out["ai"]["p_qwen"], "p_model": out["model"]["p_up"]}
     _dump(idx, path)
 
 
@@ -633,13 +701,18 @@ def score(a):
         ok = np.isfinite(y)
         if not ok.any():
             continue
-        g = lambda key: np.array([r[key] for r in rows], float)[ok]
-        m, sd, ma, sa, y = g("m"), g("sd"), g("m_adv"), g("sd_adv"), y[ok]
+        g = lambda key: np.array([r.get(key, np.nan) for r in rows], float)[ok]
+        m, sd, ma, sa, mq, y = g("m"), g("sd"), g("m_adv"), g("sd_adv"), g("m_qwen"), y[ok]
+        sig = np.array([r.get("signal", "none") for r in rows])[ok]
         qa = v7.quantiles(ma, sa, R)
         hit = lambda mm: float(np.mean(np.sign(mm[(mm != 0) & (y != 0)]) == np.sign(y[(mm != 0) & (y != 0)]))) if ((mm != 0) & (y != 0)).any() else float("nan")
         days.append({"asof": asof, "n": int(ok.sum()), "crps_adv": float(v7.crps_rows(qa, y).mean()),
                      "crps_model": float(v7.crps_rows(v7.quantiles(m, sd, R), y).mean()), "hit_adv": hit(ma), "hit_model": hit(m),
-                     "cov80_adv": float(np.mean((y >= qa[:, v7.I10]) & (y <= qa[:, v7.I90])))})
+                     "cov80_adv": float(np.mean((y >= qa[:, v7.I10]) & (y <= qa[:, v7.I90]))),
+                     "crps_qwen": float(v7.crps_rows(v7.quantiles(mq, sd, R), y).mean()) if np.isfinite(mq).all() else None,
+                     "hit_qwen": hit(mq) if np.isfinite(mq).all() else None,
+                     "buy_n": int((sig == "buy").sum()), "buy_right": int(((sig == "buy") & (y > 0)).sum()),
+                     "sell_n": int((sig == "sell").sum()), "sell_right": int(((sig == "sell") & (y < 0)).sum())})
     n_rows = sum(x["n"] for x in days)
     out = {"market": market, "matured_dates": len(days), "matured_forecasts": n_rows, "needed_dates": 60, "needed_forecasts": 300,
            "logged": sum(len(v) for v in by_date.values()), "days": days, "status": "collecting"}
@@ -650,6 +723,12 @@ def score(a):
         for k in ("hit_adv", "hit_model", "cov80_adv"):
             v = np.array([x[k] for x in days])
             out[k] = float(np.nansum(v * w) / w[np.isfinite(v)].sum())
+    for k in ("buy", "sell"):
+        n, r = sum(x.get(f"{k}_n", 0) for x in days), sum(x.get(f"{k}_right", 0) for x in days)
+        if n:
+            ph, z = r / n, 1.96                                            # Wilson 95% interval
+            c, h = (ph + z * z / (2 * n)) / (1 + z * z / n), z * math.sqrt(ph * (1 - ph) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+            out[f"{k}_signals"] = {"n": n, "right": r, "rate": ph, "ci95": [c - h, c + h]}
     if len(days) >= 60 and n_rows >= 300:
         promoted = out["crps_adv_minus_model"][2] < 0 and out["hit_adv"] >= out["hit_model"] and 0.75 <= out["cov80_adv"] <= 0.85
         out["status"] = "promoted" if promoted else "not promoted: advice weights set to 0"
