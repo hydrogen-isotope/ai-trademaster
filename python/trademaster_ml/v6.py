@@ -22,6 +22,7 @@ H = 5
 TRAIN_START, DEV_START, DEV_END, TEST_START = "2017-01-03", "2021-01-04", "2024-12-31", "2025-01-02"
 RIDGE_ALPHA = 10.0
 COST, BORROW = 0.0010, 0.01        # per side on traded weight; per year on the short side
+CANDIDATE = "R ridge"                # amendment C (before the final test): best development IC
 BORROW_HARD = 0.10                 # amendment A: realistic borrow for the speculative short leg
 
 
@@ -389,12 +390,12 @@ def models(args):
         print(f"  (no {mfile}: M and E skipped; run trademaster gpu-mlp first)", flush=True)
     res = [evaluate(P, p, d0, d1, k) for k, p in preds.items()]
     out = {"period": [P.dates[d0], P.dates[d1]], "results": res, "minutes": (time.time() - t0) / 60}
-    if args.period == "test" and "E ensemble G+M" in preds:
-        e = next(x for x in res if x["model"].startswith("E"))
+    if args.period == "test":
+        e = next(x for x in res if x["model"].startswith(CANDIDATE))         # amendment C: candidate = R
         base = max(x["ic"] for x in res if x["model"][:2] in ("B1", "B2"))
-        out["adoption"] = {"ic_gt_0.02_t_gt_2": bool(e["ic"] > 0.02 and e["ic_t_nw"] > 2), "beats_best_baseline": bool(e["ic"] > base),
+        out["adoption"] = {"candidate": e["model"], "ic_gt_0.02_t_gt_2": bool(e["ic"] > 0.02 and e["ic_t_nw"] > 2), "beats_best_baseline": bool(e["ic"] > base),
                            "net_sharpe_gt_0.5": bool(e["ls_sharpe"] > 0.5)}
-        out["adoption"]["adopted"] = all(out["adoption"].values())
+        out["adoption"]["adopted"] = all(v for k, v in out["adoption"].items() if k != "candidate")
     os.makedirs(OUT, exist_ok=True)
     json.dump(out, open(path, "w"), indent=1)
     for x in res:

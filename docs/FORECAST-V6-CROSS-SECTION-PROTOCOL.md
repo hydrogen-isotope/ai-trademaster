@@ -116,6 +116,26 @@ Coverage limits, stated in advance:
 
 The final-test models are the ones fitted with this feature set.
 
+**C (2026-10-18, after the full-feature development run, before any final-test result).**
+
+Full-feature development results (2021-01-04 → 2024-12-31, 30 features):
+
+| model | IC | NW t | top > bottom | L/S Sharpe | at 10% borrow | long-only vs QQQ /yr |
+|---|---|---|---|---|---|---|
+| B1 momentum 12-1 | +0.029 | 3.0 | 59% | 1.09 | 0.81 | −16.3% |
+| B2 reversal 1w | +0.007 | 1.1 | 55% | 0.07 | −0.29 | −39.1% |
+| **R ridge** | **+0.067** | **8.3** | **66%** | **1.94** | **1.65** | **−6.3%** |
+| G LightGBM | +0.059 | 7.1 | 64% | 1.80 | 1.51 | −12.1% |
+| M MLP (GPU) | +0.064 | 6.7 | 60% | 1.31 | 1.05 | −13.5% |
+| E = G + M | +0.066 | 7.1 | 61% | 1.57 | 1.31 | −8.5% |
+
+Checks: the placebo IC is +0.0003, and with features one day older ridge's IC falls slightly, to 0.064.
+
+Ridge is best on every development metric. LightGBM *lost* IC when features were added (0.067 → 0.059), which is
+consistent with overfitting. Development exists for this choice, so the adoption candidate becomes **the model with the
+highest development IC, R (ridge)**, instead of E. The adoption rules are otherwise unchanged and are applied to R; all
+models are still reported on the final test.
+
 ## Development checkpoint (2026-10-18; price features only, EDGAR not yet available)
 
 **Setup:** panel of 2,713 days × 6,501 NASDAQ symbols, 2,580,894 universe stock-days; development
