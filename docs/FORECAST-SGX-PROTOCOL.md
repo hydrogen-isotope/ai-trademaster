@@ -99,6 +99,38 @@ problems. The fixes:
    It is used for betas, residual momentum, market volatility and the small drift term. **Labelled "STI proxy",
    not STI.**
 
+**B (2026-10-18, before any result of this strategy is produced). Forward-only test of SGX 12-1 momentum (long-only).**
+
+The ranker's final test hinted that plain 12-1 momentum, long-only, beat the STI proxy (+8.5%/yr, IR 0.47). That
+number was not the pre-registered candidate, so it is **not** evidence. Momentum is tested **forward only**, on months
+that have not happened yet:
+- **Formation:** at the close of the last SGX trading day of each month, starting **2026-10-30** (the first month-end
+  after this amendment).
+- **Universe:** stocks priced ≥ 0.20 whose 20-day average traded value is in the top 150 at formation, using data up
+  to the formation close only. Same panel and cleaning as amendment A.
+- **Signal:** 12-1 momentum, the log price change from 252 to 21 trading days before formation. It needs both closes
+  and at least 200 valid days in between.
+- **Portfolio:** the top 10% of the universe by the signal, at least 10 stocks, equal weight, held until the next
+  formation close. A stock that stops trading is valued at its last close.
+- **Costs:** 30 bps per side on the weight that changes at each rebalance (the first month counts as fully bought).
+- **Benchmark:** the STI proxy over the same holding period.
+- **Logging:** picks are written to `private/reports/sgx/momentum_shadow.jsonl` with the formation date and the time
+  they were written. The rule is deterministic and committed here, so a pick list depends only on data up to its
+  formation close.
+- **Measured monthly:** net return, benchmark return, excess = net − benchmark, and turnover.
+- **Promotion rule, after ≥ 12 matured months:** mean monthly excess > 0 with t > 2 (plain t over months), **and** a
+  cumulative excess > 0. Until 36 months:
+  - if, after 12 months, the mean excess is ≤ 0, the strategy is **dropped**;
+  - otherwise it stays "forward test" until the rule passes, or 36 months end without passing (then **dropped**).
+- **Stated in advance:**
+  - 12 months is too few to prove a modest edge. A t > 2 needs a large edge, so the likely outcome is still
+    "inconclusive" after 12 months.
+  - The data stays survivor-only, but forward months suffer no survivorship bias: stocks are picked from what is
+    listed at formation.
+- **Display:** the Rankings page (SGX view) shows the current provisional picks (as if the month ended at the latest
+  close) and the forward record, labelled **"forward test, unproven"**. Months formed before 2026-10-30 are never
+  counted.
+
 ## Results (survivor-only universe; STI proxy)
 
 ### Ranker, development 2016-01-04 → 2022-12-30 (704,906 universe stock-days)
