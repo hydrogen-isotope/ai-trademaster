@@ -183,6 +183,9 @@ def export():
         else:
             if "sic2" in fz.files:
                 np.ascontiguousarray(fz["sic2"].astype(np.float32)).tofile(os.path.join(out, "industry.f32"))
+            if "sic" in fz.files:                                  # protocol: investment trusts, blank checks
+                eligible[np.isin(fz["sic"].astype(int), [6726, 6770])] = 0
+                eligible.tofile(os.path.join(out, "eligible.f32"))
             for k in fz.files:
                 if fz[k].shape == (T, N):
                     np.ascontiguousarray(fz[k].astype(np.float32)).tofile(os.path.join(out, f"extra_{k}.f32"))

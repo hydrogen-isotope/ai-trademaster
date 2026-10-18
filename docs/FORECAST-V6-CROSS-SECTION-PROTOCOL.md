@@ -104,6 +104,18 @@ These are often hard to borrow, at far more than 1%/yr. The final test therefore
 
 The adoption rule is unchanged. A model that passes only because of the 1%/yr borrow assumption is described as such.
 
+**B (2026-10-18, before any final-test result).** The EDGAR fundamentals and industry codes are now available. As
+foreseen in the Data section, they are added **once**: the industry and fundamental features listed above, and the SIC
+6726/6770 exclusions. Development is then re-run for R, G, M and E with this full feature set, and those numbers are the
+ones used.
+
+Coverage limits, stated in advance:
+- EDGAR's ticker map only knows current tickers, so delisted or renamed companies mostly have no fundamentals.
+  Missing ranks are neutral (0.5).
+- TTM values need four consecutive quarters, so recent listings get them late.
+
+The final-test models are the ones fitted with this feature set.
+
 ## Development checkpoint (2026-10-18; price features only, EDGAR not yet available)
 
 **Setup:** panel of 2,713 days × 6,501 NASDAQ symbols, 2,580,894 universe stock-days; development
