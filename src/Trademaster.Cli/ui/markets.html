@@ -1,0 +1,467 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Trademaster Markets</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+:root{--bg:#0b0e11;--panel:#14181d;--panel2:#1b2027;--line:#262c34;--text:#e6e9ee;--muted:#8a93a0;--dim:#5d6672;--up:#16c784;--down:#f6465d;--accent:#3b82f6;--warn:#f0b90b;--mono:ui-monospace,SFMono-Regular,Consolas,monospace;color-scheme:dark}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font:13px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}.up{color:var(--up)}.down{color:var(--down)}.muted{color:var(--muted)}.dim{color:var(--dim)}
+a{color:#7cc4ff;text-decoration:none}a:hover{text-decoration:underline}
+header{height:52px;display:flex;align-items:center;gap:14px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:5}
+.brand{font-weight:600;font-size:15px;white-space:nowrap}
+.crumbs{color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}.crumbs a{color:var(--muted)}.crumbs b{color:var(--text);font-weight:600}
+.spacer{flex:1}
+.search{position:relative}.search input{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:6px 10px;font:inherit;width:260px}
+.sugg{position:absolute;top:36px;right:0;width:340px;background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden;display:none;z-index:9}
+.sugg div{padding:7px 10px;cursor:pointer;display:flex;gap:8px;align-items:center}.sugg div:hover,.sugg div.on{background:var(--panel2)}
+.chip{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;border:1px solid var(--line);background:var(--panel2);white-space:nowrap}
+.chip.real{color:#7cc4ff;border-color:#1d3f63;background:#0f2134}.chip.warn{color:var(--warn);border-color:#5a4a12;background:#2a2410}.chip.ok{color:var(--up);border-color:#164d36;background:#0f2a20}.chip.bad{color:var(--down);border-color:#5a1f29;background:#2c1217}
+.links a{color:var(--muted);margin-left:10px;white-space:nowrap}
+.layout{display:grid;grid-template-columns:230px 1fr;min-height:calc(100vh - 52px)}
+nav#tree{border-right:1px solid var(--line);background:var(--panel);padding:10px 0;position:sticky;top:52px;height:calc(100vh - 52px);overflow:auto}
+#tree .grp{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.6px;padding:12px 16px 4px}
+#tree a{display:flex;align-items:center;gap:8px;padding:6px 16px;color:var(--muted);border-left:2px solid transparent}
+#tree a:hover{background:var(--panel2);text-decoration:none;color:var(--text)}
+#tree a.on{color:var(--text);background:var(--panel2);border-left-color:var(--accent)}
+#tree a.l1{font-weight:600;color:var(--text)}#tree a.l2{padding-left:30px}#tree a.l3{padding-left:44px;font-size:12.5px}
+#tree .tag{margin-left:auto;font-size:10px}
+#navsel{display:none;margin:10px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:7px;font:inherit;width:calc(100% - 20px)}
+main{padding:16px;display:grid;gap:14px;align-content:start;max-width:1400px;width:100%}
+h1{font-size:18px;margin:0;font-weight:600}h1 .chip{vertical-align:middle;margin-left:8px}
+.lead{color:var(--muted);max-width:900px;line-height:1.55}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}.card h3{margin:0 0 8px;font-size:13px;font-weight:600}
+.kv{display:grid;grid-template-columns:1fr auto;gap:4px 10px}.kv div:nth-child(odd){color:var(--muted)}.kv div:nth-child(even){text-align:right;font-family:var(--mono)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;min-width:0}
+.ph{padding:9px 12px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.pad{padding:10px 12px}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}.two>*{min-width:0}
+.mcard{cursor:pointer}.mcard:hover{border-color:#34404d}
+.chart{height:260px}
+table{width:100%;border-collapse:collapse}th,td{padding:6px 10px;text-align:right;white-space:nowrap}
+th{color:var(--muted);font-weight:500;font-size:11px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+th.sort{cursor:pointer}th.sort:hover{color:var(--text)}th.sort.on{color:var(--text)}
+td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #1a1f25}
+tbody tr.click{cursor:pointer}tbody tr.click:hover{background:#171c22}
+td.name{text-align:left;color:var(--muted);max-width:190px;overflow:hidden;text-overflow:ellipsis}
+.scroll{max-height:calc(100vh - 250px);overflow:auto}
+.bar{display:inline-block;height:8px;border-radius:2px;background:var(--accent);vertical-align:middle}
+.why{display:flex;gap:4px;justify-content:flex-end;flex-wrap:wrap}.why span{font-size:10px;padding:0 5px;border-radius:3px;background:var(--panel2);color:var(--muted)}.why span.hi{color:var(--up)}.why span.lo{color:var(--down)}
+.tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tools input{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:5px 9px;font:inherit;width:200px}
+.seg button{background:var(--panel2);color:var(--muted);border:1px solid var(--line);padding:4px 10px;font:inherit;cursor:pointer;margin-right:-1px}
+.seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0}.seg button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.rng{position:relative;display:inline-block;width:130px;height:12px;vertical-align:middle}
+.rng .r95{position:absolute;top:5px;height:2px;background:#3a4452;border-radius:1px}
+.rng .r80{position:absolute;top:3px;height:6px;background:#2f5f9f;border-radius:2px}
+.rng .cur{position:absolute;top:0;width:2px;height:12px;background:var(--text)}
+.rng .med{position:absolute;top:1px;width:6px;height:10px;margin-left:-3px;border-radius:2px}
+.big .rng{width:100%;height:22px}.big .rng .r95{top:10px;height:3px}.big .rng .r80{top:6px;height:11px}.big .rng .cur{height:22px}.big .rng .med{height:18px;top:2px}
+.gauge{height:10px;border-radius:5px;background:linear-gradient(90deg,#5a1f29,#262c34 50%,#164d36);position:relative}
+.gauge i{position:absolute;top:-3px;width:4px;height:16px;background:var(--text);border-radius:2px;margin-left:-2px}
+.empty{color:var(--dim);padding:24px;text-align:center}
+@media (max-width:760px){.layout{grid-template-columns:1fr}nav#tree{display:none}#navsel{display:block}.two{grid-template-columns:1fr}
+  header{gap:8px;flex-wrap:wrap;height:auto;padding:8px 10px}.crumbs{order:3;width:100%}.search input{width:150px}.links{display:none}.sugg{width:280px}main{padding:10px}}
+*{scrollbar-width:thin;scrollbar-color:#2e333c transparent}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{background:#2e333c;border-radius:4px;border:2px solid transparent;background-clip:padding-box}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">AI Trademaster</span>
+  <span class="crumbs" id="crumbs"></span>
+  <div class="spacer"></div>
+  <span class="chip" id="upd" style="display:none"></span>
+  <span class="chip warn" title="Research only: no orders are ever placed">RESEARCH ONLY</span>
+  <div class="search"><input id="q" placeholder="Search a stock (e.g. NVDA, D05)" autocomplete="off"><div class="sugg" id="sugg"></div></div>
+  <span class="links"><a href="/">Watchlist</a><a href="/forward">AI signals</a><a href="/sim">Simulation</a></span>
+</header>
+<div class="layout">
+  <nav id="tree"></nav>
+  <div><select id="navsel" aria-label="Go to"></select><main id="view"><div class="empty">Loading…</div></main></div>
+</div>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const pct = (v, d = 1, sign = true) => v == null || !isFinite(v) ? '—' : (sign && v > 0 ? '+' : '') + (v * 100).toFixed(d) + '%';
+const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const px = v => v == null || !isFinite(v) ? '—' : v >= 100 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toFixed(3);
+const pup = p => p == null || !isFinite(p) ? '—' : `<span class="${p >= 0.52 ? 'up' : p <= 0.48 ? 'down' : ''}">${(p * 100).toFixed(0)}%</span>`;
+const WHY = { mom12_1: 'momentum', resid_mom12_1: 'own momentum', dist_252_high: 'near 52w high', vol60: 'volatility', max_ret21: 'lottery spikes',
+  earnings_yield: 'earnings yield', gross_profitability: 'profitability', sue: 'earnings surprise', ind_mom126: 'industry trend' };
+
+// ---------------------------------------------------------------- hierarchy
+const MARKETS = {
+  nasdaq: { region: 'United States', name: 'NASDAQ', bench: 'QQQ', ccy: '$', periods: ['dev 2021–24', 'test 2025–26'],
+    views: [['overview', 'Overview'], ['rankings', 'Rankings'], ['forecasts', 'Price forecasts'], ['news', 'News (AI read)'], ['record', 'Model record']] },
+  sgx: { region: 'Singapore', name: 'SGX', bench: 'STI proxy', ccy: 'S$', periods: ['dev 2016–22', 'test 2023–26'],
+    views: [['overview', 'Overview'], ['rankings', 'Rankings'], ['forecasts', 'Price forecasts'], ['momentum', 'Momentum test'], ['record', 'Model record']] },
+};
+const DATA = {}, LOADING = {};
+let MOM = null;
+async function data(m) {
+  if (DATA[m]) return DATA[m];
+  if (!LOADING[m]) LOADING[m] = fetch('/api/rankings' + (m === 'sgx' ? '?market=sgx' : '')).then(async r => {
+    if (!r.ok) throw new Error((await r.json()).error || r.status); return r.json(); }).then(d => (DATA[m] = d)).catch(e => (DATA[m] = { error: String(e.message || e) }));
+  return LOADING[m];
+}
+async function momentum() {
+  if (MOM) return MOM;
+  try { MOM = await (await fetch('/api/sgx/momentum')).json(); } catch (e) { MOM = { status: 'none' }; }
+  return MOM;
+}
+function statusChip(d) {
+  const a = d && d.status ? d.status.adopted : null;
+  return a === true ? '<span class="chip ok">ADOPTED</span>' : a === false ? '<span class="chip bad">NOT ADOPTED</span>' : '<span class="chip warn">TEST PENDING</span>';
+}
+function route() {
+  const p = (location.hash || '#/all').slice(2).split('/');
+  const m = MARKETS[p[0]] ? p[0] : null;
+  if (!m) return { m: null, v: 'all' };
+  if (p[1] === 'stock' && p[2]) return { m, v: 'stock', sym: decodeURIComponent(p[2]) };
+  return { m, v: MARKETS[m].views.some(x => x[0] === p[1]) ? p[1] : 'overview' };
+}
+function buildTree(r) {
+  let h = `<a href="#/all" class="l1 ${r.v === 'all' ? 'on' : ''}">All markets</a>`;
+  let opts = `<option value="#/all">All markets</option>`;
+  for (const [k, M] of Object.entries(MARKETS)) {
+    h += `<div class="grp">${M.region}</div><a href="#/${k}/overview" class="l2 ${r.m === k && r.v === 'overview' ? 'on' : ''}"><b>${M.name}</b>` +
+      `<span class="tag" id="tag-${k}"></span></a>`;
+    for (const [v, label] of M.views.slice(1)) {
+      h += `<a href="#/${k}/${v}" class="l3 ${r.m === k && r.v === v ? 'on' : ''}">${label}</a>`;
+    }
+    for (const [v, label] of M.views) opts += `<option value="#/${k}/${v}">${M.name} › ${label}</option>`;
+  }
+  $('tree').innerHTML = h;
+  $('navsel').innerHTML = opts + (r.v === 'stock' ? `<option value="${location.hash}">${MARKETS[r.m].name} › ${esc(r.sym)}</option>` : '');
+  $('navsel').value = location.hash || '#/all';
+  for (const k of Object.keys(MARKETS)) if (DATA[k] && !DATA[k].error) {
+    const a = DATA[k].status ? DATA[k].status.adopted : null;
+    const t = $('tag-' + k); if (t) t.innerHTML = a === true ? '<span class="up">●</span>' : a === false ? '<span class="down">●</span>' : '<span class="dim">●</span>';
+  }
+}
+function crumbs(r, last) {
+  const parts = [`<a href="#/all">Markets</a>`];
+  if (r.m) { const M = MARKETS[r.m]; parts.push(esc(M.region), `<a href="#/${r.m}/overview">${M.name}</a>`); }
+  if (last) parts.push(`<b>${esc(last)}</b>`);
+  $('crumbs').innerHTML = parts.join(' › ');
+}
+
+// ---------------------------------------------------------------- shared pieces
+function card(title, kv) {
+  return `<div class="card"><h3>${title}</h3><div class="kv">${kv.map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('')}</div></div>`;
+}
+function why(r) {
+  return Object.entries(r.why || {}).filter(([, v]) => isFinite(v)).sort((a, b) => Math.abs(b[1] - 0.5) - Math.abs(a[1] - 0.5)).slice(0, 3)
+    .map(([k, v]) => `<span class="${v > 0.5 ? 'hi' : 'lo'}" title="${esc(k)} rank ${(v * 100).toFixed(0)} of 100">${v > 0.5 ? '▲' : '▼'} ${esc(WHY[k] || k)}</span>`).join('');
+}
+function rangeBar(r) {
+  const f = r.fc; if (!f) return '<span class="dim">—</span>';
+  const lo = f.lo95, hi = f.hi95, w = hi - lo; if (!(w > 0)) return '';
+  const pos = v => Math.max(0, Math.min(100, (v - lo) / w * 100));
+  return `<span class="rng" title="95%: ${px(f.lo95)}–${px(f.hi95)} · 80%: ${px(f.lo80)}–${px(f.hi80)} · median ${px(f.median)} · now ${px(r.close)}">` +
+    `<span class="r95" style="left:0;width:100%"></span><span class="r80" style="left:${pos(f.lo80)}%;width:${pos(f.hi80) - pos(f.lo80)}%"></span>` +
+    `<span class="med" style="left:${pos(f.median)}%;background:${f.median >= r.close ? 'var(--up)' : 'var(--down)'}"></span>` +
+    `<span class="cur" style="left:${pos(r.close)}%"></span></span>`;
+}
+const go = (m, sym) => `location.hash='#/${m}/stock/${encodeURIComponent(sym)}'`;
+function shortRow(m, r) {
+  return `<tr class="click" onclick="${go(m, r.symbol)}"><td><b>${esc(r.symbol)}</b></td><td class="name">${esc(r.name)}</td><td class="num">${px(r.close)}</td>` +
+    `<td class="num">${r.score_pct.toFixed(0)}</td><td class="num">${r.fc ? px(r.fc.median) : '—'}</td><td>${rangeBar(r)}</td><td class="num">${pup(r.fc && r.fc.p_up)}` +
+    `${r.fc && r.fc.news && r.fc.news.n ? ` <span class="dim">→</span> ${pup(r.fc.news.p_up)}` : ''}</td><td><div class="why">${why(r)}</div></td></tr>`;
+}
+const SHORT_HEAD = '<tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>5-day median</th><th>95% / 80% range</th><th>P(up)</th><th>Why</th></tr>';
+function caveat(m, d) {
+  const out = [];
+  if (m === 'sgx') out.push('Built from Eulerpool data: only companies listed today (stocks that delisted in the past are missing, so past results look better than reality). Market = a home-made STI proxy, not the real STI.');
+  if (d.status && d.status.adopted === false) out.push('The stock ranking failed its pre-registered final test, so treat the order as information, not a signal.');
+  out.push('Price forecasts are in a forward test: ranges have been well calibrated; up/down is right only ~51–52% of the time on a typical stock.');
+  return `<div class="lead">${out.map(esc).join(' ')}</div>`;
+}
+
+// ---------------------------------------------------------------- views
+async function viewAll() {
+  crumbs({ m: null }, 'All markets');
+  const [n, s, mo] = await Promise.all([data('nasdaq'), data('sgx'), momentum()]);
+  const one = (k, d) => {
+    const M = MARKETS[k];
+    if (!d || d.error) return `<div class="card"><h3>${M.name}</h3><div class="dim">No data yet (${esc(d && d.error)})</div></div>`;
+    const withFc = d.rankings.filter(r => r.fc);
+    const byUp = withFc.slice().sort((a, b) => b.fc.p_up - a.fc.p_up);
+    const li = r => `<div class="click" style="display:flex;gap:8px;padding:2px 0;cursor:pointer;min-width:0" onclick="event.stopPropagation();${go(k, r.symbol)}"><b style="width:70px;flex:none">${esc(r.symbol)}</b>` +
+      `<span class="muted" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span><span style="flex:none">${pup(r.fc.p_up)}</span></div>`;
+    const nw = d.v7 && d.v7.news;
+    return `<div class="card mcard" onclick="location.hash='#/${k}/overview'"><h3>${M.region} · ${M.name} ${statusChip(d)}</h3>` +
+      `<div class="muted" style="margin-bottom:8px">close ${esc(d.asof)} · ${d.universe} stocks ranked · price forecasts: forward test</div>` +
+      (nw ? `<div style="margin:6px 0 10px"><div class="muted" style="margin-bottom:4px">Market news (AI read, last 5 sessions): <b class="${cls(nw.market_index)}">${nw.market_index >= 0 ? '+' : ''}${nw.market_index.toFixed(2)}</b></div>` +
+        `<div class="gauge"><i style="left:${(nw.market_index + 1) * 50}%"></i></div></div>` : '') +
+      (k === 'sgx' && mo && mo.status && mo.status !== 'none' ? `<div class="muted" style="margin-bottom:8px">Momentum test: <span class="chip warn">${esc(mo.status)}</span> ${mo.matured_months} of ${mo.needed_months} months scored</div>` : '') +
+      `<div class="two" style="gap:12px;grid-template-columns:1fr 1fr"><div><div class="muted">Highest chance up (5 days)</div>${byUp.slice(0, 5).map(li).join('')}</div>` +
+      `<div><div class="muted">Lowest chance up</div>${byUp.slice(-5).reverse().map(li).join('')}</div></div>` +
+      `<div style="margin-top:10px"><a href="#/${k}/overview">Open ${M.name} →</a></div></div>`;
+  };
+  return `<h1>All markets</h1><div class="lead">Pick an exchange to see its rankings, 5-day price forecasts and model record. Search any symbol at the top.</div>` +
+    `<div class="two">${one('nasdaq', n)}${one('sgx', s)}</div>`;
+}
+
+async function viewOverview(m) {
+  const d = await data(m), M = MARKETS[m];
+  crumbs({ m }, 'Overview');
+  if (d.error) return `<div class="empty">No ${M.name} data yet: ${esc(d.error)}</div>`;
+  const h = d.history, st = d.status || {}, cards = [];
+  if (h) cards.push(card('Out-of-sample record', [['correlation (IC)', h.ic.toFixed(3)], ['t-stat', h.ic_t_nw.toFixed(1)],
+    ['top 10% beat bottom 10%', pct(h.top_beats_bottom, 0, false) + ' of weeks'], ['long-only vs ' + M.bench, pct(h.longonly_vs_qqq_ann) + '/yr']]));
+  if (d.v7) { const sh = d.v7.shadow || {};
+    cards.push(card('Price forecasts (forward test)', [['scored so far', `${sh.matured_dates ?? 0} of 60 days`],
+      ['80% range held', sh.cov80 != null ? pct(sh.cov80, 1, false) : 'pending'], ['up/down right', sh.hit != null ? pct(sh.hit, 1, false) : 'pending']])); }
+  cards.push(card('Status', [['ranking', st.adopted === true ? 'adopted' : st.adopted === false ? 'not adopted' : 'pending'],
+    ['data as of', esc(d.asof)], ['universe', d.universe + ' stocks'], ['generated', esc((d.generated || '').replace('T', ' ').slice(0, 16))]]));
+  const tbl = (title, rows) => `<div class="panel"><div class="ph">${title}</div><div class="scroll" style="max-height:none"><table><thead>${SHORT_HEAD}</thead><tbody>` +
+    rows.map(r => shortRow(m, r)).join('') + '</tbody></table></div></div>';
+  return `<h1>${M.name} ${statusChip(d)}</h1>${caveat(m, d)}<div class="cards">${cards.join('')}</div>` +
+    `<div class="two">${tbl('Top-ranked · expected to beat peers', d.rankings.slice(0, 10))}${tbl('Bottom-ranked · expected to lag peers', d.rankings.slice(-10).reverse())}</div>` +
+    `<div class="tools"><a href="#/${m}/rankings">All ${d.universe} ranked stocks →</a><a href="#/${m}/forecasts">Price forecasts →</a><a href="#/${m}/record">How the model did →</a></div>`;
+}
+
+const UI = { rankings: { q: '', dec: 'all' }, forecasts: { q: '', sort: 'pup_desc' } };
+async function viewRankings(m) {
+  const d = await data(m), M = MARKETS[m];
+  crumbs({ m }, 'Rankings');
+  if (d.error) return `<div class="empty">${esc(d.error)}</div>`;
+  const s = UI.rankings;
+  const q = s.q.toLowerCase();
+  const rows = d.rankings.map((r, i) => [r, i]).filter(([r]) => (!q || r.symbol.toLowerCase().includes(q) || r.name.toLowerCase().includes(q)) &&
+    (s.dec === 'all' || (s.dec === 'top' && r.decile === 10) || (s.dec === 'bottom' && r.decile === 1)));
+  const seg = ['all', 'top', 'bottom'].map(k => `<button class="${s.dec === k ? 'on' : ''}" onclick="UI.rankings.dec='${k}';render()">${k === 'all' ? 'All' : k === 'top' ? 'Top 10%' : 'Bottom 10%'}</button>`).join('');
+  return `<h1>${M.name} rankings ${statusChip(d)}</h1>` +
+    `<div class="lead">Every stock is ranked against the others for the next 5 trading days. "Expected vs median" and "beat the median" come from how each score decile actually did out of sample.</div>` +
+    `<div class="panel"><div class="ph"><span>${rows.length} of ${d.rankings.length} stocks</span><div class="spacer"></div><span class="tools">` +
+    `<span class="seg">${seg}</span><input id="rq" placeholder="filter symbol or name" value="${esc(s.q)}" oninput="UI.rankings.q=this.value;rerenderKeep('rq')"></span></div>` +
+    `<div class="scroll"><table><thead><tr><th>#</th><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>Decile</th>` +
+    `<th>Exp. vs median 5d</th><th>Beat median</th><th>Why</th></tr></thead><tbody>` +
+    rows.slice(0, 500).map(([r, i]) => `<tr class="click" onclick="${go(m, r.symbol)}"><td class="num dim">${i + 1}</td><td><b>${esc(r.symbol)}</b></td>` +
+      `<td class="name">${esc(r.name)}</td><td class="num">${px(r.close)}</td><td class="num"><span class="bar" style="width:${Math.max(2, r.score_pct * 0.5)}px"></span> ${r.score_pct.toFixed(0)}</td>` +
+      `<td class="num">${r.decile}</td><td class="num ${cls(r.exp_rel_5d)}">${pct(r.exp_rel_5d, 2)}</td><td class="num">${pct(r.p_beat, 0, false)}</td>` +
+      `<td><div class="why">${why(r)}</div></td></tr>`).join('') + '</tbody></table></div></div>';
+}
+
+async function viewForecasts(m) {
+  const d = await data(m), M = MARKETS[m];
+  crumbs({ m }, 'Price forecasts');
+  if (d.error) return `<div class="empty">${esc(d.error)}</div>`;
+  const s = UI.forecasts, q = s.q.toLowerCase(), news = m === 'nasdaq';
+  const keys = { pup_desc: r => -r.fc.p_up, pup_asc: r => r.fc.p_up, move_desc: r => -r.fc.exp_ret, move_asc: r => r.fc.exp_ret,
+    width: r => -(r.fc.hi80 - r.fc.lo80) / r.close, sym: r => r.symbol };
+  const rows = d.rankings.filter(r => r.fc && (!q || r.symbol.toLowerCase().includes(q) || r.name.toLowerCase().includes(q)));
+  const k = keys[s.sort] || keys.pup_desc;
+  rows.sort((a, b) => { const x = k(a), y = k(b); return x < y ? -1 : x > y ? 1 : 0; });
+  const th = (key, label) => `<th class="sort ${s.sort.startsWith(key) ? 'on' : ''}" onclick="UI.forecasts.sort=UI.forecasts.sort==='${key}_desc'?'${key}_asc':'${key}_desc';render()">${label}${s.sort === key + '_desc' ? ' ▼' : s.sort === key + '_asc' ? ' ▲' : ''}</th>`;
+  return `<h1>${M.name} 5-day price forecasts <span class="chip warn">FORWARD TEST</span></h1>` +
+    `<div class="lead">Median price in 5 trading days, the 80% and 95% ranges (bar: thin = 95%, thick = 80%, white line = today's close, dot = median), and the chance the price is higher. ` +
+    `Ranges have been well calibrated in testing; up/down is right ~51–52% on a typical stock and 56–58% on the bottom-ranked ones.${news ? ' "With news" adds the local AI model\'s read of the last 5 sessions (unproven).' : ''}</div>` +
+    `<div class="panel"><div class="ph"><span>${rows.length} stocks</span><div class="spacer"></div><span class="tools"><input id="fq" placeholder="filter symbol or name" value="${esc(s.q)}" oninput="UI.forecasts.q=this.value;rerenderKeep('fq')"></span></div>` +
+    `<div class="scroll"><table><thead><tr>${th('sym', 'Symbol')}<th style="text-align:left">Company</th><th>Close</th>${th('move', '5-day median')}<th>Range</th>` +
+    `<th>80% range</th>${th('width', '80% width')}${th('pup', 'P(up)')}<th>P(beats ${M.bench})</th>${news ? '<th>News</th><th>P(up) with news</th>' : ''}</tr></thead><tbody>` +
+    rows.slice(0, 600).map(r => { const f = r.fc, n = f.news;
+      return `<tr class="click" onclick="${go(m, r.symbol)}"><td><b>${esc(r.symbol)}</b></td><td class="name">${esc(r.name)}</td><td class="num">${px(r.close)}</td>` +
+        `<td class="num ${cls(f.median - r.close)}">${px(f.median)} <span class="dim">${pct(f.exp_ret, 1)}</span></td><td>${rangeBar(r)}</td>` +
+        `<td class="num dim">${px(f.lo80)}–${px(f.hi80)}</td><td class="num dim">${pct((f.hi80 - f.lo80) / r.close, 0, false)}</td><td class="num">${pup(f.p_up)}</td><td class="num">${pup(f.p_beat_qqq)}</td>` +
+        (news ? (n && n.n ? `<td class="num ${cls(n.news_dir)}">${n.news_dir > 0 ? '+' : ''}${n.news_dir.toFixed(1)} <span class="dim">(${n.n})</span></td><td class="num">${pup(n.p_up)}</td>` : '<td class="num dim">—</td><td class="num dim">—</td>') : '') + '</tr>'; }).join('') +
+    '</tbody></table></div></div>';
+}
+
+async function viewNews(m) {
+  const d = await data(m);
+  crumbs({ m }, 'News (AI read)');
+  const nw = d.v7 && d.v7.news;
+  if (!nw) return '<h1>News</h1><div class="empty">No news read yet. The local AI model reads new headlines each time the app opens.</div>';
+  const S = nw.market_index, ai = nw.ai_anxiety;
+  const hl = rows => rows.map(h => `<tr><td class="num ${cls(h.mdir)}" style="width:52px">${h.mdir > 0 ? '+' : ''}${h.mdir.toFixed(2)}</td>` +
+    `<td class="dim" style="width:90px;text-align:left">${esc(h.t.slice(5, 16).replace('T', ' '))}</td><td style="text-align:left;white-space:normal">${esc(h.headline)}</td></tr>`).join('');
+  const withNews = d.rankings.filter(r => r.fc && r.fc.news && r.fc.news.n);
+  withNews.sort((a, b) => a.fc.news.news_dir - b.fc.news.news_dir);
+  const st = rows => rows.map(r => `<tr class="click" onclick="${go(m, r.symbol)}"><td><b>${esc(r.symbol)}</b></td><td class="name">${esc(r.name)}</td>` +
+    `<td class="num ${cls(r.fc.news.news_dir)}">${r.fc.news.news_dir > 0 ? '+' : ''}${r.fc.news.news_dir.toFixed(1)}</td><td class="num dim">${r.fc.news.n}</td>` +
+    `<td style="text-align:left;white-space:normal;max-width:360px" class="muted">${esc((r.fc.news.top[0] || {}).headline || '')}</td></tr>`).join('');
+  return `<h1>News read by the local AI model <span class="chip warn">UNPROVEN</span></h1>` +
+    `<div class="lead">Qwen reads each new headline once (good / neutral / bad, AI or market topic) and keeps only its verdict. Last 5 sessions: ${nw.market_n} market/AI headlines, ` +
+    `${esc(nw.window[0])} → ${esc((nw.window[1] || '').replace('T', ' ').slice(0, 16))} UTC. Whether this improves the forecasts is being measured over 60 trading days.</div>` +
+    `<div class="cards"><div class="card"><h3>Market news index</h3><div class="num ${cls(S)}" style="font-size:22px">${S >= 0 ? '+' : ''}${S.toFixed(2)}</div>` +
+    `<div class="gauge" style="margin:8px 0 4px"><i style="left:${(S + 1) * 50}%"></i></div><div class="dim">−1 all bad · 0 balanced · +1 all good</div></div>` +
+    (ai != null ? `<div class="card"><h3>AI anxiety</h3><div class="num ${cls(-ai)}" style="font-size:22px">${ai >= 0 ? '+' : ''}${ai.toFixed(2)}</div>` +
+      `<div class="gauge" style="margin:8px 0 4px;transform:scaleX(-1)"><i style="left:${(ai + 1) * 50}%"></i></div><div class="dim">positive = AI headlines read as bad news</div></div>` : '') +
+    `<div class="card"><h3>Effect on forecasts</h3><div class="muted">Market tilt ${(nw.weights.market_per_unit_S * S * 100).toFixed(2)}% over 5 days × each stock's beta, ` +
+    `plus up to ±${(nw.weights.stock_per_unit_news_dir * 200).toFixed(1)}% from a stock's own news. Fixed guesses until the forward test ends.</div></div></div>` +
+    `<div class="two"><div class="panel"><div class="ph">Most negative for the market</div><table><tbody>${hl(nw.most_negative || [])}</tbody></table></div>` +
+    `<div class="panel"><div class="ph">Most positive for the market</div><table><tbody>${hl(nw.most_positive || [])}</tbody></table></div></div>` +
+    `<div class="two"><div class="panel"><div class="ph">Stocks with the worst news</div><table><tbody>${st(withNews.slice(0, 12))}</tbody></table></div>` +
+    `<div class="panel"><div class="ph">Stocks with the best news</div><table><tbody>${st(withNews.slice(-12).reverse())}</tbody></table></div></div>`;
+}
+
+async function viewMomentum(m) {
+  crumbs({ m }, 'Momentum test');
+  const mo = await momentum();
+  if (!mo || mo.status === 'none') return '<h1>Momentum test</h1><div class="empty">Not set up yet.</div>';
+  const st = mo.status;
+  return `<h1>SGX momentum <span class="chip ${st === 'promoted' ? 'ok' : st === 'dropped' ? 'bad' : 'warn'}">${esc(st.toUpperCase())}</span></h1>` +
+    `<div class="lead">Pre-registered rule: each month-end, buy the top 10% of the ~150 most-traded SGX stocks by their price change from 12 months to 1 month ago, ` +
+    `equal weight, hold one month, 30 bps per side. Promoted only if, after 12+ months, the average excess over the STI proxy is positive with t &gt; 2. ` +
+    `Only months formed from ${esc(mo.first_formation)} count. ${mo.matured_months ? `So far: mean monthly excess ${pct(mo.mean_monthly_excess, 2)}${mo.t != null ? ` (t ${mo.t.toFixed(1)})` : ''}, cumulative ${pct(mo.cumulative_excess, 1)}.` : 'No month has been scored yet.'}</div>` +
+    `<div class="two"><div class="panel"><div class="ph">Provisional picks at the ${esc(mo.asof)} close (not counted · ${mo.provisional_universe} in universe)</div><table>` +
+    `<thead><tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>12-1 momentum</th></tr></thead><tbody>` +
+    (mo.provisional_picks || []).map(x => `<tr class="click" onclick="${go('sgx', x.symbol)}"><td><b>${esc(x.symbol)}</b></td><td class="name">${esc(x.name)}</td>` +
+      `<td class="num">${px(x.close)}</td><td class="num ${cls(x.mom12_1)}">${pct(x.mom12_1, 0)}</td></tr>`).join('') + '</tbody></table></div>' +
+    `<div class="panel"><div class="ph">Forward record · ${mo.matured_months} of ${mo.needed_months} months</div><table><thead><tr><th>Formed</th><th>Ended</th><th>Picks net</th><th>STI proxy</th><th>Excess</th><th>Turnover</th></tr></thead><tbody>` +
+    ((mo.months || []).map(x => `<tr><td class="num">${x.formation}</td><td class="num">${x.end}</td><td class="num ${cls(x.net)}">${pct(x.net, 1)}</td>` +
+      `<td class="num ${cls(x.benchmark)}">${pct(x.benchmark, 1)}</td><td class="num ${cls(x.excess)}">${pct(x.excess, 1)}</td><td class="num dim">${pct(x.turnover, 0, false)}</td></tr>`).join('') ||
+      `<tr><td colspan="6" class="dim">First month (formed ${esc(mo.first_formation)}) is scored at the end of the following month.</td></tr>`) + '</tbody></table></div></div>';
+}
+
+let charts = [];
+async function viewRecord(m) {
+  const d = await data(m), M = MARKETS[m];
+  crumbs({ m }, 'Model record');
+  if (d.error) return `<div class="empty">${esc(d.error)}</div>`;
+  const cal = (d.calibration || []).slice().reverse();
+  const mrows = [];
+  for (const [per, list] of [[M.periods[0], d.dev], [M.periods[1], d.test]])
+    for (const x of list || []) mrows.push(`<tr><td>${esc(x.model)}</td><td>${per}</td><td class="num">${x.ic.toFixed(3)}</td><td class="num">${x.ic_t_nw.toFixed(1)}</td>` +
+      `<td class="num">${pct(x.top_beats_bottom, 0, false)}</td><td class="num">${x.ls_sharpe.toFixed(2)}</td><td class="num">${(x.ls_sharpe_borrow10 ?? NaN).toFixed(2)}</td>` +
+      `<td class="num ${cls(x.longonly_vs_qqq_ann)}">${pct(x.longonly_vs_qqq_ann)}</td></tr>`);
+  setTimeout(() => drawRecord(d, M), 0);
+  return `<h1>${M.name} model record ${statusChip(d)}</h1><div class="lead">Everything here is out of sample: periods the model never trained on. Rules were written before any result (see the protocol documents).</div>` +
+    `<div class="two"><div class="panel"><div class="ph">Weekly portfolio, cumulative, net of costs <span class="dim" id="eqnote"></span></div><div class="chart" id="eq"></div></div>` +
+    `<div class="panel"><div class="ph">Rank correlation with what happened (60-day average)</div><div class="chart" id="icc"></div></div></div>` +
+    `<div class="panel"><div class="ph">How each score decile did out of sample</div><table><thead><tr><th>Decile</th><th>Avg 5-day return vs median</th><th>Beat the median</th><th>Observations</th><th style="text-align:left"></th></tr></thead><tbody>` +
+    cal.map(c => `<tr><td class="num">${c.decile}${c.decile === 10 ? ' (top)' : c.decile === 1 ? ' (bottom)' : ''}</td><td class="num ${cls(c.mean_rel_5d)}">${pct(c.mean_rel_5d, 2)}</td>` +
+      `<td class="num">${pct(c.p_beat_median, 1, false)}</td><td class="num dim">${c.n.toLocaleString()}</td><td style="text-align:left"><span class="bar" style="width:${Math.min(300, Math.abs(c.mean_rel_5d) * 6000)}px;background:${c.mean_rel_5d > 0 ? 'var(--up)' : 'var(--down)'}"></span></td></tr>`).join('') +
+    `</tbody></table></div><div class="panel"><div class="ph">Model comparison (pre-registered protocol)</div><div style="overflow:auto"><table><thead><tr><th>Model</th><th>Period</th><th>IC</th><th>t</th><th>Top beats bottom</th>` +
+    `<th>L/S Sharpe</th><th>L/S Sharpe, 10% borrow</th><th>Long-only vs ${M.bench} /yr</th></tr></thead><tbody>${mrows.join('') || '<tr><td colspan="8" class="dim">no results yet</td></tr>'}</tbody></table></div></div>`;
+}
+function drawRecord(d, M) {
+  const h = d.history; if (!h || !h.series || !window.LightweightCharts || !$('eq')) return;
+  const opts = { layout: { background: { color: '#14181d' }, textColor: '#8a93a0' }, grid: { vertLines: { color: '#1b2027' }, horzLines: { color: '#1b2027' } },
+    rightPriceScale: { borderColor: '#262c34' }, timeScale: { borderColor: '#262c34' }, autoSize: true };
+  const eq = LightweightCharts.createChart($('eq'), opts), ic = LightweightCharts.createChart($('icc'), opts);
+  charts.push(eq, ic);
+  const cum = (rows, k) => { let s = 0; return rows.map(r => ({ time: r[0], value: (s += r[k]) * 100 })); };
+  eq.addLineSeries({ color: '#3987e5', lineWidth: 2, title: 'L/S 1% borrow' }).setData(cum(h.series.weeks, 1));
+  eq.addLineSeries({ color: '#eda100', lineWidth: 1, title: 'L/S 10% borrow' }).setData(cum(h.series.weeks, 2));
+  eq.addLineSeries({ color: '#16c784', lineWidth: 1, title: 'long-only − ' + M.bench }).setData(cum(h.series.weeks, 3));
+  eq.timeScale().fitContent();
+  const s = h.series.ic, avg = [];
+  for (let i = 59; i < s.length; i++) { let m = 0; for (let k = i - 59; k <= i; k++) m += s[k][1]; avg.push({ time: s[i][0], value: m / 60 }); }
+  const l = ic.addLineSeries({ color: '#3987e5', lineWidth: 2 }); l.setData(avg);
+  l.createPriceLine({ price: 0, color: '#5d6672', lineWidth: 1, lineStyle: 2 }); ic.timeScale().fitContent();
+  $('eqnote').textContent = `${h.series.weeks[0][0]} → ${h.series.weeks.at(-1)[0]}`;
+}
+
+async function viewStock(m, sym) {
+  const d = await data(m), M = MARKETS[m];
+  crumbs({ m }, sym);
+  const r = !d.error && d.rankings.find(x => x.symbol === sym);
+  if (!r) return `<h1>${esc(sym)}</h1><div class="empty">${esc(sym)} is not in today's ${M.name} universe (the ~${d.universe || '?'} most-traded stocks).</div>`;
+  const f = r.fc, n = f && f.news, mo = m === 'sgx' ? await momentum() : null;
+  const inMom = mo && (mo.provisional_picks || []).some(x => x.symbol === sym);
+  const cards = [
+    card('Today', [['close', `${M.ccy}${px(r.close)}`], ['rank score', `${r.score_pct.toFixed(0)} of 100`], ['decile', `${r.decile} of 10`], ['ranking', d.status && d.status.adopted === false ? 'not adopted' : 'adopted']]),
+    card('vs other stocks (5 days)', [['expected vs median', pct(r.exp_rel_5d, 2)], ['chance to beat median', pct(r.p_beat, 0, false)], ['from', 'out-of-sample decile record']]),
+  ];
+  if (f) cards.push(card('Own price (5 days)', [['median', `${M.ccy}${px(f.median)} (${pct(f.exp_ret, 1)})`], ['80% range', `${px(f.lo80)} – ${px(f.hi80)}`],
+    ['95% range', `${px(f.lo95)} – ${px(f.hi95)}`], ['P(up)', pup(f.p_up) + (n && n.n ? ` <span class="dim">→ with news</span> ${pup(n.p_up)}` : '')]]));
+  const news = n && n.top && n.top.length ? `<div class="panel"><div class="ph">Its news, last 5 sessions (AI read · ${n.n} headlines · score ${n.news_dir > 0 ? '+' : ''}${n.news_dir.toFixed(1)})</div><table><tbody>` +
+    n.top.map(x => `<tr><td class="num ${cls(x.dir)}" style="width:60px">${x.dir > 0 ? '+' : ''}${x.dir.toFixed(2)}</td><td class="dim" style="width:90px;text-align:left">${esc((x.t || '').slice(5, 16).replace('T', ' '))}</td>` +
+      `<td style="text-align:left;white-space:normal">${esc(x.headline)}</td></tr>`).join('') + '</tbody></table></div>' : '';
+  const whyList = Object.entries(r.why || {}).filter(([, v]) => isFinite(v)).sort((a, b) => Math.abs(b[1] - 0.5) - Math.abs(a[1] - 0.5))
+    .map(([k, v]) => `<tr><td>${esc(WHY[k] || k)}</td><td class="num ${v > 0.5 ? 'up' : 'down'}">${(v * 100).toFixed(0)}</td><td style="text-align:left"><span class="bar" style="width:${v * 150}px;background:${v > 0.5 ? 'var(--up)' : 'var(--down)'}"></span></td></tr>`).join('');
+  return `<h1>${esc(sym)} <span class="muted" style="font-weight:400">${esc(r.name)}</span> <span class="chip">${M.name}</span>${inMom ? ' <span class="chip warn">IN MOMENTUM PICKS</span>' : ''}</h1>` +
+    `<div class="lead">Close ${esc(d.asof)}. Forecasts are for the next 5 trading days and are in a forward test.` +
+    (m === 'nasdaq' ? ` <a href="/?symbol=${encodeURIComponent(sym)}">Open chart in Watchlist →</a>` : '') + `</div>` +
+    (f ? `<div class="panel pad big"><div class="muted" style="margin-bottom:6px">5-day range: thin = 95%, thick = 80%, white line = today's close, dot = median</div>${rangeBar(r)}` +
+      `<div style="display:flex;justify-content:space-between" class="num dim"><span>${px(f.lo95)}</span><span>${px(f.hi95)}</span></div></div>` : '') +
+    `<div class="cards">${cards.join('')}</div>` +
+    `<div class="two"><div class="panel"><div class="ph">What drives its rank (percentile among peers)</div><table><tbody>${whyList || '<tr><td class="dim">—</td></tr>'}</tbody></table></div>${news || `<div class="panel"><div class="ph">News</div><div class="empty">${m === 'nasdaq' ? 'No headlines in the last 5 sessions.' : 'No SGX news source yet.'}</div></div>`}</div>`;
+}
+
+// ---------------------------------------------------------------- router + search + refresh status
+async function render() {
+  const r = route();
+  buildTree(r);
+  charts.forEach(c => { try { c.remove(); } catch (e) { } }); charts = [];
+  const scrollY = r.key === render.lastKey ? window.scrollY : 0;
+  let html;
+  try {
+    html = r.v === 'all' ? await viewAll() : r.v === 'overview' ? await viewOverview(r.m) : r.v === 'rankings' ? await viewRankings(r.m)
+      : r.v === 'forecasts' ? await viewForecasts(r.m) : r.v === 'news' ? await viewNews(r.m) : r.v === 'momentum' ? await viewMomentum(r.m)
+      : r.v === 'record' ? await viewRecord(r.m) : await viewStock(r.m, r.sym);
+  } catch (e) { html = `<div class="empty">Something went wrong: ${esc(e.message)}</div>`; }
+  $('view').innerHTML = html;
+  buildTree(r);
+  document.title = 'AI Trademaster · ' + ($('crumbs').textContent || 'Markets');
+  if (location.hash !== render.lastHash) window.scrollTo(0, 0);
+  render.lastHash = location.hash;
+}
+function rerenderKeep(id) {                                     // re-render a view while typing in its filter box
+  const pos = $(id) ? $(id).selectionStart : 0;
+  render().then(() => { const el = $(id); if (el) { el.focus(); el.setSelectionRange(pos, pos); } });
+}
+window.addEventListener('hashchange', render);
+$('navsel').addEventListener('change', e => { location.hash = e.target.value; });
+
+let suggIdx = 0, suggItems = [];
+async function suggest() {
+  const q = $('q').value.trim().toLowerCase(), box = $('sugg');
+  if (!q) { box.style.display = 'none'; return; }
+  await Promise.all([data('nasdaq'), data('sgx')]);
+  suggItems = [];
+  for (const k of Object.keys(MARKETS)) {
+    const d = DATA[k]; if (!d || d.error) continue;
+    for (const r of d.rankings) {
+      const s = r.symbol.toLowerCase(), base = s.replace(/\.si$/, '');
+      const score = s === q || base === q ? 0 : s.startsWith(q) || base.startsWith(q) ? 1 : r.name.toLowerCase().includes(q) ? 2 : 9;
+      if (score < 9) suggItems.push([score, k, r]);
+    }
+  }
+  suggItems.sort((a, b) => a[0] - b[0] || a[2].symbol.localeCompare(b[2].symbol));
+  suggItems = suggItems.slice(0, 8); suggIdx = 0;
+  box.innerHTML = suggItems.map(([, k, r], i) => `<div class="${i === 0 ? 'on' : ''}" onmousedown="pickSugg(${i})"><b style="width:70px">${esc(r.symbol)}</b>` +
+    `<span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span><span class="chip">${MARKETS[k].name}</span></div>`).join('') ||
+    '<div class="dim">No match in either exchange\'s ranked universe</div>';
+  box.style.display = 'block';
+}
+function pickSugg(i) { const it = suggItems[i]; if (!it) return; location.hash = `#/${it[1]}/stock/${encodeURIComponent(it[2].symbol)}`; $('q').value = ''; $('sugg').style.display = 'none'; $('q').blur(); }
+$('q').addEventListener('input', suggest);
+$('q').addEventListener('blur', () => setTimeout(() => ($('sugg').style.display = 'none'), 150));
+$('q').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { pickSugg(suggIdx); e.preventDefault(); }
+  else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    suggIdx = Math.max(0, Math.min(suggItems.length - 1, suggIdx + (e.key === 'ArrowDown' ? 1 : -1)));
+    [...$('sugg').children].forEach((c, i) => c.classList.toggle('on', i === suggIdx)); e.preventDefault();
+  } else if (e.key === 'Escape') { $('sugg').style.display = 'none'; }
+});
+
+let wasRunning = false;
+async function pollRefresh() {
+  try {
+    const s = await (await fetch('/api/rankings/status')).json(), el = $('upd');
+    if (s.state === 'running') { el.style.display = ''; el.className = 'chip warn'; el.textContent = 'UPDATING · ' + s.step; wasRunning = true; }
+    else if (s.state === 'error') { el.style.display = ''; el.className = 'chip bad'; el.textContent = 'UPDATE FAILED'; el.title = s.step; }
+    else if (s.state === 'done') {
+      el.style.display = ''; el.className = 'chip ok'; el.textContent = 'UP TO DATE'; el.title = s.step + ' at ' + s.time;
+      if (wasRunning) { wasRunning = false; for (const k in DATA) delete DATA[k]; for (const k in LOADING) delete LOADING[k]; MOM = null; render(); }
+    }
+  } catch (e) { }
+  setTimeout(pollRefresh, 10000);
+}
+if (!location.hash) history.replaceState(null, '', '#/all');
+render();
+Promise.all([data('nasdaq'), data('sgx')]).then(() => buildTree(route()));
+pollRefresh();
+</script>
+</body>
+</html>

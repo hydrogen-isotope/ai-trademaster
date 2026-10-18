@@ -168,7 +168,9 @@ public static class Dashboard
         app.MapGet("/api/state", () => Results.Text(store.Json, "application/json"));
 
         // v6 cross-stock NASDAQ rankings (research): written by python -m trademaster_ml.v6 rank
-        app.MapGet("/rankings", () => Results.File(Path.Combine(uiDir, "rankings.html"), "text/html; charset=utf-8"));
+        app.MapGet("/markets", () => Results.File(Path.Combine(uiDir, "markets.html"), "text/html; charset=utf-8"));
+        // the old single-page Rankings view now lives inside the Markets hub
+        app.MapGet("/rankings", (string? market) => Results.Redirect(market == "sgx" ? "/markets#/sgx/overview" : "/markets#/nasdaq/overview"));
         app.MapGet("/api/rankings", (string? market) =>
         {
             var path = market == "sgx"
