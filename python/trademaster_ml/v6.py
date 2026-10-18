@@ -4,10 +4,11 @@ v6 cross-stock NASDAQ ranker: walk-forward evaluation under docs/FORECAST-V6-CRO
 Inputs (from `universe_us export` + `trademaster gpu-features`): private/data/us/gpu/{meta.json, features.json,
 logclose.f32, market.f32, ranks.f32, mask.f32}.
 
-  dev    baselines B1 (momentum), B2 (reversal) and R (ridge) on development, placebo + timing checks, stop gate
-  test   (later, once) final test
+  dev         baselines B1 (momentum), B2 (reversal) and R (ridge) on development, placebo + timing checks, stop gate
+  models      all protocol models (B1, B2, R, G, M, E) on --period dev|test; the test runs once
+  mlp-export  inputs for the GPU MLP trainer (trademaster gpu-mlp)
 
-Usage: python -m trademaster_ml.v6 dev
+Usage: python -m trademaster_ml.v6 dev | models --period dev | mlp-export --period dev
 """
 import argparse, json, os, sys, time
 
@@ -248,11 +249,163 @@ def dev(args):
     print(f"wrote {OUT}/dev.json ({out['minutes']:.1f} min)", flush=True)
 
 
+# ---------------------------------------------------------------- nonlinear models (G, M) and ensemble (E)
+
+LGB_PARAMS = dict(objective="regression", learning_rate=0.2, max_depth=8, num_leaves=210, bagging_fraction=0.8789, bagging_freq=1,
+                  feature_fraction=0.8879, lambda_l1=205.6999, lambda_l2=580.9768, n_estimators=1000, verbose=-1)
+VAL_DAYS = 252
+MLP_DIR = os.path.join(OUT, "mlp")
+
+
+def expanding_z(x, minp=250):
+    """z-score of x[t] against x[..t] only (no look-ahead)."""
+    out = np.full(len(x), np.nan)
+    s = s2 = 0.0
+    c = 0
+    for t, v in enumerate(x):
+        if np.isfinite(v):
+            s += v
+            s2 += v * v
+            c += 1
+        if c >= minp and np.isfinite(v):
+            m = s / c
+            out[t] = (v - m) / np.sqrt(max(s2 / c - m * m, 1e-12))
+    return out
+
+
+def regime(P):
+    """Market-wide inputs given to the nonlinear models: QQQ 21-day return, QQQ 20-day vol, 10-year yield 21-day change."""
+    m = P.market
+    r1 = np.diff(m, prepend=np.nan)
+    ret21 = m - np.concatenate([np.full(21, np.nan), m[:-21]])
+    vol20 = np.array([np.nanstd(r1[max(0, t - 19):t + 1]) if t >= 20 else np.nan for t in range(P.T)])
+    y = json.load(open(os.path.join("private", "data", "daily_extra", "yields.json")))
+    ym = dict(zip(y["dates"], y["dgs10"]))
+    y10 = np.array([ym.get(d, np.nan) for d in P.dates], float)
+    for t in range(1, P.T):                                                # carry the last known yield
+        if not np.isfinite(y10[t]):
+            y10[t] = y10[t - 1]
+    d21 = y10 - np.concatenate([np.full(21, np.nan), y10[:-21]])
+    R = np.stack([expanding_z(ret21), expanding_z(vol20), expanding_z(d21)], 1)
+    return np.nan_to_num(R).astype(np.float32)
+
+
+def schedule(P, d0, d1):
+    """Per monthly refit: refit day, train rows [a, b), validation rows (the last 12 months) and prediction rows."""
+    t0 = P.idx(TRAIN_START)
+    refits = month_starts(P, d0, d1)
+    out = []
+    for k, r in enumerate(refits):
+        nxt = refits[k + 1] if k + 1 < len(refits) else d1 + 1
+        end = max(r - H, t0)                                               # labels end before the refit day
+        vstart = max(end - VAL_DAYS, t0)
+        out.append({"refit": int(r), "train": [int(P.day_start[t0]), int(P.day_start[max(vstart - H, t0)])],
+                    "val": [int(P.day_start[vstart]), int(P.day_start[end])], "pred": [int(P.day_start[r]), int(P.day_start[nxt])]})
+    return out
+
+
+def lgb_walk_forward(P, X, d0, d1, log=print):
+    import lightgbm as lgb
+    pred = np.full(len(P.t), np.nan)
+    for s in schedule(P, d0, d1):
+        tr, va = slice(*s["train"]), slice(*s["val"])
+        ok_tr, ok_va = np.isfinite(P.yrank[tr]), np.isfinite(P.yrank[va])
+        dtr = lgb.Dataset(X[tr][ok_tr], P.yrank[tr][ok_tr], free_raw_data=True)
+        dva = lgb.Dataset(X[va][ok_va], P.yrank[va][ok_va], reference=dtr)
+        params = {**LGB_PARAMS, "num_threads": max(1, (os.cpu_count() or 4) - 2), "seed": 0}
+        rounds = params.pop("n_estimators")
+        m = lgb.train(params, dtr, num_boost_round=rounds, valid_sets=[dva], callbacks=[lgb.early_stopping(50, verbose=False)])
+        pred[slice(*s["pred"])] = m.predict(X[slice(*s["pred"])], num_iteration=m.best_iteration)
+        if log:
+            log(f"    G refit {P.dates[s['refit']]}: {ok_tr.sum():,} train / {ok_va.sum():,} val rows, {m.best_iteration} trees", flush=True)
+    return pred
+
+
+def xs_rank_pred(P, pred):
+    def f(x):
+        ok = np.isfinite(x)
+        r = np.full(len(x), np.nan)
+        if ok.sum() >= 2:
+            r[ok] = np.argsort(np.argsort(x[ok])) / (ok.sum() - 1) - 0.5
+        return r
+    return P.per_day(pred, f)
+
+
+def period_bounds(P, period):
+    if period == "dev":
+        return P.idx(DEV_START), P.idx(DEV_END + "~") - 1
+    return P.idx(TEST_START), P.T - 1 - H
+
+
+def mlp_export(args):
+    """Inputs for the GPU MLP trainer (trademaster gpu-mlp): X [R, F] float32, y [R] float32, schedule_<period>.json."""
+    P = Panel()
+    d0, d1 = period_bounds(P, args.period)
+    X = np.hstack([P.X, regime(P)[P.t]]).astype(np.float32)
+    os.makedirs(MLP_DIR, exist_ok=True)
+    X.tofile(os.path.join(MLP_DIR, "X.f32"))
+    P.yrank.astype(np.float32).tofile(os.path.join(MLP_DIR, "y.f32"))
+    sch = schedule(P, d0, d1)
+    json.dump({"rows": int(X.shape[0]), "features": int(X.shape[1]), "period": args.period, "refits": sch},
+              open(os.path.join(MLP_DIR, f"schedule_{args.period}.json"), "w"))
+    print(f"exported {X.shape[0]:,} x {X.shape[1]} for the {args.period} MLP ({len(sch)} refits) to {MLP_DIR}", flush=True)
+
+
+def models(args):
+    """All protocol models on a period. The final test (--period test) runs once: it refuses if results exist."""
+    t0 = time.time()
+    path = os.path.join(OUT, f"{args.period}_models.json")
+    if args.period == "test" and os.path.exists(path):
+        raise SystemExit(f"{path} exists: the final test runs once (protocol)")
+    P = Panel()
+    d0, d1 = period_bounds(P, args.period)
+    print(f"{args.period}: {P.dates[d0]} .. {P.dates[d1]}, {len(P.t):,} universe stock-days", flush=True)
+    fi = {n: i for i, n in enumerate(P.names)}
+    X = np.hstack([P.X, regime(P)[P.t]]).astype(np.float32)
+    preds = {"B1 momentum 12-1": P.X[:, fi["mom12_1"]].astype(float), "B2 reversal 1w": -P.X[:, fi["mom5"]].astype(float)}
+    print("  R ridge", flush=True)
+    preds["R ridge"] = walk_forward(P, d0, d1, ridge(), log=None)
+    gfile = os.path.join(OUT, f"pred_G_{args.period}.npy")
+    if os.path.exists(gfile) and not args.refit:
+        preds["G LightGBM"] = np.load(gfile)
+    else:
+        print("  G LightGBM", flush=True)
+        preds["G LightGBM"] = lgb_walk_forward(P, X, d0, d1)
+        os.makedirs(OUT, exist_ok=True)
+        np.save(gfile, preds["G LightGBM"])
+    mfile = os.path.join(MLP_DIR, f"pred_M_{args.period}.f32")
+    if os.path.exists(mfile):
+        preds["M MLP (GPU)"] = np.fromfile(mfile, np.float32).astype(float)
+        preds["E ensemble G+M"] = xs_rank_pred(P, preds["G LightGBM"]) + xs_rank_pred(P, preds["M MLP (GPU)"])
+    else:
+        print(f"  (no {mfile}: M and E skipped; run trademaster gpu-mlp first)", flush=True)
+    res = [evaluate(P, p, d0, d1, k) for k, p in preds.items()]
+    out = {"period": [P.dates[d0], P.dates[d1]], "results": res, "minutes": (time.time() - t0) / 60}
+    if args.period == "test" and "E ensemble G+M" in preds:
+        e = next(x for x in res if x["model"].startswith("E"))
+        base = max(x["ic"] for x in res if x["model"][:2] in ("B1", "B2"))
+        out["adoption"] = {"ic_gt_0.02_t_gt_2": bool(e["ic"] > 0.02 and e["ic_t_nw"] > 2), "beats_best_baseline": bool(e["ic"] > base),
+                           "net_sharpe_gt_0.5": bool(e["ls_sharpe"] > 0.5)}
+        out["adoption"]["adopted"] = all(out["adoption"].values())
+    os.makedirs(OUT, exist_ok=True)
+    json.dump(out, open(path, "w"), indent=1)
+    for x in res:
+        print(f"  {x['model']:<20} IC {x['ic']:+.4f} (t {x['ic_t_nw']:+.1f})  L/S Sharpe {x['ls_sharpe']:+.2f} "
+              f"[10% borrow {x['ls_sharpe_borrow10']:+.2f}]  legs {x['long_leg_ann']:+.0%}/{x['short_leg_ann']:+.0%}  "
+              f"top>bottom {x['top_beats_bottom']:.0%}  long-only vs QQQ {x['longonly_vs_qqq_ann']:+.1%}/yr (IR {x['longonly_ir']:+.2f})",
+              flush=True)
+    if "adoption" in out:
+        print(f"adoption: {out['adoption']}", flush=True)
+    print(f"wrote {path} ({out['minutes']:.1f} min)", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["dev"])
+    ap.add_argument("cmd", choices=["dev", "models", "mlp-export"])
+    ap.add_argument("--period", choices=["dev", "test"], default="dev")
+    ap.add_argument("--refit", action="store_true", help="retrain G even if saved predictions exist")
     a = ap.parse_args()
-    {"dev": dev}[a.cmd](a)
+    {"dev": dev, "models": models, "mlp-export": mlp_export}[a.cmd](a)
 
 
 if __name__ == "__main__":

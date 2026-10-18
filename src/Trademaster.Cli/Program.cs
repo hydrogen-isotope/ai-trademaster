@@ -24,6 +24,7 @@ try
         "exec-study" => ExecStudy(opts),
         "verify-audit" => VerifyAudit(args.Skip(1).FirstOrDefault()),
         "gpu-features" => GpuFeaturesCmd(opts),
+        "gpu-mlp" => GpuMlpCmd(opts),
         _ => Help(),
     };
 }
@@ -53,6 +54,8 @@ static int Help()
                      [--n 30,300,1000] [--k 1,10,100,1000]   Inference latency (GPU needs --allow-gpu + safety gate)
           gpu-features --in private/data/us/gpu [--out same] [--top 1000] [--min-price 5] [--cpu] [--check]
                      [--allow-gpu] [--override-gpu-stability]  v6 feature panel + cross-stock ranks (HLSL on the GPU)
+          gpu-mlp  --period dev|test [--dir private/reports/v6/mlp] [--seeds 10] [--cpu]
+                     [--allow-gpu] [--override-gpu-stability]  v6 model M: walk-forward MLP ensemble trained in HLSL
         """);
     return 0;
 }
@@ -309,6 +312,55 @@ static int GpuFeaturesCmd(Dictionary<string, string> o)
         T, N, features = r.Names, top = inputs.TopK, min_price = inputs.MinPrice, device = r.Device, seconds = r.Seconds,
     }));
     Console.WriteLine($"wrote {outDir}");
+    return 0;
+}
+
+// Reads <dir>/X.f32 ([R, F]), y.f32 ([R]) and schedule_<period>.json (written by `python -m trademaster_ml.v6 mlp-export`),
+// trains the MLP ensemble at every monthly refit and writes pred_M_<period>.f32 ([R], NaN outside prediction rows).
+static int GpuMlpCmd(Dictionary<string, string> o)
+{
+    string dir = o.GetValueOrDefault("dir", Path.Combine("private", "reports", "v6", "mlp"));
+    string period = o.GetValueOrDefault("period", "dev");
+    using var sch = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, $"schedule_{period}.json")));
+    int R = sch.RootElement.GetProperty("rows").GetInt32(), F = sch.RootElement.GetProperty("features").GetInt32();
+    float[] Load(string name, long len)
+    {
+        var bytes = File.ReadAllBytes(Path.Combine(dir, name));
+        if (bytes.Length != len * 4) throw new InvalidDataException($"{name}: expected {len} float32 values");
+        var a = new float[len];
+        Buffer.BlockCopy(bytes, 0, a, 0, bytes.Length);
+        return a;
+    }
+    var x = Load("X.f32", (long)R * F);
+    var y = Load("y.f32", R);
+    var opt = new Trademaster.Gpu.GpuMlp.Options(Seeds: Int(o, "seeds", 10));
+    Trademaster.Gpu.GpuMlp.IBackend be;
+    if (o.ContainsKey("cpu")) be = new Trademaster.Gpu.GpuMlp.Cpu(x, y, F, opt);
+    else
+    {
+        GpuGate.Require(o.ContainsKey("allow-gpu"), o.ContainsKey("override-gpu-stability"), GpuHealth.Check());
+        be = new Trademaster.Gpu.GpuMlp.Gpu(x, y, F, opt, Int(o, "device", -1));
+    }
+    using (be)
+    {
+        var refits = sch.RootElement.GetProperty("refits").EnumerateArray().ToList();
+        Console.WriteLine($"MLP {F}->{opt.Hidden}->{opt.Hidden}->1, {opt.Seeds} seeds, batch {opt.Batch}, {refits.Count} refits on {be.Device}");
+        var pred = new float[R];
+        Array.Fill(pred, float.NaN);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        int k = 0;
+        foreach (var r in refits)
+        {
+            (int, int) Range(string name) => (r.GetProperty(name)[0].GetInt32(), r.GetProperty(name)[1].GetInt32());
+            var tr = Range("train"); var va = Range("val"); var pr = Range("pred");
+            Console.WriteLine($"  refit {++k}/{refits.Count} (day {r.GetProperty("refit").GetInt32()}), {sw.Elapsed.TotalMinutes:F1} min elapsed");
+            var p = Trademaster.Gpu.GpuMlp.FitPredict(be, y, F, tr, va, pr, opt, seedBase: 1000 * k, log: Console.Out);
+            Array.Copy(p, 0, pred, pr.Item1, p.Length);
+        }
+        using (var fs = File.Create(Path.Combine(dir, $"pred_M_{period}.f32")))
+            fs.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(pred.AsSpan()));
+        Console.WriteLine($"wrote {Path.Combine(dir, $"pred_M_{period}.f32")} ({sw.Elapsed.TotalMinutes:F1} min)");
+    }
     return 0;
 }
 

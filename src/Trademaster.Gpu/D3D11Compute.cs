@@ -197,12 +197,18 @@ public sealed unsafe class D3D11Compute : IDisposable
         ((delegate* unmanaged<nint, uint, uint, nint*, uint*, void>)V(_context)[CtxCSSetUavs])(_context, 0, (uint)uavs.Length, nulls, null);
     }
 
-    /// <summary>Overwrites a GPU buffer from CPU memory (same length).</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct Box { public uint Left, Top, Front, Right, Bottom, Back; }
+
+    /// <summary>Overwrites the first <c>src.Length</c> elements of a GPU buffer from CPU memory.</summary>
     public void Write<T>(GpuBuffer dst, ReadOnlySpan<T> src) where T : unmanaged
     {
-        if (sizeof(T) != 4 || src.Length != dst.Length) throw new ArgumentException("source must match the buffer length");
+        if (sizeof(T) != 4 || src.Length > dst.Length) throw new ArgumentException("source longer than the buffer");
+        if (src.Length == 0) return;
+        var box = new Box { Left = 0, Right = (uint)(src.Length * 4), Bottom = 1, Back = 1 };
         fixed (T* p = src)
-            ((delegate* unmanaged<nint, nint, uint, void*, void*, uint, uint, void>)V(_context)[CtxUpdateSubresource])(_context, dst.Buffer, 0, null, p, 0, 0);
+            ((delegate* unmanaged<nint, nint, uint, Box*, void*, uint, uint, void>)V(_context)[CtxUpdateSubresource])(
+                _context, dst.Buffer, 0, src.Length == dst.Length ? null : &box, p, 0, 0);
     }
 
     public void Flush() => ((delegate* unmanaged<nint, void>)V(_context)[CtxFlush])(_context);
