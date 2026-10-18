@@ -19,6 +19,7 @@ H = 5
 TRAIN_START, DEV_START, DEV_END, TEST_START = "2017-01-03", "2021-01-04", "2024-12-31", "2025-01-02"
 RIDGE_ALPHA = 10.0
 COST, BORROW = 0.0010, 0.01        # per side on traded weight; per year on the short side
+BORROW_HARD = 0.10                 # amendment A: realistic borrow for the speculative short leg
 
 
 class Panel:
@@ -122,7 +123,7 @@ def evaluate(P, pred, d0, d1, label):
             q = np.quantile(p[ok], [0.1, 0.9])
             spreads.append(y[ok][p[ok] >= q[1]].mean() - y[ok][p[ok] <= q[0]].mean())
     # weekly portfolio
-    ls, lo, hits, turns = [], [], [], []
+    ls, ls_hard, lo, hits, turns, legs_l, legs_s = [], [], [], [], [], [], []
     prev_l, prev_s = set(), set()
     for i in range(d0, d1 + 1 - H + 1, H):
         s, e = P.day_start[i], P.day_start[i + 1]
@@ -139,12 +140,15 @@ def evaluate(P, pred, d0, d1, label):
         turn_s = 1.0 if not prev_s else 1 - len(S & prev_s) / max(len(S), 1)
         cost = COST * 2 * (turn_l + turn_s)                                 # sell old + buy new, each side
         ls.append(rl - rs - cost - BORROW / 52)
+        ls_hard.append(rl - rs - cost - BORROW_HARD / 52)
+        legs_l.append(rl)
+        legs_s.append(rs)
         mret = np.expm1(P.market[min(i + H, P.T - 1)] - P.market[i])
         lo.append(rl - mret - COST * 2 * turn_l)
         hits.append(rl > rs)
         turns.append((turn_l + turn_s) / 2)
         prev_l, prev_s = L, S
-    ls, lo = np.array(ls), np.array(lo)
+    ls, lo, ls_hard = np.array(ls), np.array(lo), np.array(ls_hard)
     eq = np.cumsum(ls)
     res = {
         "model": label, "days": len(ics),
@@ -153,6 +157,9 @@ def evaluate(P, pred, d0, d1, label):
         "ls_net_ann": float(ls.mean() * 52), "ls_sharpe": float(ls.mean() / ls.std() * np.sqrt(52)) if ls.std() > 0 else float("nan"),
         "ls_maxdd": float((np.maximum.accumulate(eq) - eq).max()) if len(eq) else float("nan"),
         "weeks": len(ls), "top_beats_bottom": float(np.mean(hits)), "turnover": float(np.mean(turns)),
+        "ls_net_ann_borrow10": float(ls_hard.mean() * 52),
+        "ls_sharpe_borrow10": float(ls_hard.mean() / ls_hard.std() * np.sqrt(52)) if ls_hard.std() > 0 else float("nan"),
+        "long_leg_ann": float(np.mean(legs_l) * 52), "short_leg_ann": float(np.mean(legs_s) * 52),
         "longonly_vs_qqq_ann": float(lo.mean() * 52), "longonly_ir": float(lo.mean() / lo.std() * np.sqrt(52)) if lo.std() > 0 else float("nan"),
     }
     return res

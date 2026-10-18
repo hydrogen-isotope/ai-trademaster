@@ -94,7 +94,15 @@ The models:
 Any change to these rules after a v6 result is seen is written below as a dated amendment, with the reason.
 
 ## Amendments
-(none yet)
+
+**A (2026-10-18, after the development checkpoint, before G/M and before any final-test result).**
+The development diagnostics showed that most long-short return comes from shorting high-volatility small and mid caps.
+These are often hard to borrow, at far more than 1%/yr. The final test therefore **also reports**, for every model:
+- the long-short result with **10%/yr borrow** on the short side;
+- the **long-only** top decile vs QQQ (already in the metrics), shown as the conservative headline;
+- the long-short result split into its long and short legs.
+
+The adoption rule is unchanged. A model that passes only because of the 1%/yr borrow assumption is described as such.
 
 ## Development checkpoint (2026-10-18; price features only, EDGAR not yet available)
 
