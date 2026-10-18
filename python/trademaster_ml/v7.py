@@ -27,6 +27,7 @@ TSCALE = math.sqrt((NU - 2) / NU)                 # unit-variance Student-t
 SHRINKS = (0.5, 0.75, 1.0)
 CAL_DAYS = 250
 DRIFT_SHRINK = 0.5
+NEWS_MKT_W, NEWS_STOCK_W = 0.010, 0.0025     # v8 amendment B priors: 5-day log return per unit of market index S / news_dir
 I10, I50, I90 = (int(np.argmin(np.abs(GRID - x))) for x in (0.10, 0.50, 0.90))
 I025, I975 = (int(np.argmin(np.abs(GRID - x))) for x in (0.025, 0.975))
 
@@ -339,6 +340,31 @@ def forecast(args):
                      "p_up": float(pup[k]), "p_beat_qqq": float(pbeat[k]), "exp_ret": float(math.expm1(q[k, I50]))}
     os.makedirs(OUT, exist_ok=True)
     out = {"asof": P.dates[last], "model": name, "status": "shadow", "horizon_days": H, "rows": rows}
+    # v8 amendment B: news-adjusted variant from the rolling LLM news (fixed prior weights; forward shadow test only)
+    news_path = os.path.join("private", "data", "news", "news_today.json")
+    news = json.load(open(news_path)) if os.path.exists(news_path) else None
+    if news and news.get("asof") == P.dates[last]:
+        S = news["market"]["S"]
+        syms = [P.symbols[P.n[E.a + i]] for i in idx]
+        nd = np.array([news["stocks"].get(sy, {}).get("news_dir", 0.0) for sy in syms])
+        m_news = m + E.beta[idx] * NEWS_MKT_W * S + NEWS_STOCK_W * nd
+        qn = quantiles(m_news, sd, R)
+        pup_n = 1 - p_le(0.0, m_news, sd, R)
+        for k, sy in enumerate(syms):
+            st = news["stocks"].get(sy)
+            rows[sy]["news"] = {"median": float(close[k] * math.exp(qn[k, I50])), "lo80": float(close[k] * math.exp(qn[k, I10])),
+                                "hi80": float(close[k] * math.exp(qn[k, I90])), "p_up": float(pup_n[k]), "news_dir": float(nd[k]),
+                                "n": st["n"] if st else 0, "top": st["top"][:2] if st else []}
+        out["news"] = {"status": "unproven (forward shadow test)", "market_index": S, "market_n": news["market"]["n"],
+                       "ai_anxiety": news["market"]["ai_anxiety"], "window": news["window"],
+                       "most_negative": news["market"]["most_negative"], "most_positive": news["market"]["most_positive"],
+                       "weights": {"market_per_unit_S": NEWS_MKT_W, "stock_per_unit_news_dir": NEWS_STOCK_W}}
+        nlog = os.path.join(OUT, "shadow_news.jsonl")
+        ndone = {json.loads(l)["asof"] for l in open(nlog)} if os.path.exists(nlog) else set()
+        if P.dates[last] not in ndone:
+            with open(nlog, "a") as f:
+                f.write(json.dumps({"asof": P.dates[last], "news_generated": news["generated"], "S": S, "R_v7": R.tolist(),
+                                    "rows": [[sy, float(m_news[k]), float(m[k]), float(sd[k])] for k, sy in enumerate(syms)]}) + "\n")
     json.dump(out, open(os.path.join(OUT, "forecast.json"), "w"))
     # forward shadow log: written before the outcome exists, once per date
     log = os.path.join(OUT, "shadow.jsonl")
@@ -391,7 +417,37 @@ def score(args):
     if len(per_day) >= 60:
         d, lo, hi = out["crps_v7_minus_rw"]
         out["promoted"] = bool(hi < 0 and 0.75 <= out["cov80"] <= 0.85)
+    # news-adjusted variant vs v7 (v8 amendment B)
+    nlog = os.path.join(OUT, "shadow_news.jsonl")
+    nd_days = []
+    if os.path.exists(nlog):
+        for line in open(nlog):
+            rec = json.loads(line)
+            t = di.get(rec["asof"])
+            if t is None or t + H > P.T - 1:
+                continue
+            R7 = np.array(rec["R_v7"])
+            sym, mn, m7, sd = zip(*rec["rows"])
+            j = np.array([si.get(s, -1) for s in sym])
+            y = np.full(len(j), np.nan)
+            for k in range(1, H + 1):
+                v = P.lc[t + k, np.maximum(j, 0)]
+                y = np.where(np.isfinite(v) & (j >= 0), v - P.lc[t, np.maximum(j, 0)], y)
+            ok = np.isfinite(y)
+            mn, m7, sd, y = np.array(mn)[ok], np.array(m7)[ok], np.array(sd)[ok], y[ok]
+            hit = lambda m: float(np.mean(np.sign(m[(m != 0) & (y != 0)]) == np.sign(y[(m != 0) & (y != 0)])))
+            nd_days.append({"asof": rec["asof"], "crps_news": float(crps_rows(quantiles(mn, sd, R7), y).mean()),
+                            "crps_v7": float(crps_rows(quantiles(m7, sd, R7), y).mean()), "hit_news": hit(mn), "hit_v7": hit(m7)})
+    out["news"] = {"matured_dates": len(nd_days), "needed": 60, "days": nd_days}
+    if len(nd_days) >= 5:
+        from .daily_v4 import block_bootstrap_diff
+        out["news"]["crps_news_minus_v7"] = block_bootstrap_diff([d["crps_news"] for d in nd_days], [d["crps_v7"] for d in nd_days])
+        out["news"]["hit_news"] = float(np.mean([d["hit_news"] for d in nd_days]))
+        out["news"]["hit_v7"] = float(np.mean([d["hit_v7"] for d in nd_days]))
+    if len(nd_days) >= 60:
+        out["news"]["promoted"] = bool(out["news"]["crps_news_minus_v7"][2] < 0 and out["news"]["hit_news"] >= out["news"]["hit_v7"])
     json.dump(out, open(os.path.join(OUT, "shadow_score.json"), "w"), indent=1)
+    print(f"news-adjusted shadow test: {len(nd_days)} of 60 forecast dates matured", flush=True)
     print(f"shadow test: {len(per_day)} of 60 forecast dates matured" +
           (f"; CRPS v7 - RW {out['crps_v7_minus_rw'][0]:+.2e}, 80% coverage {out['cov80']:.1%}, hit {out['hit']:.1%}" if len(per_day) >= 5 else ""),
           flush=True)

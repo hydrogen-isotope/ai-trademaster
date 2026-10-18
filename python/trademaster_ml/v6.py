@@ -504,9 +504,12 @@ def rank(args):
             for r in table:
                 r["fc"] = f["rows"].get(r["symbol"])
             sp = os.path.join("private", "reports", "v7", "shadow_score.json")
-            v7 = {"model": f["model"], "status": f["status"], "shadow": json.load(open(sp)) if os.path.exists(sp) else None}
+            v7 = {"model": f["model"], "status": f["status"], "shadow": json.load(open(sp)) if os.path.exists(sp) else None,
+                  "news": f.get("news")}
             if v7["shadow"]:
                 v7["shadow"].pop("days", None)
+                if isinstance(v7["shadow"].get("news"), dict):
+                    v7["shadow"]["news"].pop("days", None)
     status = {"adopted": None, "note": "final test not run yet"}
     tp = os.path.join(OUT, "test_models.json")
     if os.path.exists(tp):

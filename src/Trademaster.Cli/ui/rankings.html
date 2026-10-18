@@ -58,13 +58,18 @@ td.name{text-align:left;color:var(--muted);max-width:150px;overflow:hidden;text-
     <div class="panel"><div class="ph">Top-ranked (expected to beat peers)</div><div class="scroll" style="max-height:420px"><table><thead><tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th title="v7 shadow forecast: median price in 5 trading days and the 80% range">5-day price (80% range)</th><th title="v7 shadow forecast: chance the price is higher in 5 trading days">P(up)</th><th>Why</th></tr></thead><tbody id="top"></tbody></table></div></div>
     <div class="panel"><div class="ph">Bottom-ranked (expected to lag peers)</div><div class="scroll" style="max-height:420px"><table><thead><tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th title="v7 shadow forecast: median price in 5 trading days and the 80% range">5-day price (80% range)</th><th title="v7 shadow forecast: chance the price is higher in 5 trading days">P(up)</th><th>Why</th></tr></thead><tbody id="bot"></tbody></table></div></div>
   </div>
+  <div class="panel" id="newsp" style="display:none"><div class="ph">News read by the local AI model (Qwen) · last 5 sessions
+    <span class="chip warn">UNPROVEN · FORWARD TEST</span><span class="dim" id="newsmeta"></span></div>
+    <div class="note" style="padding:8px 12px 0" id="newsnote"></div>
+    <div class="two" style="padding:8px 12px 12px;gap:12px"><div><div class="muted" style="margin-bottom:4px">Most negative for the market</div><table><tbody id="nneg"></tbody></table></div>
+      <div><div class="muted" style="margin-bottom:4px">Most positive for the market</div><table><tbody id="npos"></tbody></table></div></div></div>
   <div class="two">
     <div class="panel"><div class="ph">Out-of-sample weekly portfolio, cumulative (net of costs) <span class="dim" id="eqnote"></span></div><div class="chart" id="eq"></div></div>
     <div class="panel"><div class="ph">Rank correlation with what happened (60-day average) <span class="dim" id="icnote"></span></div><div class="chart" id="ic"></div></div>
   </div>
   <div class="panel"><div class="ph">How each score decile did out of sample</div><table><thead><tr><th>Decile</th><th>Avg 5-day return vs median</th><th>Beat the median</th><th>Observations</th><th style="text-align:left"></th></tr></thead><tbody id="cal"></tbody></table></div>
   <div class="panel"><div class="ph">All ranked stocks <div class="spacer"></div><input id="q" placeholder="filter symbol or name"></div>
-    <div class="scroll"><table><thead><tr><th>#</th><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>Decile</th><th>Exp. vs median 5d</th><th>Beat median</th><th>5-day price</th><th>80% range</th><th>95% range</th><th>P(up)</th><th>P(beats QQQ)</th></tr></thead><tbody id="all"></tbody></table></div></div>
+    <div class="scroll"><table><thead><tr><th>#</th><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>Decile</th><th>Exp. vs median 5d</th><th>Beat median</th><th>5-day price</th><th>80% range</th><th>95% range</th><th>P(up)</th><th>P(beats QQQ)</th><th title="Local AI model's read of this stock's headlines over the last 5 sessions (-2 bad … +2 good)">News</th><th title="Forecast adjusted by the news (unproven, in forward test)">P(up) with news</th></tr></thead><tbody id="all"></tbody></table></div></div>
   <div class="panel"><div class="ph">Model comparison (pre-registered protocol)</div><div class="scroll" style="max-height:none"><table><thead><tr><th>Model</th><th>Period</th><th>IC</th><th>t</th><th>Top beats bottom</th><th>L/S Sharpe</th><th>L/S Sharpe, 10% borrow</th><th>Long-only vs QQQ /yr</th></tr></thead><tbody id="models"></tbody></table></div></div>
 </main>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -98,13 +103,18 @@ const pup = p => p == null ? '—' : `<span class="${p >= 0.52 ? 'up' : p <= 0.4
 function fcShort(r) {
   const f = r.fc;
   if (!f) return '<td class="num dim">—</td><td class="num dim">—</td>';
-  return `<td class="num"><span class="${cls(f.median - r.close)}">${px(f.median)}</span> <span class="dim">(${px(f.lo80)}–${px(f.hi80)})</span></td><td class="num">${pup(f.p_up)}</td>`;
+  const n = f.news;
+  const withNews = n && n.n ? ` <span class="dim">→</span> ${pup(n.p_up)}` : '';
+  const tip = n && n.top && n.top.length ? ` title="${esc(n.top.map(x => (x.dir > 0 ? '+ ' : x.dir < 0 ? '- ' : '· ') + x.headline).join('\n'))}"` : '';
+  return `<td class="num"><span class="${cls(f.median - r.close)}">${px(f.median)}</span> <span class="dim">(${px(f.lo80)}–${px(f.hi80)})</span></td><td class="num"${tip}>${pup(f.p_up)}${withNews}</td>`;
 }
 function fcFull(r) {
   const f = r.fc;
-  if (!f) return '<td class="num dim" colspan="5">—</td>';
+  if (!f) return '<td class="num dim" colspan="7">—</td>';
   return `<td class="num ${cls(f.median - r.close)}">${px(f.median)}</td><td class="num dim">${px(f.lo80)}–${px(f.hi80)}</td>` +
-    `<td class="num dim">${px(f.lo95)}–${px(f.hi95)}</td><td class="num">${pup(f.p_up)}</td><td class="num">${pup(f.p_beat_qqq)}</td>`;
+    `<td class="num dim">${px(f.lo95)}–${px(f.hi95)}</td><td class="num">${pup(f.p_up)}</td><td class="num">${pup(f.p_beat_qqq)}</td>` +
+    (f.news && f.news.n ? `<td class="num ${cls(f.news.news_dir)}" title="${esc((f.news.top || []).map(x => x.headline).join('\n'))}">${f.news.news_dir > 0 ? '+' : ''}${f.news.news_dir.toFixed(1)} <span class="dim">(${f.news.n})</span></td><td class="num">${pup(f.news.p_up)}</td>`
+      : '<td class="num dim">—</td><td class="num dim">—</td>');
 }
 function renderAll() {
   const q = $('q').value.trim().toLowerCase();
@@ -141,6 +151,20 @@ async function load() {
     cards.push(card('Price forecasts (v7)', [['status', 'shadow test'], ['scored so far', `${sh.matured_dates ?? 0} of 60 days`],
       ['80% range held', sh.cov80 != null ? pct(sh.cov80, 1, false) : 'pending'], ['up/down right', sh.hit != null ? pct(sh.hit, 1, false) : 'pending']]));
   } else $('v7chip').style.display = 'none';
+  const nw = d.v7 && d.v7.news;
+  if (nw) {
+    $('newsp').style.display = '';
+    const S = nw.market_index, ai = nw.ai_anxiety;
+    $('newsmeta').textContent = `${nw.market_n} market/AI headlines · ${nw.window[0]} → ${(nw.window[1] || '').replace('T', ' ').slice(0, 16)} UTC`;
+    $('newsnote').innerHTML = `Market news index <b class="${cls(S)}">${S > 0 ? '+' : ''}${S.toFixed(2)}</b> (−1 all bad … +1 all good)` +
+      (ai != null ? ` · AI anxiety <b class="${cls(-ai)}">${ai > 0 ? '+' : ''}${ai.toFixed(2)}</b>` : '') +
+      ` · market tilt ${(nw.weights.market_per_unit_S * S * 100).toFixed(2)}% over 5 days × each stock's beta, plus up to ±${(nw.weights.stock_per_unit_news_dir * 200).toFixed(1)}% from its own news.` +
+      ' These weights are fixed guesses until the forward test (60 trading days) shows whether reading the news improves the forecasts.';
+    const hl = rows => rows.map(h => `<tr><td class="num ${cls(h.mdir)}" style="width:52px">${h.mdir > 0 ? '+' : ''}${h.mdir.toFixed(2)}</td>` +
+      `<td class="dim" style="width:90px;text-align:left">${esc(h.t.slice(5, 16).replace('T', ' '))}</td><td style="text-align:left;white-space:normal">${esc(h.headline)}</td></tr>`).join('');
+    $('nneg').innerHTML = hl(nw.most_negative || []);
+    $('npos').innerHTML = hl(nw.most_positive || []);
+  }
   cards.push(card('Status', [['protocol', st.adopted === true ? 'adopted' : st.adopted === false ? 'not adopted' : 'final test pending'],
     ['model', esc(d.model.split(':')[0])], ['generated', esc((d.generated || '').replace('T', ' '))], ['universe', d.universe + ' stocks']]));
   $('cards').innerHTML = cards.join('');

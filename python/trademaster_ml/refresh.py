@@ -1,11 +1,13 @@
 """
-Bring the v6 rankings and v7 price forecasts up to date (research only, CPU only; the GPU is never used here).
+Bring the v6 rankings, v7 price forecasts and the rolling LLM news up to date (research only). Everything runs on the
+CPU except the news reading, which uses the GPU only with --gpu-news (passed by the app launcher, i.e. while the user
+is at the PC); without it the news is read on the CPU.
 
 Runs in the background when the app opens, and from the daily job. It streams only what is new and stops early when
-the rankings already cover the latest completed trading day. Progress goes to private/reports/v6/refresh_status.json
+the rankings already cover the latest completed trading day (then only the news and forecasts are refreshed). Progress goes to private/reports/v6/refresh_status.json
 (shown on the Rankings page); a lock file prevents two refreshes at once.
 
-Usage: python -m trademaster_ml.refresh [--force]
+Usage: python -m trademaster_ml.refresh [--force] [--gpu-news]
 """
 import argparse, json, os, subprocess, sys, time
 from datetime import datetime
@@ -31,6 +33,16 @@ def rankings_asof():
         return None
 
 
+def news_step(args):
+    """v8 stage 1: score the last days of headlines with the local LLM (GPU only when started from the open app)."""
+    from . import llm_news
+    status("running", "reading the news (local AI model)")
+    try:
+        llm_news.rolling(argparse.Namespace(allow_gpu=args.gpu_news, cpu=not args.gpu_news))
+    except Exception as e:  # noqa: BLE001 - news is optional: keep forecasting without it
+        print(f"[refresh] news step skipped: {type(e).__name__}: {e}", flush=True)
+
+
 def run(args):
     if os.path.exists(LOCK) and time.time() - os.path.getmtime(LOCK) < 3600:
         print("[refresh] another refresh is running; skipping", flush=True)
@@ -42,7 +54,13 @@ def run(args):
         status("running", "new daily prices")
         last = universe_us.update()
         if not args.force and rankings_asof() == last:
-            status("done", f"already up to date (close {last})", asof=last, seconds=round(time.time() - t0))
+            # no new close: only the rolling news can have changed (e.g. weekend or pre-market headlines)
+            news_step(args)
+            status("running", "price forecasts")
+            v7.forecast(None)
+            status("running", "rankings")
+            v6.rank(None)
+            status("done", f"news refreshed; prices already up to date (close {last})", asof=last, seconds=round(time.time() - t0))
             return
         status("running", "SEC filings older than 7 days")
         fundamentals.fetch(max_age_days=7)
@@ -51,6 +69,7 @@ def run(args):
         universe_us.export()
         status("running", "features")
         subprocess.run([EXE, "gpu-features", "--cpu"], check=True)
+        news_step(args)
         status("running", "price forecasts")
         v7.score(None)
         v7.forecast(None)
@@ -70,6 +89,7 @@ def run(args):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--force", action="store_true", help="rebuild even if the rankings already cover the latest close")
+    ap.add_argument("--gpu-news", action="store_true", help="score news on the GPU (only when the user is at the PC, e.g. app start)")
     run(ap.parse_args())
 
 
