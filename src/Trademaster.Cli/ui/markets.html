@@ -84,7 +84,7 @@ td.name{text-align:left;color:var(--muted);max-width:190px;overflow:hidden;text-
   <div class="spacer"></div>
   <span class="chip" id="upd" style="display:none"></span>
   <span class="chip warn" title="Research only: no orders are ever placed">RESEARCH ONLY</span>
-  <div class="search"><input id="q" placeholder="Search a stock (e.g. NVDA, D05)" autocomplete="off"><div class="sugg" id="sugg"></div></div>
+  <div class="search"><input id="q" placeholder="Search a stock, company, index or sector" autocomplete="off"><div class="sugg" id="sugg"></div></div>
 </header>
 <div class="layout">
   <nav id="tree"></nav>
@@ -644,26 +644,17 @@ $('navsel').addEventListener('change', e => { location.hash = e.target.value; })
 
 let suggIdx = 0, suggItems = [];
 async function suggest() {
-  const q = $('q').value.trim().toLowerCase(), box = $('sugg');
-  if (!q) { box.style.display = 'none'; return; }
-  await Promise.all([data('nasdaq'), data('sgx')]);
-  suggItems = [];
-  for (const k of Object.keys(MARKETS)) {
-    const d = DATA[k]; if (!d || d.error) continue;
-    for (const r of d.rankings) {
-      const s = r.symbol.toLowerCase(), base = s.replace(/\.si$/, '');
-      const score = s === q || base === q ? 0 : s.startsWith(q) || base.startsWith(q) ? 1 : r.name.toLowerCase().includes(q) ? 2 : 9;
-      if (score < 9) suggItems.push([score, k, r]);
-    }
-  }
-  suggItems.sort((a, b) => a[0] - b[0] || a[2].symbol.localeCompare(b[2].symbol));
-  suggItems = suggItems.slice(0, 8); suggIdx = 0;
-  box.innerHTML = suggItems.map(([, k, r], i) => `<div class="${i === 0 ? 'on' : ''}" onmousedown="pickSugg(${i})"><b style="width:70px">${esc(r.symbol)}</b>` +
-    `<span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span><span class="chip">${MARKETS[k].name}</span></div>`).join('') ||
-    '<div class="dim">No match in either exchange\'s ranked universe</div>';
+  const raw = $('q').value, box = $('sugg');
+  if (!raw.trim()) { box.style.display = 'none'; return; }
+  const found = await window.tmSearch.find(raw);
+  if (raw !== $('q').value) return;                              // typed on meanwhile
+  suggItems = found; suggIdx = 0;
+  box.innerHTML = suggItems.map((x, i) => `<div class="${i === 0 ? 'on' : ''}" onmousedown="pickSugg(${i})"><b style="width:70px;flex:none">${esc(x.k === 'sector' ? '' : x.s)}</b>` +
+    `<span class="muted" style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(window.tmSearch.clean(x.n))}</span><span class="chip">${window.tmSearch.chip(x)}</span></div>`).join('') ||
+    '<div class="dim">No stock, index or sector matches</div>';
   box.style.display = 'block';
 }
-function pickSugg(i) { const it = suggItems[i]; if (!it) return; location.hash = `#/${it[1]}/stock/${encodeURIComponent(it[2].symbol)}`; $('q').value = ''; $('sugg').style.display = 'none'; $('q').blur(); }
+function pickSugg(i) { const it = suggItems[i]; if (!it) return; location.hash = window.tmSearch.href(it).replace('/markets', ''); $('q').value = ''; $('sugg').style.display = 'none'; $('q').blur(); }
 $('q').addEventListener('input', suggest);
 $('q').addEventListener('blur', () => setTimeout(() => ($('sugg').style.display = 'none'), 150));
 $('q').addEventListener('keydown', e => {

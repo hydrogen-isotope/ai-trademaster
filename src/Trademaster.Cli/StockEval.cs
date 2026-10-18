@@ -80,18 +80,42 @@ public static partial class StockEval
     }
 
     private static readonly object SymLock = new();
-    private static (DateTime, DateTime) symStamp;
+    private static (DateTime, DateTime, DateTime) symStamp;
     private static List<object> symList = [];
 
-    /// <summary>Every ranked stock on NASDAQ and SGX as {s, n, m}, read from the rankings files (cached until they change).</summary>
+    // index stand-ins (ETFs that track them), with the words people search for
+    private static readonly (string S, string N, string A)[] IndexEntries =
+    [
+        ("ONEQ", "Nasdaq Composite (via ONEQ ETF)", "nasdaq composite comp ixic ^ixic composite index nasdaq index"),
+        ("QQQ", "Nasdaq-100 (via QQQ ETF)", "nasdaq 100 nasdaq-100 nasdaq100 ndx ^ndx nq tech 100"),
+        ("SPY", "S&P 500 (via SPY ETF)", "s&p 500 sp500 s&p spx ^gspc es standard and poor's"),
+    ];
+
+    /// <summary>Everything the search boxes can find, as {s, n, m, k, a}: index stand-ins and NASDAQ sector groups
+    /// (k = index / sector), then every ranked stock on NASDAQ and SGX (k = stock). Cached until the files change.</summary>
     public static List<object> Symbols()
     {
-        string pn = Path.Combine("private", "reports", "v6", "rankings.json"), ps = Path.Combine("private", "reports", "sgx", "v6", "rankings.json");
-        var stamp = (File.Exists(pn) ? File.GetLastWriteTimeUtc(pn) : default, File.Exists(ps) ? File.GetLastWriteTimeUtc(ps) : default);
+        string pn = Path.Combine("private", "reports", "v6", "rankings.json"), ps = Path.Combine("private", "reports", "sgx", "v6", "rankings.json"),
+               pi = Path.Combine("private", "reports", "v6", "indexes.json");
+        DateTime T(string p) => File.Exists(p) ? File.GetLastWriteTimeUtc(p) : default;
+        var stamp = (T(pn), T(ps), T(pi));
         lock (SymLock)
         {
             if (stamp == symStamp && symList.Count > 0) return symList;
             var list = new List<object>();
+            foreach (var (sym, name, alias) in IndexEntries) list.Add(new { s = sym, n = name, m = "nasdaq", k = "index", a = alias });
+            if (File.Exists(pi))
+            {
+                using var fs = new FileStream(pi, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var doc = JsonDocument.Parse(fs);
+                if (doc.RootElement.TryGetProperty("sectors", out var secs))
+                    foreach (var x in secs.EnumerateArray())
+                    {
+                        var label = x.GetProperty("label").GetString() ?? "";
+                        list.Add(new { s = x.GetProperty("key").GetString(), n = label + " (NASDAQ sector group)", m = "nasdaq", k = "sector",
+                                       a = label.ToLowerInvariant().Replace("&", "and") + " sector" });
+                    }
+            }
             foreach (var (path, market) in new[] { (pn, "nasdaq"), (ps, "sgx") })
             {
                 if (!File.Exists(path)) continue;
@@ -99,7 +123,7 @@ public static partial class StockEval
                 using var doc = JsonDocument.Parse(fs);
                 if (!doc.RootElement.TryGetProperty("rankings", out var rows)) continue;
                 foreach (var r in rows.EnumerateArray())
-                    list.Add(new { s = r.GetProperty("symbol").GetString(), n = r.TryGetProperty("name", out var n) ? n.GetString() : "", m = market });
+                    list.Add(new { s = r.GetProperty("symbol").GetString(), n = r.TryGetProperty("name", out var n) ? n.GetString() : "", m = market, k = "stock", a = "" });
             }
             symStamp = stamp;
             symList = list;

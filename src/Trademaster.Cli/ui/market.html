@@ -154,7 +154,7 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
 <div id="app">
   <div id="top">
     <div class="brand"><i></i>AI Trademaster</div>
-    <div class="srch"><input id="search" placeholder="Search a stock (e.g. NVDA, Micron, D05)" autocomplete="off" spellcheck="false"><div id="sugg"></div></div>
+    <div class="srch"><input id="search" placeholder="Search a stock, company, index or sector" autocomplete="off" spellcheck="false"><div id="sugg"></div></div>
     <span class="chip" id="src">…</span>
     <span class="chip" style="color:#7cc4ff;border-color:#1d3f63;background:#0f2134">READ-ONLY · NO ORDERS</span>
     <div class="spacer"></div>
@@ -387,39 +387,25 @@ $('rows').addEventListener('click', e => {
 });
 document.querySelectorAll('[data-wl]').forEach(b => b.onclick = () => { wlTab = b.dataset.wl; document.querySelectorAll('[data-wl]').forEach(x => x.classList.toggle('on', x === b)); renderRows(); });
 // search: suggestions from both exchanges' ranked stocks plus the watchlist names
-let SYMS = null, sgIdx = 0, sgItems = [];
+let sgIdx = 0, sgItems = [];
 const charted = (s, m) => m === 'nasdaq' && (!status?.universe || status.universe.includes(s));   // has live/demo bars here
-async function symbols() {
-  if (SYMS) return SYMS;
-  let list = [];
-  try { list = await (await fetch('/api/symbols')).json(); } catch (e) { }
-  const have = new Set(list.map(x => x.s));
-  for (const [s, n] of Object.entries(NAMES)) if (!have.has(s)) list.push({ s, n: n.replace('&amp;', '&'), m: 'nasdaq' });
-  return (SYMS = list);
-}
 async function suggest() {
-  const q = $('search').value.trim().toLowerCase(), box = $('sugg');
-  if (!q) { box.style.display = 'none'; return; }
-  const list = await symbols();
-  if (q !== $('search').value.trim().toLowerCase()) return;           // typed on meanwhile
-  sgItems = [];
-  for (const x of list) {
-    const s = x.s.toLowerCase(), base = s.replace(/\.si$/, ''), n = (x.n || '').toLowerCase();
-    const sc = s === q || base === q ? 0 : s.startsWith(q) || base.startsWith(q) ? 1 : n.startsWith(q) ? 2 : n.includes(q) ? 3 : 9;
-    if (sc < 9) sgItems.push([sc, x]);
-  }
-  sgItems.sort((a, b) => a[0] - b[0] || a[1].s.localeCompare(b[1].s));
-  sgItems = sgItems.slice(0, 8).map(x => x[1]); sgIdx = 0;
+  const raw = $('search').value, box = $('sugg');
+  if (!raw.trim()) { box.style.display = 'none'; return; }
+  const found = await window.tmSearch.find(raw);
+  if (raw !== $('search').value) return;                          // typed on meanwhile
+  sgItems = found; sgIdx = 0;
   const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-  box.innerHTML = sgItems.map((x, i) => `<div class="${i === 0 ? 'on' : ''}" onmousedown="pickSearch(${i});event.preventDefault()"><b>${esc(x.s)}</b><span class="nm">${esc(x.n)}</span>` +
-    `<span class="chip">${x.m === 'sgx' ? 'SGX' : 'NASDAQ'}</span><a href="/markets#/${x.m}/stock/${encodeURIComponent(x.s)}" onmousedown="event.stopPropagation()" title="5-day forecast and AI analysis">forecast →</a></div>`).join('') ||
-    '<div class="dim" style="cursor:default">No match on NASDAQ or SGX</div>';
+  box.innerHTML = sgItems.map((x, i) => `<div class="${i === 0 ? 'on' : ''}" onmousedown="pickSearch(${i});event.preventDefault()"><b>${esc(x.k === 'sector' ? '' : x.s)}</b>` +
+    `<span class="nm">${esc(window.tmSearch.clean(x.n))}</span><span class="chip">${window.tmSearch.chip(x)}</span>` +
+    (x.k === 'stock' ? `<a href="${window.tmSearch.href(x)}" onmousedown="event.stopPropagation()" title="5-day forecast and AI analysis">forecast →</a>` : '') + `</div>`).join('') ||
+    '<div class="dim" style="cursor:default">No stock, index or sector matches</div>';
   box.style.display = 'block';
 }
 function pickSearch(i) {
   const x = sgItems[i]; if (!x) return;
   $('search').value = ''; $('sugg').style.display = 'none'; $('search').blur();
-  if (!charted(x.s, x.m)) { location.href = `/markets#/${x.m}/stock/${encodeURIComponent(x.s)}`; return; }   // no chart data here: open its stock page
+  if (x.k !== 'stock' || !charted(x.s, x.m)) { location.href = window.tmSearch.href(x); return; }   // index, sector, or no chart data here
   if (!wl.includes(x.s)) { wl.unshift(x.s); store.set('tm.wl', wl); renderRows(); }
   select(x.s);
 }
@@ -765,5 +751,6 @@ function tickClock() {
   if (location.hash === '#forecast') setCenterTab('forecast');
 })();
 </script>
+<script src="/nav.js"></script>
 </body>
 </html>
