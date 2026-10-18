@@ -173,5 +173,35 @@ models are still reported on the final test.
 - **Caveat:** such names are often hard to borrow, at far more than the protocol's 1%/yr. The long-short Sharpe
   therefore overstates what is achievable. The long-only result (−10%/yr vs QQQ) is the conservative view.
 
-## Results
-(final test not yet run)
+## Results: final test (run once, 2026-10-18; predictions 2025-01-02 → 2026-10-09)
+
+| model | IC | NW t | top > bottom | L/S Sharpe | at 10% borrow | long leg /yr | short leg /yr | long-only vs QQQ /yr |
+|---|---|---|---|---|---|---|---|---|
+| B1 momentum 12-1 | +0.035 | 2.6 | 62% | 2.59 | 2.34 | +26% | −72% | −1.4% |
+| B2 reversal 1w | +0.006 | 0.6 | 51% | −0.18 | −0.48 | −40% | −54% | −75.2% |
+| **R ridge (candidate)** | **+0.059** | **5.0** | **67%** | **2.86** | **2.59** | +11% | −93% | **−18.8%** |
+| G LightGBM | +0.068 | 6.2 | 74% | 3.84 | 3.59 | +21% | −125% | −10.8% |
+| M MLP (GPU) | +0.070 | 5.5 | 73% | 3.18 | 2.93 | +23% | −103% | −8.8% |
+| E = G + M | +0.072 | 5.9 | 74% | 3.68 | 3.42 | +19% | −120% | −12.7% |
+
+Leg returns are arithmetic means of weekly returns × 52, so they can fall below −100%.
+
+**Adoption (candidate R, per amendment C):**
+- IC > 0.02 with t > 2: **yes** (0.059, t 5.0).
+- Beats the best baseline: **yes** (0.059 vs 0.035).
+- Net Sharpe > 0.5: **yes** (2.86; 2.59 at 10% borrow).
+
+**v6 is adopted.**
+
+What this does and does not mean:
+- **The ranking is real and held out of sample.** In 2025–26 it ordered NASDAQ stocks correctly more often than chance, in
+  a period it never saw. The top decile beat the bottom decile in 67–74% of weeks, depending on the model.
+- **Almost all of the money is in avoiding / shorting the bottom decile.** Those are speculative, high-volatility names
+  that fell sharply. Many are hard or impossible to borrow, so real short returns would be lower than shown even at 10%
+  borrow.
+- **It does not pick stocks that beat QQQ.** The long-only top decile trailed QQQ by 9–19%/yr. The 2025–26 market was
+  led by mega-caps, and an equal-weighted basket of top-ranked stocks did not keep up. As a "buy these" tool it failed.
+  As a "these are likely to lag their peers" tool it worked.
+- **The nonlinear models did better than ridge on the test.** The candidate was fixed to ridge before the test
+  (amendment C). That choice is not reversed after seeing the test, so ridge stays the adopted model. G/M/E are shown for
+  information only.
