@@ -1,7 +1,8 @@
 """
 v8 stage 1: a local LLM (Qwen2.5-7B-Instruct via llama.cpp) reads the last few days of news headlines.
 Research only; protocol: docs/FORECAST-V8-STAGES-PROTOCOL.md (amendment B: rolling news only, judged by a forward
-shadow test). Nothing is stored long-term: headlines and scores older than KEEP_DAYS are deleted on every run.
+shadow test). Each headline is read by Qwen once; afterwards only Qwen's compact verdict is kept (the raw item shrinks to
+id + time), and everything older than KEEP_DAYS is deleted on every run.
 
   rolling   fetch the last 7 days of headlines (top 300 stocks by dollar volume + market ETFs), score the new ones,
             prune old ones, and write today's features -> private/data/news/news_today.json
@@ -148,7 +149,7 @@ def ask(headline, kind, stock=None):
 
 def score_item(item, wanted):
     h = item["headline"].strip()[:300]
-    out = {"id": item["id"], "t": item["t"], "headline": h, "dir": {}}
+    out = {"id": item["id"], "t": item["t"], "headline": h[:140], "dir": {}}
     cov = 1.0
     for t in [t for t in item.get("symbols", []) if t in wanted][:MAX_TICKERS]:
         p, c = ask(h, "dir", stock=t)
@@ -201,8 +202,13 @@ def _write(path, rows):
 
 def fetch_recent(syms):
     creds = alpaca.credentials()
-    start = (datetime.now(timezone.utc) - timedelta(days=FETCH_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    have = {x["id"] for x in _read(ITEMS)}
+    old = _read(ITEMS)
+    have = {x["id"] for x in old}
+    start_dt = datetime.now(timezone.utc) - timedelta(days=FETCH_DAYS)
+    if old:                                     # stream only what arrived since the newest stored headline (1 h overlap)
+        newest = max(datetime.fromisoformat(x["t"].replace("Z", "+00:00")) for x in old)
+        start_dt = max(start_dt, newest - timedelta(hours=1))
+    start = start_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     new = []
     for g in [syms[i:i + 100] for i in range(0, len(syms), 100)] + [MARKET_ETFS]:
         params = {"symbols": ",".join(g), "start": start, "limit": 50, "sort": "asc", "include_content": "false"}
@@ -220,7 +226,7 @@ def fetch_recent(syms):
             if not token:
                 break
     keep_from = (datetime.now(timezone.utc) - timedelta(days=KEEP_DAYS)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    items = [x for x in _read(ITEMS) + new if x["t"] >= keep_from]
+    items = [x for x in old + new if x["t"] >= keep_from]
     _write(ITEMS, items)
     return items, len(new)
 
@@ -290,7 +296,8 @@ def rolling(a):
     items, n_new = fetch_recent(syms)
     wanted = set(syms) | set(MARKET_ETFS)
     have = {r["id"]: r for r in _read(SCORES)}
-    todo = [x for x in items if x["id"] not in have and not RECAP.search(x["headline"])]
+    # compacted items (id + time only) were already processed: scored, or skipped as templated recaps
+    todo = [x for x in items if x["id"] not in have and x.get("headline") and not RECAP.search(x["headline"])]
     print(f"news: {len(items)} headlines in the last {KEEP_DAYS} days ({n_new} new), {len(todo)} to score", flush=True)
     if todo:
         srv = _start(a)
@@ -303,6 +310,10 @@ def rolling(a):
     keep_ids = {x["id"] for x in items}
     scores = [r for i, r in have.items() if i in keep_ids]                   # prune with the items
     _write(SCORES, scores)
+    # compress: once Qwen has read a headline, keep only its compact verdict (scores file, with a short headline for
+    # display); the raw item shrinks to id + time, which is all that dedupe and pruning need
+    done = set(have) | {x["id"] for x in items if x.get("headline") and RECAP.search(x["headline"])}
+    _write(ITEMS, [{"id": x["id"], "t": x["t"]} if x["id"] in done else x for x in items])
     sessions = json.load(open(os.path.join("private", "data", "us", "gpu", "meta.json")))["dates"]
     f = features(scores, sessions, asof, set(syms))
     tmp = TODAY + ".tmp"
