@@ -73,6 +73,23 @@ def sgx_step():
         v7.use_market("nasdaq")
 
 
+def eval_step(args):
+    """v8 amendment C: score the AI-advised forecasts (CPU), and at app start queue the start-up set for the background
+    Qwen evaluator, which runs on the GPU only while the app is open."""
+    from . import stock_eval
+    for mk in ("nasdaq", "sgx"):
+        try:
+            stock_eval.score(argparse.Namespace(market=mk))
+        except Exception as e:  # noqa: BLE001
+            print(f"[refresh] advice scoring ({mk}) failed: {type(e).__name__}: {e}", flush=True)
+    if args.gpu_news:
+        try:
+            if stock_eval.batch():
+                stock_eval.start_daemon()
+        except Exception as e:  # noqa: BLE001
+            print(f"[refresh] AI evaluation batch skipped: {type(e).__name__}: {e}", flush=True)
+
+
 def run(args):
     if os.path.exists(LOCK) and time.time() - os.path.getmtime(LOCK) < 3600:
         print("[refresh] another refresh is running; skipping", flush=True)
@@ -92,6 +109,7 @@ def run(args):
             status("running", "rankings")
             v6.rank(None)
             sgx_step()
+            eval_step(args)
             status("done", f"news refreshed; prices already up to date (close {last})", asof=last, seconds=round(time.time() - t0))
             return
         status("running", "SEC filings older than 7 days")
@@ -108,6 +126,7 @@ def run(args):
         status("running", "rankings")
         v6.rank(None)
         sgx_step()
+        eval_step(args)
         status("done", f"updated to close {last}", asof=last, seconds=round(time.time() - t0))
     except Exception as e:  # noqa: BLE001 - report any failure on the dashboard, keep the old rankings
         status("error", f"{type(e).__name__}: {e}", seconds=round(time.time() - t0))

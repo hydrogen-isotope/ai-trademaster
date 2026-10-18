@@ -190,6 +190,38 @@ public static class Dashboard
             return File.Exists(path) ? Results.Text(File.ReadAllText(path), "application/json") : Results.Json(new { state = "none" });
         });
 
+        // v8 amendment C: per-stock Qwen analysis (python -m trademaster_ml.stock_eval). A click returns the cached
+        // evaluation for the latest close, or queues one and starts the background evaluator (the user is at the PC).
+        app.MapGet("/api/stock/eval", (string? market, string symbol) =>
+        {
+            var mk = market == "sgx" ? "sgx" : "nasdaq";
+            var sym = (symbol ?? "").Trim().ToUpperInvariant();
+            if (!StockEval.OkSymbol(sym)) return Results.BadRequest(new { error = "bad symbol" });
+            var asof = StockEval.Asof(mk);
+            if (asof is null) return Results.NotFound(new { error = "no price forecasts yet" });
+            var dir = Path.Combine(StockEval.Root, mk);
+            string done = Path.Combine(dir, $"{sym}_{asof}.json"), err = Path.Combine(dir, $"{sym}_{asof}.error.json");
+            if (File.Exists(done)) return Results.Text($"{{\"state\":\"done\",\"result\":{File.ReadAllText(done)}}}", "application/json");
+            if (File.Exists(err) && !StockEval.Queued(mk, sym)) return Results.Text($"{{\"state\":\"error\",\"result\":{File.ReadAllText(err)}}}", "application/json");
+            StockEval.Enqueue(mk, sym);
+            StockEval.EnsureDaemon(port);
+            var partial = Path.Combine(dir, $"{sym}_{asof}.partial.json");
+            var daemon = StockEval.Daemon();
+            var body = $"{{\"state\":\"pending\",\"position\":{StockEval.Position(mk, sym)},\"daemon\":{daemon}," +
+                       $"\"result\":{(File.Exists(partial) ? File.ReadAllText(partial) : "null")}}}";
+            return Results.Text(body, "application/json");
+        });
+        app.MapGet("/api/stock/evals", (string? market) =>
+        {
+            var mk = market == "sgx" ? "sgx" : "nasdaq";
+            var asof = StockEval.Asof(mk);
+            var idx = Path.Combine(StockEval.Root, mk, $"index_{asof}.json");
+            var score = Path.Combine(StockEval.Root, mk, "advice_score.json");
+            var body = $"{{\"asof\":{JsonSerializer.Serialize(asof)},\"daemon\":{StockEval.Daemon()}," +
+                       $"\"index\":{(File.Exists(idx) ? File.ReadAllText(idx) : "{}")},\"score\":{(File.Exists(score) ? File.ReadAllText(score) : "null")}}}";
+            return Results.Text(body, "application/json");
+        });
+
         // Forward test (real data, predictions only): files written by python -m trademaster_ml.forward
         string fwdRoot = Path.Combine("private", "data", "forward");
         app.MapGet("/forward", () => Results.File(Path.Combine(uiDir, "forward.html"), "text/html; charset=utf-8"));

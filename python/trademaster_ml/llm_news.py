@@ -70,9 +70,9 @@ def server_exe(name="llama-server.exe"):
     return m[-1]
 
 
-def _health():
+def _health(port=PORT):
     try:
-        return json.load(urllib.request.urlopen(f"http://127.0.0.1:{PORT}/health", timeout=2)).get("status") == "ok"
+        return json.load(urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=2)).get("status") == "ok"
     except Exception:
         return False
 
@@ -80,17 +80,17 @@ def _health():
 class Server:
     """llama-server on the RX 7800 XT only (Vulkan0), or CPU-only. Reuses a running server; stops one it started."""
 
-    def __init__(self, gpu):
+    def __init__(self, gpu, ctx_per_slot=1024, slots=SLOTS, port=PORT):
         self.proc = None
-        if _health():
+        if _health(port):
             return
-        args = [server_exe(), "-m", model_path(), "-np", str(SLOTS), "-c", str(1024 * SLOTS), "--port", str(PORT), "--host", "127.0.0.1"]
-        args += ["-ngl", "99", "--device", "Vulkan0"] if gpu else ["-ngl", "0"]
+        args = [server_exe(), "-m", model_path(), "-np", str(slots), "-c", str(ctx_per_slot * slots), "--port", str(port), "--host", "127.0.0.1"]
+        args += ["-ngl", "99", "--device", "Vulkan0"] if gpu else ["-ngl", "0", "--device", "none", "--no-op-offload"]   # "none": no GPU at all (with -ngl 0 alone, llama.cpp still offloads prompt batches to the GPU)
         os.makedirs(os.path.join("private", "reports", "jobs"), exist_ok=True)
         log = open(os.path.join("private", "reports", "jobs", "llama_server.log"), "a")
         self.proc = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         for _ in range(240):
-            if _health():
+            if _health(port):
                 return
             time.sleep(1)
         raise RuntimeError("llama-server did not start (see private/reports/jobs/llama_server.log)")
@@ -348,7 +348,7 @@ def sample(a):
 
 def bench(a):
     args = [server_exe("llama-bench.exe"), "-m", model_path(), "-p", "512", "-n", "32"]
-    args += ["-ngl", "99", "-dev", "Vulkan0"] if a.allow_gpu else ["-ngl", "0"]
+    args += ["-ngl", "99", "-dev", "Vulkan0"] if a.allow_gpu else ["-ngl", "0", "-dev", "none"]
     subprocess.run(args, check=True)
 
 

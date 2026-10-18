@@ -143,6 +143,24 @@ fixed now:
   - at app start (GPU, user present): the top and bottom 25 by rank score, plus the top and bottom 10 by model P(up).
 - Results are cached per stock and close date.
 
+**D (2026-10-18, after the amendment C hand check and before any advised forecast was logged or scored).** The first
+prompt (8 heavy-news NASDAQ stocks) failed the hand check:
+- Qwen answered "neutral, low" for MU, AVGO, CRWV, NVDA and SNDK, despite a week of mostly bad news for each. The
+  prompt's line "use neutral with low confidence when the information is thin, old or mixed" dominated.
+- Its "reasons" were copied headlines, including a peer's headline cited as a reason for the stock itself.
+
+Changes (wording only; inputs, schema, mapping, logging and promotion are unchanged):
+- Each reason must be one sentence in Qwen's own words, saying what happened and why it matters for the stock's price.
+  Headlines may not be copied, peer news counts only if it clearly affects the stock, and recent days weigh more.
+- "Pick a direction when the recent news clearly leans one way; use neutral only when the evidence is balanced or there
+  is almost no news."
+
+The hand-check outputs from the first prompt were moved out of the shadow log (`evals/handcheck1/`); they are not part
+of the forward test.
+
+Also found during the hand check: with only `-ngl 0`, the Vulkan llama.cpp build still sends prompt batches to the GPU.
+"CPU" runs now pass `--device none --no-op-offload` (true CPU: about 160 prompt tokens/s instead of about 800).
+
 ## Results
 
 ### Test A: staging vs one ridge (no news), run 2026-10-18

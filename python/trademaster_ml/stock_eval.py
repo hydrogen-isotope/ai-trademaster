@@ -1,0 +1,698 @@
+"""
+v8 amendment C: a per-stock Qwen analysis that advises the 5-day forecast range (research only; no orders).
+
+For one stock, Qwen (local, llama.cpp) reads the quantitative facts of stages 2-4 (price/momentum, fundamentals,
+industry and cross-stock rank), the v7 model-only forecast, the market news index, same-industry peers with the
+strongest recent news, and the stock's own headlines of the last 30 days. It answers in schema-enforced JSON: reasons
+first, then lean / confidence / risk. The lean shifts the v7 median by a fixed fraction of the stock's own 5-day sd, and
+elevated risk widens the range (fixed priors, docs/FORECAST-V8-STAGES-PROTOCOL.md amendment C). Every advised forecast
+is logged with its model-only twin before the outcome exists; `score` runs the forward test.
+
+  eval SYM [--market nasdaq|sgx] --allow-gpu|--cpu   evaluate one stock now and print the verdict
+  serve --allow-gpu|--cpu [--app-url URL]            work through the queue while the app is open; the model is
+                                                     unloaded after 5 idle minutes, when the app closes, or on a GPU
+                                                     driver reset
+  batch                                              queue the app-start set (top/bottom 25 by rank score, top/bottom
+                                                     10 by model P(up), NASDAQ)
+  score [--market nasdaq|sgx]                        forward test: advised vs model-only on matured forecasts
+
+Usage: python -m trademaster_ml.stock_eval eval MU --allow-gpu
+"""
+import argparse, json, math, os, re, subprocess, sys, time, urllib.request
+from datetime import datetime, timedelta, timezone
+
+import numpy as np
+
+from . import alpaca, llm_news, v6, v7
+
+EVALS = os.path.join("private", "reports", "evals")
+QUEUE = os.path.join(EVALS, "queue")
+STATE = os.path.join(EVALS, "daemon.json")
+LOCK = os.path.join(EVALS, "daemon.lock")
+REFRESH_STATUS = os.path.join("private", "reports", "v6", "refresh_status.json")
+PORT, SLOTS, CTX = 8766, 2, 6144
+MODEL_NAME = "Qwen2.5-7B-Instruct (Q4_K_M, local)"
+
+# amendment C priors (fixed before any result)
+LEAN_K = {"strong_down": -0.30, "down": -0.12, "neutral": 0.0, "up": 0.12, "strong_up": 0.30}
+CONF_MULT = {"low": 0.5, "medium": 1.0, "high": 1.25}
+RISK_SD = {"normal": 1.0, "elevated": 1.25}
+FALLBACK = {"lean": "neutral", "confidence": "low", "risk": "normal"}
+NEWS_DAYS, MAX_HEADLINES, MAX_PEERS = 30, 40, 5
+HISTORY_DAYS, IDLE_EXIT_S = 260, 300
+SAFE_SYM = re.compile(r"^[A-Z0-9.\-]{1,15}$")
+
+SCHEMA = {
+    "type": "object",
+    "properties": {
+        "positives": {"type": "array", "items": {"type": "string", "maxLength": 220}, "maxItems": 3},
+        "negatives": {"type": "array", "items": {"type": "string", "maxLength": 220}, "maxItems": 3},
+        "lean": {"type": "string", "enum": list(LEAN_K)},
+        "confidence": {"type": "string", "enum": list(CONF_MULT)},
+        "risk": {"type": "string", "enum": list(RISK_SD)},
+    },
+    "required": ["positives", "negatives", "lean", "confidence", "risk"],
+    "additionalProperties": False,
+}
+
+SYSTEM = ("You are a careful equity analyst. You weigh the news and the numbers about one stock and judge its likely price "
+          "move over the next 5 trading days. You reply only with the JSON requested.")
+
+# (feature, label, format): ret = log return shown as %, ann = daily sd annualised, pct = ratio as %, num, days
+FACTS = [("mom5", "1-week return", "ret"), ("mom21", "1-month return", "ret"), ("mom12_1", "12-month return excluding the last month", "ret"),
+         ("vol60", "volatility, annualised (60 days)", "ann"), ("dist_252_high", "distance below the 52-week high", "ret"),
+         ("beta252", "beta to the market", "num"), ("earnings_yield", "earnings yield", "pct"), ("sales_to_price", "sales / price", "num"),
+         ("gross_profitability", "gross profitability", "num"), ("sue", "latest earnings surprise (standardised)", "num"),
+         ("days_since_filing", "days since the last financial filing", "days"),
+         ("ind_mom21", "its industry's 1-month move", "ret"), ("ind_mom126", "its industry's 6-month move", "ret")]
+
+SIC2 = {1: "agriculture", 10: "metal mining", 13: "oil and gas extraction", 15: "construction", 20: "food products",
+        23: "apparel", 24: "wood products", 26: "paper", 27: "printing and publishing", 28: "chemicals and pharmaceuticals",
+        29: "petroleum refining", 30: "rubber and plastics", 32: "stone, clay and glass", 33: "primary metals",
+        34: "fabricated metal products", 35: "industrial machinery and computer equipment",
+        36: "electronic equipment and semiconductors", 37: "transportation equipment", 38: "instruments and medical devices",
+        39: "miscellaneous manufacturing", 40: "railroads", 42: "trucking", 44: "water transport", 45: "air transport",
+        47: "transport services", 48: "communications", 49: "utilities", 50: "wholesale (durable goods)",
+        51: "wholesale (non-durable goods)", 52: "building materials retail", 53: "general merchandise stores", 54: "food stores",
+        55: "auto dealers", 56: "apparel stores", 57: "home furniture and electronics stores", 58: "restaurants", 59: "retail",
+        60: "banks", 61: "credit institutions", 62: "securities and brokers", 63: "insurance carriers", 64: "insurance agents",
+        65: "real estate", 67: "holding and investment offices", 70: "hotels", 72: "personal services",
+        73: "business services and software", 75: "auto services", 78: "motion pictures", 79: "amusement and recreation",
+        80: "health services", 82: "educational services", 83: "social services", 87: "engineering and management services",
+        99: "non-classifiable"}
+
+
+class NotForecast(Exception):
+    """The stock has no v7 forecast for the latest close (outside the forecast universe)."""
+
+
+# ---------------------------------------------------------------- inputs (all point-in-time at the latest close)
+
+def _market_dirs(market):
+    v6.use_market(market)
+    return {"gpu": v6.GPU_DIR, "v6": v6.OUT, "v7": v6.V7_OUT, "names": v6.NAMES_FILE, "out": os.path.join(EVALS, market)}
+
+
+def latest_asof(market):
+    d = _market_dirs(market)
+    with open(os.path.join(d["v7"], "forecast.json")) as f:
+        m = re.search(r'"asof":\s*"([0-9-]+)"', f.read(200))
+    return m.group(1) if m else None
+
+
+def _shadow_record(v7_dir, asof):
+    """The v7 shadow-log record (model-only m, sd, close per stock + recalibration levels) for close `asof`."""
+    path = os.path.join(v7_dir, "shadow.jsonl")
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        lines = f.read().splitlines()
+    for line in reversed(lines):
+        if f'"asof": "{asof}"' in line[:40]:
+            return json.loads(line)
+    return None
+
+
+def next_open_utc(asof):
+    """09:30 New York on the first weekday after the close `asof`: news later than this is not used (no look-ahead)."""
+    nxt = datetime.fromisoformat(asof).replace(tzinfo=llm_news.NY) + timedelta(days=1)
+    while nxt.weekday() >= 5:
+        nxt += timedelta(days=1)
+    return nxt.replace(hour=9, minute=30).astimezone(timezone.utc)
+
+
+def _fmt(kind, x):
+    if kind == "ret":
+        return f"{math.expm1(x) * 100:+.1f}%"
+    if kind == "ann":
+        return f"{x * math.sqrt(252) * 100:.0f}%"
+    if kind == "pct":
+        return f"{x * 100:.1f}%"
+    if kind == "days":
+        return f"{x:.0f}"
+    return f"{x:.2f}"
+
+
+def _ordinal(n):
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
+def context(market, sym, rankings=None, news=None):
+    """Everything the prompt and the page need for `sym` at the latest close. Raises NotForecast if v7 has no row."""
+    d = _market_dirs(market)
+    meta = json.load(open(os.path.join(d["gpu"], "meta.json")))
+    feats = json.load(open(os.path.join(d["gpu"], "features.json")))["features"]
+    T, N, asof = meta["T"], meta["N"], meta["dates"][-1]
+    if sym not in meta["symbols"]:
+        raise NotForecast(f"{sym} is not in the {market.upper()} data")
+    j = meta["symbols"].index(sym)
+    rec = _shadow_record(d["v7"], asof)
+    row = next((r for r in rec["rows"] if r[0] == sym), None) if rec else None
+    if row is None:
+        raise NotForecast(f"{sym} has no price forecast for the close of {asof} (outside the forecast universe)")
+    _, m, sd, close = row
+    raw = np.memmap(os.path.join(d["gpu"], "raw.f32"), np.float32, "r", shape=(len(feats), T, N))
+    rk = np.memmap(os.path.join(d["gpu"], "ranks.f32"), np.float32, "r", shape=(len(feats), T, N))
+    facts = []
+    for f, label, kind in FACTS:
+        if f not in feats:
+            continue
+        i = feats.index(f)
+        x, r = float(raw[i, T - 1, j]), float(rk[i, T - 1, j])
+        if not math.isfinite(x):
+            continue
+        facts.append({"feature": f, "label": label, "value": _fmt(kind, x), "pct": round(r * 100) if math.isfinite(r) else None})
+    lc = np.memmap(os.path.join(d["gpu"], "logclose.f32"), np.float32, "r", shape=(T, N))
+    hist = lc[T - HISTORY_DAYS:, j].astype(np.float64)
+    history = [[meta["dates"][T - HISTORY_DAYS + k], round(float(np.exp(v)), 4)] for k, v in enumerate(hist) if np.isfinite(v)]
+    if rankings is None:
+        rp = os.path.join(d["v6"], "rankings.json")
+        rankings = json.load(open(rp)) if os.path.exists(rp) else {"rankings": []}
+    rr = next((r for r in rankings.get("rankings", []) if r["symbol"] == sym), None)
+    names = {a["symbol"]: a.get("name") or "" for a in json.load(open(d["names"]))}
+    industry, peers, mkt = None, [], None
+    ip = os.path.join(d["gpu"], "industry.f32")
+    if market == "nasdaq":
+        if news is None:
+            news = json.load(open(llm_news.TODAY)) if os.path.exists(llm_news.TODAY) else None
+        if news and news.get("asof") != asof:
+            news = None
+        if os.path.exists(ip):
+            ind = np.fromfile(ip, np.float32)
+            code = ind[j]
+            if np.isfinite(code) and code > 0:
+                industry = SIC2.get(int(code), f"SIC {int(code):02d}")
+                if news:
+                    same = {meta["symbols"][k] for k in np.nonzero(ind == code)[0]} - {sym}
+                    cand = [(s, v) for s, v in news["stocks"].items() if s in same and v["n"] >= 1]
+                    cand.sort(key=lambda x: -abs(x[1]["news_dir"]))
+                    for s, v in cand[:MAX_PEERS]:
+                        top = v["top"][0] if v["top"] else None
+                        peers.append({"symbol": s, "name": names.get(s, ""), "news_dir": round(v["news_dir"], 2), "n": v["n"],
+                                      "headline": top["headline"] if top else None,
+                                      "read": None if not top else ("good" if top["dir"] > 0.33 else "bad" if top["dir"] < -0.33 else "neutral")})
+        if news:
+            mkt = {"S": news["market"]["S"], "n": news["market"]["n"], "ai_anxiety": news["market"]["ai_anxiety"]}
+    return {"market": market, "symbol": sym, "name": names.get(sym, rr["name"] if rr else ""), "asof": asof, "close": float(close),
+            "m": float(m), "sd": float(sd), "R": np.array(rec["R_v7"]), "facts": facts, "universe": int(len(rec["rows"])),
+            "rank": {"score_pct": rr["score_pct"], "decile": rr["decile"]} if rr else None, "industry": industry,
+            "peers": peers, "market_news": mkt, "history": history}
+
+
+def own_headlines(sym, asof, now=None):
+    """The stock's own headlines (Alpaca / Benzinga), last NEWS_DAYS days up to the next open after `asof`; templated
+    recaps removed (amendment A list). Newest first."""
+    now = now or datetime.now(timezone.utc)
+    end = min(now, next_open_utc(asof))
+    start = end - timedelta(days=NEWS_DAYS)
+    creds = alpaca.credentials()
+    params = {"symbols": sym, "start": start.strftime("%Y-%m-%dT%H:%M:%SZ"), "end": end.strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "limit": 50, "sort": "desc", "include_content": "false"}
+    items, seen, n_recap = [], set(), 0
+    for _ in range(3):
+        doc = alpaca._get("/v1beta1/news", params, creds)
+        for n in doc.get("news", []):
+            h = (n.get("headline") or "").strip()
+            if not h or h.lower() in seen:
+                continue
+            seen.add(h.lower())
+            if llm_news.RECAP.search(h):
+                n_recap += 1
+                continue
+            items.append({"t": n["created_at"], "headline": h[:240]})
+        token = doc.get("next_page_token")
+        if not token or len(items) >= MAX_HEADLINES:
+            break
+        params["page_token"] = token
+    return {"source": "Alpaca (Benzinga)", "from": params["start"], "cutoff": params["end"], "n_recap_removed": n_recap,
+            "headlines": items[:MAX_HEADLINES]}
+
+
+# ---------------------------------------------------------------- forecast arithmetic
+
+def dist(close, m, sd, R):
+    """Price quantiles and P(up) of the v7 Student-t with recalibration levels R."""
+    q = v7.quantiles(np.array([m]), np.array([sd]), R)[0]
+    px = lambda i: float(close * math.exp(q[i]))
+    return {"median": px(v7.I50), "lo80": px(v7.I10), "hi80": px(v7.I90), "lo95": px(v7.I025), "hi95": px(v7.I975),
+            "p_up": float(1 - v7.p_le(0.0, np.array([m]), np.array([sd]), R)[0]), "exp_ret": float(math.expm1(q[v7.I50]))}
+
+
+def advise(m, sd, verdict):
+    """Amendment C mapping: median + k * sd (k by lean x confidence); elevated risk widens sd by 25%."""
+    k = LEAN_K[verdict["lean"]] * CONF_MULT[verdict["confidence"]]
+    return m + k * sd, sd * RISK_SD[verdict["risk"]], k
+
+
+def cone(close, asof, m, sd, R, days=5):
+    """Daily points from the close to the 5-day horizon for the chart. Only the day-5 values are the forecast; the
+    days in between scale the centre by h/5 and the spread by sqrt(h/5) (illustrative)."""
+    q = v7.quantiles(np.array([m]), np.array([sd]), R)[0]
+    pts, d = [{"date": asof, "median": close, "lo80": close, "hi80": close, "lo95": close, "hi95": close}], datetime.fromisoformat(asof)
+    for h in range(1, days + 1):
+        d += timedelta(days=1)
+        while d.weekday() >= 5:
+            d += timedelta(days=1)
+        a, b = h / days, math.sqrt(h / days)
+        f = lambda i: float(close * math.exp(a * q[v7.I50] + b * (q[i] - q[v7.I50])))
+        pts.append({"date": d.strftime("%Y-%m-%d"), "median": f(v7.I50), "lo80": f(v7.I10), "hi80": f(v7.I90),
+                    "lo95": f(v7.I025), "hi95": f(v7.I975)})
+    return pts
+
+
+# ---------------------------------------------------------------- the prompt and Qwen's verdict
+
+def build_prompt(ctx, news):
+    sym, mk = ctx["symbol"], ctx["market"]
+    base = dist(ctx["close"], ctx["m"], ctx["sd"], ctx["R"])
+    L = [f"Stock: {sym} ({ctx['name'] or 'name unknown'}), listed on {'NASDAQ' if mk == 'nasdaq' else 'SGX (Singapore)'}. "
+         f"Last close {ctx['close']:.4g} on {ctx['asof']}." + (f" Industry: {ctx['industry']}." if ctx["industry"] else ""), "",
+         f"Quantitative facts (percentile within the {ctx['universe']} stocks we forecast; 100th = highest):"]
+    for f in ctx["facts"]:
+        L.append(f"- {f['label']}: {f['value']}" + (f" ({_ordinal(f['pct'])} percentile)" if f["pct"] is not None else ""))
+    if ctx["rank"]:
+        L.append(f"- cross-stock model rank: {_ordinal(round(ctx['rank']['score_pct']))} percentile (decile {ctx['rank']['decile']} of 10; "
+                 "this model's edge is small)")
+    L.append(f"- statistical 5-day forecast without news: median {base['median']:.4g} ({base['exp_ret']:+.1%}), "
+             f"80% range {base['lo80']:.4g} to {base['hi80']:.4g}, chance of a rise {base['p_up']:.0%}")
+    if ctx["market_news"]:
+        mn = ctx["market_news"]
+        L.append(f"- market news index over the last 5 sessions: {mn['S']:+.2f} on a -1 (all bad) to +1 (all good) scale, from {mn['n']} headlines")
+    if ctx["peers"]:
+        L += ["", "Same-industry stocks with the strongest news in the last 5 sessions (news score -2 bad to +2 good):"]
+        for p in ctx["peers"]:
+            L.append(f"- {p['symbol']} ({p['name'][:40]}): news score {p['news_dir']:+.2f} from {p['n']} headlines"
+                     + (f"; strongest: \"{p['headline']}\" (read as {p['read']})" if p["headline"] else ""))
+    L.append("")
+    if news is None:
+        L.append("No news source is available for this market: judge from the facts only.")
+    elif not news["headlines"]:
+        L.append(f"No headlines about {sym} in the last {NEWS_DAYS} days.")
+    else:
+        L.append(f"Headlines about {sym} in the last {NEWS_DAYS} days, newest first:")
+        for h in news["headlines"]:
+            L.append(f"- {h['t'][:10]}: {h['headline']}")
+    L += ["", f"Task: judge how {sym}'s price is likely to move over the next 5 trading days compared with the statistical "
+          f"forecast above, which ignores the news. First list up to 3 positives and up to 3 negatives for {sym}. Write each "
+          f"one as one sentence in your own words that says what happened and why it matters for {sym}'s price (for example "
+          f"\"A recall of its main product could cut next quarter's sales.\"). Do not copy headlines. Peers' news counts "
+          f"only if it clearly affects {sym}. Weigh recent days more than older ones. Then give lean (strong_down, down, "
+          "neutral, up or strong_up), confidence (low, medium or high) and risk (elevated if an event such as earnings, a "
+          "court or regulatory decision, a deal or a trial result is due within the next 5 trading days, or the news is "
+          "unusually turbulent; otherwise normal). Pick a direction when the recent news clearly leans one way; use neutral "
+          "only when the evidence is balanced or there is almost no news."]
+    user = "\n".join(L)
+    return f"<|im_start|>system\n{SYSTEM}<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n", user
+
+
+def parse_verdict(text):
+    """Schema-checked verdict; anything unparsable or off-schema counts as neutral / low / normal (amendment C)."""
+    try:
+        v = json.loads(text)
+        out = {"lean": v["lean"], "confidence": v["confidence"], "risk": v["risk"],
+               "positives": [str(x)[:240] for x in v.get("positives", [])][:3], "negatives": [str(x)[:240] for x in v.get("negatives", [])][:3]}
+        if out["lean"] in LEAN_K and out["confidence"] in CONF_MULT and out["risk"] in RISK_SD:
+            return out, True
+    except (ValueError, KeyError, TypeError):
+        pass
+    return {**FALLBACK, "positives": [], "negatives": []}, False
+
+
+def generate(prompt, slot=0):
+    body = {"prompt": prompt, "n_predict": 700, "temperature": 0, "cache_prompt": True, "id_slot": slot, "json_schema": SCHEMA}
+    req = urllib.request.Request(f"http://127.0.0.1:{PORT}/completion", json.dumps(body).encode(), {"Content-Type": "application/json"})
+    r = json.load(urllib.request.urlopen(req, timeout=600))
+    t = r.get("timings", {})
+    return r.get("content", ""), {"prompt_tokens": t.get("prompt_n"), "output_tokens": t.get("predicted_n"),
+                                  "tok_per_s": round(t["predicted_per_second"], 1) if t.get("predicted_per_second") else None}
+
+
+# ---------------------------------------------------------------- cache, shadow log, index
+
+def cache_path(market, sym, asof, kind="json"):
+    return os.path.join(EVALS, market, f"{sym}_{asof}.{kind}")
+
+
+def _dump(obj, path):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(obj, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def partial(ctx):
+    """What the page can show before Qwen answers: price history and the model-only cone."""
+    base = dist(ctx["close"], ctx["m"], ctx["sd"], ctx["R"])
+    return {"status": "evaluating", "market": ctx["market"], "symbol": ctx["symbol"], "name": ctx["name"], "asof": ctx["asof"],
+            "close": ctx["close"], "history": ctx["history"], "model": {**base, "cone": cone(ctx["close"], ctx["asof"], ctx["m"], ctx["sd"], ctx["R"])},
+            "facts": ctx["facts"], "rank": ctx["rank"], "industry": ctx["industry"], "peers": ctx["peers"], "market_news": ctx["market_news"]}
+
+
+def evaluate(market, sym, device="GPU", log=print):
+    """Full evaluation of one stock (the llama-server on PORT must be running). Writes the cache, the index entry and
+    the shadow-log line; returns the result."""
+    t0 = time.time()
+    ctx = context(market, sym)
+    _dump(partial(ctx), cache_path(market, sym, ctx["asof"], "partial.json"))
+    news = own_headlines(sym, ctx["asof"]) if market == "nasdaq" else None
+    prompt, user = build_prompt(ctx, news)
+    text, timing = generate(prompt)
+    verdict, ok = parse_verdict(text)
+    m2, sd2, k = advise(ctx["m"], ctx["sd"], verdict)
+    out = partial(ctx)
+    out.update({"status": "done", "generated": datetime.now().isoformat(timespec="seconds"),
+                "advised": {**dist(ctx["close"], m2, sd2, ctx["R"]), "cone": cone(ctx["close"], ctx["asof"], m2, sd2, ctx["R"]),
+                            "k_sd": k, "sd_mult": RISK_SD[verdict["risk"]]},
+                "ai": {**verdict, "parse_ok": ok, "model": MODEL_NAME, "device": device, "seconds": round(time.time() - t0, 1), **timing},
+                "news": news, "status_note": "Qwen-advised range: unproven (forward shadow test, v8 amendment C)"})
+    _dump(out, cache_path(market, sym, ctx["asof"]))
+    try:
+        os.remove(cache_path(market, sym, ctx["asof"], "partial.json"))
+    except OSError:
+        pass
+    _shadow(market, ctx, m2, sd2, verdict, ok)
+    _index_add(market, ctx["asof"], sym, out)
+    log(f"[eval] {market} {sym} {ctx['asof']}: {verdict['lean']} / {verdict['confidence']} / {verdict['risk']}"
+        f"{'' if ok else ' (unparsable -> neutral)'}; P(up) {out['model']['p_up']:.0%} -> {out['advised']['p_up']:.0%}; "
+        f"{len(news['headlines']) if news else 0} headlines; {time.time() - t0:.1f}s", flush=True)
+    return out
+
+
+def _shadow(market, ctx, m2, sd2, verdict, ok):
+    path = os.path.join(EVALS, market, "advice_shadow.jsonl")
+    key = f'"asof": "{ctx["asof"]}", "symbol": "{ctx["symbol"]}"'
+    if os.path.exists(path) and key in open(path, encoding="utf-8").read():
+        return                                                             # one advised forecast per stock and close
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"asof": ctx["asof"], "symbol": ctx["symbol"], "generated": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                            "close": ctx["close"], "m": ctx["m"], "sd": ctx["sd"], "m_adv": m2, "sd_adv": sd2,
+                            "lean": verdict["lean"], "confidence": verdict["confidence"], "risk": verdict["risk"], "parse_ok": ok}) + "\n")
+
+
+def _index_add(market, asof, sym, out):
+    path = os.path.join(EVALS, market, f"index_{asof}.json")
+    idx = json.load(open(path)) if os.path.exists(path) else {}
+    idx[sym] = {"p_up": out["advised"]["p_up"], "median": out["advised"]["median"], "lo80": out["advised"]["lo80"],
+                "hi80": out["advised"]["hi80"], "lean": out["ai"]["lean"], "confidence": out["ai"]["confidence"], "risk": out["ai"]["risk"]}
+    _dump(idx, path)
+
+
+# ---------------------------------------------------------------- the queue and the background evaluator
+
+def enqueue(market, sym, prio):
+    os.makedirs(QUEUE, exist_ok=True)
+    if any(f.endswith(f"-{market}-{sym}.req") and f.startswith(f"{prio}-") for f in os.listdir(QUEUE)):
+        return
+    open(os.path.join(QUEUE, f"{prio}-{int(time.time() * 1000)}-{market}-{sym}.req"), "w").close()
+
+
+def queued():
+    if not os.path.isdir(QUEUE):
+        return []
+    out = []
+    for f in sorted(os.listdir(QUEUE)):
+        if f.endswith(".req"):
+            prio, _, market, sym = f[:-4].split("-", 3)
+            out.append((f, int(prio), market, sym))
+    return out
+
+
+def _state(**kw):
+    _dump({"pid": os.getpid(), "heartbeat": time.time(), "time": datetime.now().isoformat(timespec="seconds"), **kw}, STATE)
+
+
+def _alive(pid):
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+    import ctypes
+    h = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)            # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return False
+    code = ctypes.c_ulong()
+    ctypes.windll.kernel32.GetExitCodeProcess(h, ctypes.byref(code))
+    ctypes.windll.kernel32.CloseHandle(h)
+    return code.value == 259                                              # STILL_ACTIVE
+
+
+def _news_reading():
+    """True while the app-start refresh is reading the news with its own model (never two models on the GPU)."""
+    try:
+        s = json.load(open(REFRESH_STATUS))
+        return s.get("state") == "running" and "news" in s.get("step", "") and time.time() - os.path.getmtime(REFRESH_STATUS) < 3600
+    except (OSError, ValueError):
+        return False
+
+
+def _app_open(url):
+    try:
+        urllib.request.urlopen(url + "/api/rankings/status", timeout=3).read()
+        return True
+    except Exception:
+        return False
+
+
+def _tdr_reports():
+    try:
+        return set(os.listdir(r"C:\Windows\LiveKernelReports\WATCHDOG"))
+    except OSError:
+        return set()
+
+
+def serve(a):
+    if not (a.allow_gpu or a.cpu):
+        raise SystemExit("choose --allow-gpu (only while you are at the PC) or --cpu")
+    os.makedirs(EVALS, exist_ok=True)
+    if a.log:                                                              # started hidden by the app: no console
+        sys.stdout = sys.stderr = open(a.log, "a", buffering=1, encoding="utf-8")
+    lockf = open(LOCK, "a+")
+    if os.name == "nt":
+        import msvcrt
+        try:
+            msvcrt.locking(lockf.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            print("[eval] another evaluator is running", flush=True)
+            return
+    # a llama-server left on PORT by an evaluator that died is ours to stop
+    try:
+        old = json.load(open(STATE)).get("server_pid")
+        if old and _alive(old):
+            subprocess.run(["taskkill", "/PID", str(old), "/F"], capture_output=True)
+    except (OSError, ValueError):
+        pass
+    gpu = a.allow_gpu and not a.cpu
+    device = "GPU (Vulkan0)" if gpu else "CPU"
+    tdr0, srv, idle_since, misses, done = _tdr_reports(), None, time.time(), 0, 0
+
+    def stop_server():
+        nonlocal srv
+        if srv:
+            srv.close()
+            srv = None
+
+    try:
+        while True:
+            if gpu and _tdr_reports() - tdr0:
+                stop_server()
+                _state(state="stopped", note="a GPU driver reset was reported: evaluation stopped", done=done)
+                print("[eval] WARNING: new GPU driver reset report; stopping", flush=True)
+                return
+            if not _app_open(a.app_url):
+                misses += 1
+                if misses >= 2:
+                    _state(state="stopped", note="the app was closed", done=done)
+                    return
+            else:
+                misses = 0
+            jobs = queued()
+            for f, prio, market, sym in jobs:                              # clicked stocks: chart data straight away
+                if prio == 0:
+                    try:
+                        asof = latest_asof(market)
+                        if asof and not os.path.exists(cache_path(market, sym, asof)) and not os.path.exists(cache_path(market, sym, asof, "partial.json")):
+                            _dump(partial(context(market, sym)), cache_path(market, sym, asof, "partial.json"))
+                    except Exception as e:  # noqa: BLE001 - reported when the job runs
+                        print(f"[eval] partial {market} {sym}: {type(e).__name__}: {e}", flush=True)
+            if not jobs:
+                if time.time() - idle_since > IDLE_EXIT_S:
+                    _state(state="stopped", note="idle: model unloaded", done=done)
+                    return
+                _state(state="idle", queue=0, done=done, server_pid=srv.proc.pid if srv and srv.proc else None)
+                time.sleep(1)
+                continue
+            if _news_reading():
+                stop_server()
+                _state(state="waiting", note="waiting for the news reading to finish", queue=len(jobs), done=done)
+                time.sleep(3)
+                continue
+            f, prio, market, sym = jobs[0]
+            try:
+                asof = latest_asof(market)
+                if asof and not os.path.exists(cache_path(market, sym, asof)):
+                    if srv is None:
+                        _state(state="loading", note="loading the AI model", current={"market": market, "symbol": sym}, queue=len(jobs), done=done)
+                        srv = llm_news.Server(gpu, ctx_per_slot=CTX, slots=SLOTS, port=PORT)
+                    _state(state="running", current={"market": market, "symbol": sym}, queue=len(jobs), done=done,
+                           server_pid=srv.proc.pid if srv.proc else None)
+                    evaluate(market, sym, device=device)
+                    done += 1
+            except NotForecast as e:
+                _dump({"status": "error", "error": str(e), "market": market, "symbol": sym, "asof": asof},
+                      cache_path(market, sym, asof or "none", "error.json"))
+            except Exception as e:  # noqa: BLE001 - one bad stock must not stop the queue
+                print(f"[eval] {market} {sym} failed: {type(e).__name__}: {e}", flush=True)
+                _dump({"status": "error", "error": f"{type(e).__name__}: {e}", "market": market, "symbol": sym, "asof": asof},
+                      cache_path(market, sym, asof or "none", "error.json"))
+            for g, _, m2, s2 in jobs:                                      # drop this stock's duplicates too
+                if m2 == market and s2 == sym:
+                    try:
+                        os.remove(os.path.join(QUEUE, g))
+                    except OSError:
+                        pass
+            idle_since = time.time()
+    finally:
+        stop_server()
+        if os.path.exists(STATE):
+            try:
+                s = json.load(open(STATE))
+                if s.get("state") not in ("stopped",):
+                    _state(state="stopped", note="evaluator exited", done=done)
+            except (OSError, ValueError):
+                pass
+
+
+def batch(a=None):
+    """App-start set (NASDAQ): top/bottom 25 by rank score and top/bottom 10 by model P(up), not yet cached."""
+    _market_dirs("nasdaq")
+    rk = json.load(open(os.path.join(v6.OUT, "rankings.json")))
+    asof = latest_asof("nasdaq")
+    rows = rk["rankings"]
+    pick = [r["symbol"] for r in rows[:25] + rows[-25:]]
+    fc = sorted([r for r in rows if r.get("fc")], key=lambda r: r["fc"]["p_up"])
+    pick += [r["symbol"] for r in fc[:10] + fc[-10:]]
+    n = 0
+    for s in dict.fromkeys(pick):
+        if not os.path.exists(cache_path("nasdaq", s, asof)):
+            enqueue("nasdaq", s, 1)
+            n += 1
+    print(f"[eval] app-start batch: {n} stocks queued for {asof}", flush=True)
+    return n
+
+
+def start_daemon(app_url="http://127.0.0.1:5080"):
+    """Start the background evaluator (hidden) unless one is running."""
+    try:
+        s = json.load(open(STATE))
+        if s.get("state") != "stopped" and _alive(s["pid"]) and time.time() - s["heartbeat"] < 60:
+            return False
+    except (OSError, ValueError, KeyError):
+        pass
+    subprocess.Popen([sys.executable, "-W", "ignore", "-m", "trademaster_ml.stock_eval", "serve", "--allow-gpu", "--app-url", app_url,
+                      "--log", os.path.join("private", "reports", "jobs", "stock_eval.log")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
+    return True
+
+
+# ---------------------------------------------------------------- forward test
+
+def score(a):
+    market = getattr(a, "market", "nasdaq") if a else "nasdaq"
+    d = _market_dirs(market)
+    path = os.path.join(EVALS, market, "advice_shadow.jsonl")
+    if not os.path.exists(path):
+        print(f"[eval] {market}: no advised forecasts yet", flush=True)
+        return None
+    meta = json.load(open(os.path.join(d["gpu"], "meta.json")))
+    T, N = meta["T"], meta["N"]
+    di = {x: i for i, x in enumerate(meta["dates"])}
+    si = {x: i for i, x in enumerate(meta["symbols"])}
+    lc = np.memmap(os.path.join(d["gpu"], "logclose.f32"), np.float32, "r", shape=(T, N))
+    by_date = {}
+    for line in open(path, encoding="utf-8"):
+        r = json.loads(line)
+        by_date.setdefault(r["asof"], []).append(r)
+    days = []
+    for asof, rows in sorted(by_date.items()):
+        t = di.get(asof)
+        if t is None or t + v6.H > T - 1:
+            continue
+        rec = _shadow_record(d["v7"], asof)
+        if not rec:
+            continue
+        R = np.array(rec["R_v7"])
+        rows = [r for r in rows if r["symbol"] in si]
+        j = np.array([si[r["symbol"]] for r in rows])
+        y = np.full(len(j), np.nan)
+        for k in range(1, v6.H + 1):
+            v = lc[t + k, j].astype(np.float64)
+            y = np.where(np.isfinite(v), v - lc[t, j], y)
+        ok = np.isfinite(y)
+        if not ok.any():
+            continue
+        g = lambda key: np.array([r[key] for r in rows], float)[ok]
+        m, sd, ma, sa, y = g("m"), g("sd"), g("m_adv"), g("sd_adv"), y[ok]
+        qa = v7.quantiles(ma, sa, R)
+        hit = lambda mm: float(np.mean(np.sign(mm[(mm != 0) & (y != 0)]) == np.sign(y[(mm != 0) & (y != 0)]))) if ((mm != 0) & (y != 0)).any() else float("nan")
+        days.append({"asof": asof, "n": int(ok.sum()), "crps_adv": float(v7.crps_rows(qa, y).mean()),
+                     "crps_model": float(v7.crps_rows(v7.quantiles(m, sd, R), y).mean()), "hit_adv": hit(ma), "hit_model": hit(m),
+                     "cov80_adv": float(np.mean((y >= qa[:, v7.I10]) & (y <= qa[:, v7.I90])))})
+    n_rows = sum(x["n"] for x in days)
+    out = {"market": market, "matured_dates": len(days), "matured_forecasts": n_rows, "needed_dates": 60, "needed_forecasts": 300,
+           "logged": sum(len(v) for v in by_date.values()), "days": days, "status": "collecting"}
+    if len(days) >= 5:
+        from .daily_v4 import block_bootstrap_diff
+        out["crps_adv_minus_model"] = block_bootstrap_diff([x["crps_adv"] for x in days], [x["crps_model"] for x in days])
+        w = np.array([x["n"] for x in days], float)
+        for k in ("hit_adv", "hit_model", "cov80_adv"):
+            v = np.array([x[k] for x in days])
+            out[k] = float(np.nansum(v * w) / w[np.isfinite(v)].sum())
+    if len(days) >= 60 and n_rows >= 300:
+        promoted = out["crps_adv_minus_model"][2] < 0 and out["hit_adv"] >= out["hit_model"] and 0.75 <= out["cov80_adv"] <= 0.85
+        out["status"] = "promoted" if promoted else "not promoted: advice weights set to 0"
+    _dump(out, os.path.join(EVALS, market, "advice_score.json"))
+    print(f"[eval] {market} advice forward test: {len(days)} of 60 dates, {n_rows} of 300 forecasts matured ({out['status']})", flush=True)
+    return out
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("cmd", choices=["eval", "serve", "batch", "score", "prompt"])
+    ap.add_argument("symbols", nargs="*")
+    ap.add_argument("--market", choices=["nasdaq", "sgx"], default="nasdaq")
+    ap.add_argument("--allow-gpu", action="store_true")
+    ap.add_argument("--cpu", action="store_true")
+    ap.add_argument("--app-url", default="http://127.0.0.1:5080")
+    ap.add_argument("--log", help="serve: append output to this file")
+    a = ap.parse_args()
+    if a.cmd == "serve":
+        serve(a)
+    elif a.cmd == "batch":
+        batch(a)
+    elif a.cmd == "score":
+        score(a)
+    elif a.cmd == "prompt":                                                # show the exact prompt (no model needed)
+        for s in a.symbols:
+            ctx = context(a.market, s)
+            print(build_prompt(ctx, own_headlines(s, ctx["asof"]) if a.market == "nasdaq" else None)[1])
+    else:
+        if not (a.allow_gpu or a.cpu):
+            raise SystemExit("choose --allow-gpu (only while you are at the PC) or --cpu")
+        gpu = a.allow_gpu and not a.cpu
+        srv = llm_news.Server(gpu, ctx_per_slot=CTX, slots=SLOTS, port=PORT)
+        try:
+            for s in a.symbols:
+                r = evaluate(a.market, s, device="GPU (Vulkan0)" if gpu else "CPU")
+                for x in r["ai"]["positives"]:
+                    print(f"    + {x}")
+                for x in r["ai"]["negatives"]:
+                    print(f"    - {x}")
+        finally:
+            srv.close()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -63,6 +63,13 @@ td.name{text-align:left;color:var(--muted);max-width:190px;overflow:hidden;text-
 .gauge{height:10px;border-radius:5px;background:linear-gradient(90deg,#5a1f29,#262c34 50%,#164d36);position:relative}
 .gauge i{position:absolute;top:-3px;width:4px;height:16px;background:var(--text);border-radius:2px;margin-left:-2px}
 .empty{color:var(--dim);padding:24px;text-align:center}
+.spinwrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:10px;background:rgba(20,24,29,.72);z-index:3;color:var(--text);font-weight:600}
+.spinwrap .sub{color:var(--muted);font-weight:400;font-size:12px}
+.ring{width:22px;height:22px;border:3px solid #2f3a47;border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.reasons{display:grid;grid-template-columns:1fr 1fr;gap:12px}.reasons ul{margin:4px 0 0;padding-left:18px}.reasons li{margin:3px 0;line-height:1.45}
+.legend{display:flex;gap:14px;flex-wrap:wrap;text-transform:none;letter-spacing:0;font-size:12px}.legend i{display:inline-block;width:14px;height:3px;vertical-align:middle;margin-right:5px;border-radius:2px}
+@media (max-width:760px){.reasons{grid-template-columns:1fr}}
 @media (max-width:760px){.layout{grid-template-columns:1fr}nav#tree{display:none}#navsel{display:block}.two{grid-template-columns:1fr}
   header{gap:8px;flex-wrap:wrap;height:auto;padding:8px 10px}.crumbs{order:3;width:100%}.search input{width:150px}.links{display:none}.sugg{width:280px}main{padding:10px}}
 *{scrollbar-width:thin;scrollbar-color:#2e333c transparent}
@@ -210,7 +217,7 @@ async function viewAll() {
 }
 
 async function viewOverview(m) {
-  const d = await data(m), M = MARKETS[m];
+  const [d, ev] = await Promise.all([data(m), evals(m)]), M = MARKETS[m];
   crumbs({ m }, 'Overview');
   if (d.error) return `<div class="empty">No ${M.name} data yet: ${esc(d.error)}</div>`;
   const h = d.history, st = d.status || {}, cards = [];
@@ -219,6 +226,9 @@ async function viewOverview(m) {
   if (d.v7) { const sh = d.v7.shadow || {};
     cards.push(card('Price forecasts (forward test)', [['scored so far', `${sh.matured_dates ?? 0} of 60 days`],
       ['80% range held', sh.cov80 != null ? pct(sh.cov80, 1, false) : 'pending'], ['up/down right', sh.hit != null ? pct(sh.hit, 1, false) : 'pending']])); }
+  if (ev) { const sc = ev.score || {}, nIdx = Object.keys(ev.index || {}).length, dm = ev.daemon || {};
+    cards.push(card('AI-advised ranges (forward test)', [['evaluated for this close', `${nIdx} stocks`], ['scored so far', `${sc.matured_dates ?? 0} of 60 days`],
+      ['forecasts scored', `${sc.matured_forecasts ?? 0} of 300`], ['evaluator', dm.state === 'running' ? `working (${esc(dm.current && dm.current.symbol)})` : esc(dm.state || 'not started')]])); }
   cards.push(card('Status', [['ranking', st.adopted === true ? 'adopted' : st.adopted === false ? 'not adopted' : 'pending'],
     ['data as of', esc(d.asof)], ['universe', d.universe + ' stocks'], ['generated', esc((d.generated || '').replace('T', ' ').slice(0, 16))]]));
   const tbl = (title, rows) => `<div class="panel"><div class="ph">${title}</div><div class="scroll" style="max-height:none"><table><thead>${SHORT_HEAD}</thead><tbody>` +
@@ -251,7 +261,7 @@ async function viewRankings(m) {
 }
 
 async function viewForecasts(m) {
-  const d = await data(m), M = MARKETS[m];
+  const [d, ev] = await Promise.all([data(m), evals(m)]), M = MARKETS[m], AI = (ev && ev.index) || {};
   crumbs({ m }, 'Price forecasts');
   if (d.error) return `<div class="empty">${esc(d.error)}</div>`;
   const s = UI.forecasts, q = s.q.toLowerCase(), news = m === 'nasdaq';
@@ -266,12 +276,13 @@ async function viewForecasts(m) {
     `Ranges have been well calibrated in testing; up/down is right ~51–52% on a typical stock and 56–58% on the bottom-ranked ones.${news ? ' "With news" adds the local AI model\'s read of the last 5 sessions (unproven).' : ''}</div>` +
     `<div class="panel"><div class="ph"><span>${rows.length} stocks</span><div class="spacer"></div><span class="tools"><input id="fq" placeholder="filter symbol or name" value="${esc(s.q)}" oninput="UI.forecasts.q=this.value;rerenderKeep('fq')"></span></div>` +
     `<div class="scroll"><table><thead><tr>${th('sym', 'Symbol')}<th style="text-align:left">Company</th><th>Close</th>${th('move', '5-day median')}<th>Range</th>` +
-    `<th>80% range</th>${th('width', '80% width')}${th('pup', 'P(up)')}<th>P(beats ${M.bench})</th>${news ? '<th>News</th><th>P(up) with news</th>' : ''}</tr></thead><tbody>` +
+    `<th>80% range</th>${th('width', '80% width')}${th('pup', 'P(up)')}<th>P(beats ${M.bench})</th>${news ? '<th>News</th><th>P(up) with news</th>' : ''}<th title="Qwen-advised P(up), for stocks already evaluated (click a stock to evaluate it)">AI P(up)</th></tr></thead><tbody>` +
     rows.slice(0, 600).map(r => { const f = r.fc, n = f.news;
       return `<tr class="click" onclick="${go(m, r.symbol)}"><td><b>${esc(r.symbol)}</b></td><td class="name">${esc(r.name)}</td><td class="num">${px(r.close)}</td>` +
         `<td class="num ${cls(f.median - r.close)}">${px(f.median)} <span class="dim">${pct(f.exp_ret, 1)}</span></td><td>${rangeBar(r)}</td>` +
         `<td class="num dim">${px(f.lo80)}–${px(f.hi80)}</td><td class="num dim">${pct((f.hi80 - f.lo80) / r.close, 0, false)}</td><td class="num">${pup(f.p_up)}</td><td class="num">${pup(f.p_beat_qqq)}</td>` +
-        (news ? (n && n.n ? `<td class="num ${cls(n.news_dir)}">${n.news_dir > 0 ? '+' : ''}${n.news_dir.toFixed(1)} <span class="dim">(${n.n})</span></td><td class="num">${pup(n.p_up)}</td>` : '<td class="num dim">—</td><td class="num dim">—</td>') : '') + '</tr>'; }).join('') +
+        (news ? (n && n.n ? `<td class="num ${cls(n.news_dir)}">${n.news_dir > 0 ? '+' : ''}${n.news_dir.toFixed(1)} <span class="dim">(${n.n})</span></td><td class="num">${pup(n.p_up)}</td>` : '<td class="num dim">—</td><td class="num dim">—</td>') : '') +
+        (AI[r.symbol] ? `<td class="num" title="Qwen: ${esc(AI[r.symbol].lean)}, ${esc(AI[r.symbol].confidence)} confidence; model only ${(f.p_up * 100).toFixed(0)}%">${pup(AI[r.symbol].p_up)} <span class="chip" style="font-size:9px;padding:0 4px">AI</span></td>` : '<td class="num dim">—</td>') + '</tr>'; }).join('') +
     '</tbody></table></div></div>';
 }
 
@@ -379,13 +390,95 @@ async function viewStock(m, sym) {
       `<td style="text-align:left;white-space:normal">${esc(x.headline)}</td></tr>`).join('') + '</tbody></table></div>' : '';
   const whyList = Object.entries(r.why || {}).filter(([, v]) => isFinite(v)).sort((a, b) => Math.abs(b[1] - 0.5) - Math.abs(a[1] - 0.5))
     .map(([k, v]) => `<tr><td>${esc(WHY[k] || k)}</td><td class="num ${v > 0.5 ? 'up' : 'down'}">${(v * 100).toFixed(0)}</td><td style="text-align:left"><span class="bar" style="width:${v * 150}px;background:${v > 0.5 ? 'var(--up)' : 'var(--down)'}"></span></td></tr>`).join('');
+  const tok = (viewStock.tok = (viewStock.tok || 0) + 1);
+  setTimeout(() => loadEval(m, sym, tok), 0);
   return `<h1>${esc(sym)} <span class="muted" style="font-weight:400">${esc(r.name)}</span> <span class="chip">${M.name}</span>${inMom ? ' <span class="chip warn">IN MOMENTUM PICKS</span>' : ''}</h1>` +
     `<div class="lead">Close ${esc(d.asof)}. Forecasts are for the next 5 trading days and are in a forward test.` +
     (m === 'nasdaq' ? ` <a href="/?symbol=${encodeURIComponent(sym)}">Open chart in Watchlist →</a>` : '') + `</div>` +
+    `<div class="panel"><div class="ph"><span>Last year and the next 5 trading days</span><div class="spacer"></div><span class="legend">` +
+    `<span><i style="background:#6b7684"></i>model only</span><span><i id="lgAi" style="background:var(--accent)"></i>AI-advised (Qwen)</span><span class="dim">solid = median · dashed = 80% · dotted = 95%</span></span></div>` +
+    `<div style="position:relative"><div class="chart" id="stockchart" style="height:340px"></div><div class="spinwrap" id="spin"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub">asking for the analysis</div></div></div></div></div>` +
+    `<div class="panel" id="aipanel" style="position:relative;min-height:120px"><div class="ph">AI analysis (Qwen, local) <span class="chip warn">UNPROVEN · FORWARD TEST</span></div>` +
+    `<div class="spinwrap" id="spin2"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub2">Qwen is reading ${m === 'nasdaq' ? 'its news, ' : ''}the numbers and its peers</div></div></div><div class="pad" id="aibody"></div></div>` +
     (f ? `<div class="panel pad big"><div class="muted" style="margin-bottom:6px">5-day range: thin = 95%, thick = 80%, white line = today's close, dot = median</div>${rangeBar(r)}` +
       `<div style="display:flex;justify-content:space-between" class="num dim"><span>${px(f.lo95)}</span><span>${px(f.hi95)}</span></div></div>` : '') +
     `<div class="cards">${cards.join('')}</div>` +
     `<div class="two"><div class="panel"><div class="ph">What drives its rank (percentile among peers)</div><table><tbody>${whyList || '<tr><td class="dim">—</td></tr>'}</tbody></table></div>${news || `<div class="panel"><div class="ph">News</div><div class="empty">${m === 'nasdaq' ? 'No headlines in the last 5 sessions.' : 'No SGX news source yet.'}</div></div>`}</div>`;
+}
+
+// ---------------------------------------------------------------- per-stock AI evaluation (v8 amendment C)
+const LEANS = { strong_down: ['strongly down', 'down'], down: ['down', 'down'], neutral: ['neutral', ''], up: ['up', 'up'], strong_up: ['strongly up', 'up'] };
+async function loadEval(m, sym, tok) {
+  if (tok !== viewStock.tok) return;
+  let res;
+  try { res = await (await fetch(`/api/stock/eval?market=${m}&symbol=${encodeURIComponent(sym)}`)).json(); }
+  catch (e) { res = { state: 'error', result: { error: 'could not reach the app: ' + e.message } }; }
+  if (tok !== viewStock.tok || !$('stockchart')) return;
+  const r = res.result;
+  if (r && r.history && (!loadEval.drawn || loadEval.drawn.tok !== tok || loadEval.drawn.status !== r.status)) { drawStock(r, m); loadEval.drawn = { tok, status: r.status }; }
+  if (res.state === 'done') { $('spin').style.display = 'none'; $('spin2').style.display = 'none'; $('aibody').innerHTML = aiBody(r, m); EVX[m] = null; return; }
+  if (res.state === 'error') {
+    $('spin').style.display = 'none'; $('spin2').style.display = 'none';
+    $('aibody').innerHTML = `<div class="empty">Could not evaluate: ${esc(r && r.error)}</div>`; return;
+  }
+  const dm = res.daemon || {}, cur = dm.current && dm.current.symbol;
+  const sub = dm.state === 'waiting' ? 'waiting for the news reading to finish' : dm.state === 'loading' ? 'loading the AI model'
+    : cur === sym ? 'Qwen is reading the news and the numbers' : res.position > 1 ? `queued: ${res.position - 1} stock${res.position > 2 ? 's' : ''} ahead` : 'starting the evaluator';
+  if ($('spinsub')) $('spinsub').textContent = sub;
+  if ($('spinsub2')) $('spinsub2').textContent = sub;
+  if (r && r.history) $('spin').style.display = 'none';                 // the chart is ready; the AI panel keeps spinning
+  setTimeout(() => loadEval(m, sym, tok), 2000);
+}
+function drawStock(r, m) {
+  if (!window.LightweightCharts || !$('stockchart')) return;
+  charts.forEach(c => { try { c.remove(); } catch (e) { } }); charts = [];
+  $('stockchart').innerHTML = '';
+  const ch = LightweightCharts.createChart($('stockchart'), { layout: { background: { color: '#14181d' }, textColor: '#8a93a0' },
+    grid: { vertLines: { color: '#1b2027' }, horzLines: { color: '#1b2027' } }, rightPriceScale: { borderColor: '#262c34' },
+    timeScale: { borderColor: '#262c34', rightOffset: 3 }, autoSize: true, crosshair: { mode: 0 } });
+  charts.push(ch);
+  ch.addLineSeries({ color: '#e6e9ee', lineWidth: 2, priceLineVisible: false, lastValueVisible: false }).setData(r.history.map(([t, v]) => ({ time: t, value: v })));
+  const band = (cone, color, label) => {
+    const ln = (k, style) => ch.addLineSeries({ color, lineWidth: 1, lineStyle: style, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false })
+      .setData(cone.map(p => ({ time: p.date, value: p[k] })));
+    ln('lo95', 1); ln('hi95', 1); ln('lo80', 2); ln('hi80', 2);
+    ch.addLineSeries({ color, lineWidth: 2, priceLineVisible: false, lastValueVisible: true, title: label, crosshairMarkerVisible: false })
+      .setData(cone.map(p => ({ time: p.date, value: p.median })));
+  };
+  band(r.model.cone, '#6b7684', 'model');
+  if (r.advised) {
+    const c = r.advised.median >= r.close ? '#16c784' : '#f6465d';
+    band(r.advised.cone, c, 'AI');
+    if ($('lgAi')) $('lgAi').style.background = c;
+  }
+  const n = r.history.length;
+  requestAnimationFrame(() => ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 70), to: n + 7 }));   // ~3 months + the 5-day cone
+}
+function aiBody(r, m) {
+  const a = r.ai, ad = r.advised, mo = r.model, M = MARKETS[m], L = LEANS[a.lean] || [a.lean, ''];
+  const head = `<div class="cards" style="margin-bottom:12px">` +
+    card('Qwen\'s verdict', [['lean', `<b class="${L[1]}">${esc(L[0])}</b>`], ['confidence', esc(a.confidence)], ['risk', a.risk === 'elevated' ? '<span style="color:var(--warn)">elevated (wider range)</span>' : 'normal'],
+      ['shift applied', `${a.parse_ok ? '' : '(unreadable reply: neutral) '}${(ad.k_sd >= 0 ? '+' : '') + ad.k_sd.toFixed(2)} sd`]]) +
+    card('AI-advised, 5 days', [['median', `${M.ccy}${px(ad.median)} (${pct(ad.exp_ret, 1)})`], ['80% range', `${px(ad.lo80)} – ${px(ad.hi80)}`], ['95% range', `${px(ad.lo95)} – ${px(ad.hi95)}`], ['P(up)', pup(ad.p_up)]]) +
+    card('Model only, 5 days', [['median', `${M.ccy}${px(mo.median)} (${pct(mo.exp_ret, 1)})`], ['80% range', `${px(mo.lo80)} – ${px(mo.hi80)}`], ['95% range', `${px(mo.lo95)} – ${px(mo.hi95)}`], ['P(up)', pup(mo.p_up)]]) +
+    `</div>`;
+  const li = xs => xs.length ? xs.map(x => `<li>${esc(x)}</li>`).join('') : '<li class="dim">none given</li>';
+  const reasons = `<div class="reasons"><div><b class="up">Positives</b><ul>${li(a.positives)}</ul></div><div><b class="down">Negatives</b><ul>${li(a.negatives)}</ul></div></div>`;
+  const nw = r.news;
+  const hl = nw ? (nw.headlines.length ? `<details style="margin-top:12px"><summary class="muted" style="cursor:pointer">The ${nw.headlines.length} headlines Qwen read (30 days to ${esc(nw.cutoff.slice(0, 16).replace('T', ' '))} UTC; ${nw.n_recap_removed} templated recaps removed)</summary><table><tbody>` +
+      nw.headlines.map(h => `<tr><td class="dim" style="width:90px;text-align:left">${esc(h.t.slice(0, 10))}</td><td style="text-align:left;white-space:normal">${esc(h.headline)}</td></tr>`).join('') + '</tbody></table></details>'
+      : '<div class="dim" style="margin-top:10px">No headlines about this stock in the last 30 days.</div>')
+    : '<div class="dim" style="margin-top:10px">No news available for this market: Qwen judged from the numbers only.</div>';
+  const peers = r.peers && r.peers.length ? `<div class="muted" style="margin-top:10px">Same-industry peers it considered: ${r.peers.map(p => `<a href="#/${m}/stock/${encodeURIComponent(p.symbol)}">${esc(p.symbol)}</a> <span class="${cls(p.news_dir)}">${p.news_dir > 0 ? '+' : ''}${p.news_dir.toFixed(1)}</span>`).join(' · ')}</div>` : '';
+  return head + reasons + hl + peers +
+    `<div class="dim" style="margin-top:10px">${esc(a.model)} on ${esc(a.device)} · ${a.seconds}s · ${esc((r.generated || '').replace('T', ' '))}. The shift is a fixed rule written before any result; ` +
+    `both forecasts are logged and a forward test decides whether the AI-advised one is kept.</div>`;
+}
+const EVX = {};
+async function evals(m) {                                       // cached AI evaluations for the latest close + forward-test score
+  if (EVX[m]) return EVX[m];
+  try { EVX[m] = await (await fetch('/api/stock/evals?market=' + m)).json(); } catch (e) { EVX[m] = { index: {} }; }
+  return EVX[m];
 }
 
 // ---------------------------------------------------------------- router + search + refresh status
