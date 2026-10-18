@@ -65,3 +65,8 @@ A check of the earnings matcher (6,732 of 329,865 items matched) showed preview 
 Q1 Earnings" and "Likely To Report Higher Q4 Earnings". Items whose headline also contains any of `ahead of`,
 `likely to`, `preview`, `expect`, `what to watch`, `could`, `will report` or `set to report` are **not** earnings
 items. Nothing else changes.
+
+## Amendment C (2026-10-18, still before any v5 result)
+A check of MU's detected earnings days showed other companies' earnings items tagged with many tickers (e.g. 13 and
+23 Jul 2026). An earnings item now counts only for its symbols if it is tagged with **at most 3** tickers. Nothing else
+changes.
