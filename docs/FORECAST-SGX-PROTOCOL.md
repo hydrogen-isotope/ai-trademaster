@@ -99,5 +99,44 @@ problems. The fixes:
    It is used for betas, residual momentum, market volatility and the small drift term. **Labelled "STI proxy",
    not STI.**
 
-## Results
-(not yet run)
+## Results (survivor-only universe; STI proxy)
+
+### Ranker, development 2016-01-04 → 2022-12-30 (704,906 universe stock-days)
+
+| model | IC (t) | top > bottom | L/S net /yr | L/S Sharpe | turnover | long-only vs STI proxy /yr |
+|---|---|---|---|---|---|---|
+| B1 momentum 12-1 | +0.028 (4.0) | 59% | +5.9% | 0.23 | 21% | −8.1% |
+| B2 reversal 1w | +0.071 (13.1) | 61% | −20.6% | −0.84 | 86% | −16.5% |
+| R ridge | +0.097 (17.1) | 66% | −0.7% | −0.04 | 76% | −14.9% |
+| placebo | +0.001 | | | | | |
+| R, features 1 day older | +0.066 (9.9) | 61% | −10.1% | −0.55 | 57% | −15.7% |
+
+### Ranker, final test 2023-01-03 → 2026-10-09 (run once)
+
+| model | IC (t) | top > bottom | L/S Sharpe | at 10% borrow | long-only vs STI proxy /yr (IR) |
+|---|---|---|---|---|---|
+| B1 momentum 12-1 | +0.027 (3.1) | 53% | −0.02 | −0.46 | **+8.5% (0.47)** |
+| B2 reversal 1w | +0.046 (6.0) | 50% | −3.36 | −3.80 | −21.8% (−1.43) |
+| **R ridge (candidate)** | **+0.057 (6.7)** | 51% | **−3.09** | −3.55 | −21.3% (−2.33) |
+
+**Adoption:** the IC passes and beats the baselines, but net Sharpe is −3.09 < 0.5. **The SGX ranker is NOT adopted.**
+
+Reading:
+- The SGX IC is real but comes mostly from short-term reversal, i.e. bid-ask bounce in thinly traded stocks. The edge
+  halves with one day of delay, and it turns over 76% of the portfolio each week, which 30 bps costs wipe out.
+- Plain 12-1 momentum was the only profitable long-only signal in the test (+8.5%/yr vs the proxy). It was not the
+  candidate and is **not** adopted after the fact. It would need its own pre-registered, forward test.
+
+### Price forecasts (v7 method)
+
+| period | model | CRPS | vs RW (95% CI) | 80% cov | 95% cov | up/down hit |
+|---|---|---|---|---|---|---|
+| dev 2016–22 | RW | 0.02144 | — | 80.0% | 94.9% | — |
+| dev 2016–22 | **v7 s=0.5 (chosen)** | 0.02141 | −2.8e-5 [−4.2e-5, −1.5e-5] | 79.9% | 94.9% | 52.3% |
+| dev 2016–22 | v7 s=1.0 | 0.02149 | +5.0e-5 (worse) | 79.9% | 94.8% | 52.1% |
+| test 2023–26 | RW | 0.02101 | — | 79.9% | 94.9% | — |
+| test 2023–26 | v7 s=0.5 | 0.02102 | −1.4e-6 [−1.9e-5, +1.6e-5] | 79.9% | 94.9% | 52.3% |
+
+The ranges are well calibrated in both periods. Up/down is 52.3% in both. The accuracy gain over a random walk is
+significant in development but not in the test. The SGX v7 forecasts go into the forward shadow test (separate log)
+and are shown labelled "shadow".

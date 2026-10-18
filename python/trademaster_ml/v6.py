@@ -23,13 +23,32 @@ TRAIN_START, DEV_START, DEV_END, TEST_START = "2017-01-03", "2021-01-04", "2024-
 RIDGE_ALPHA = 10.0
 COST, BORROW = 0.0010, 0.01        # per side on traded weight; per year on the short side
 CANDIDATE = "R ridge"                # amendment C (before the final test): best development IC
+MARKET = "nasdaq"
+NAMES_FILE = os.path.join("private", "data", "us", "assets.json")
+V7_OUT = os.path.join("private", "reports", "v7")
+
+
+def use_market(market):
+    """Point every path, period and cost at one market. NASDAQ is the default; SGX follows docs/FORECAST-SGX-PROTOCOL.md."""
+    global MARKET, GPU_DIR, OUT, TRAIN_START, DEV_START, DEV_END, TEST_START, COST, NAMES_FILE, V7_OUT, MLP_DIR, MODELS
+    MARKET = market
+    if market == "sgx":
+        GPU_DIR = os.path.join("private", "data", "sgx", "gpu")
+        OUT = os.path.join("private", "reports", "sgx", "v6")
+        TRAIN_START, DEV_START, DEV_END, TEST_START = "2003-01-02", "2016-01-04", "2022-12-30", "2023-01-03"
+        COST = 0.0030
+        NAMES_FILE = os.path.join("private", "data", "sgx", "assets.json")
+        V7_OUT = os.path.join("private", "reports", "sgx", "v7")
+        MODELS = os.path.join("private", "models", "sgx")
+    MLP_DIR = os.path.join(OUT, "mlp")
 BORROW_HARD = 0.10                 # amendment A: realistic borrow for the speculative short leg
 
 
 class Panel:
     """Universe stock-days as flat rows (day index, stock index), with features and targets."""
 
-    def __init__(self, d=GPU_DIR):
+    def __init__(self, d=None):
+        d = d or GPU_DIR
         meta = json.load(open(os.path.join(d, "meta.json")))
         fmeta = json.load(open(os.path.join(d, "features.json")))
         self.dates = meta["dates"]
@@ -480,7 +499,7 @@ def rank(args):
     cal = calibration(P, hist, periods)
     ev = evaluate(P, hist, periods[1][0], periods[1][1], label, series=True)
     # today's table
-    names = {a["symbol"]: a.get("name") or "" for a in json.load(open(os.path.join("private", "data", "us", "assets.json")))}
+    names = {a["symbol"]: a.get("name") or "" for a in json.load(open(NAMES_FILE))}
     n_today = P.n[rows]
     pct = np.argsort(np.argsort(score)) / max(len(score) - 1, 1)
     dec = np.minimum((pct * 10).astype(int), 9)
@@ -497,13 +516,13 @@ def rank(args):
     table.sort(key=lambda r: -r["score_pct"])
     # v7 price forecasts (shadow), when written for the same close
     v7 = None
-    fp = os.path.join("private", "reports", "v7", "forecast.json")
+    fp = os.path.join(V7_OUT, "forecast.json")
     if os.path.exists(fp):
         f = json.load(open(fp))
         if f.get("asof") == P.dates[last]:
             for r in table:
                 r["fc"] = f["rows"].get(r["symbol"])
-            sp = os.path.join("private", "reports", "v7", "shadow_score.json")
+            sp = os.path.join(V7_OUT, "shadow_score.json")
             v7 = {"model": f["model"], "status": f["status"], "shadow": json.load(open(sp)) if os.path.exists(sp) else None,
                   "news": f.get("news")}
             if v7["shadow"]:
@@ -516,7 +535,9 @@ def rank(args):
         t = json.load(open(tp))
         status = {"adopted": t.get("adoption", {}).get("adopted"), "note": "per the pre-registered final test", "adoption": t.get("adoption")}
     out = {"asof": P.dates[last], "model": label, "status": status, "universe": len(table), "calibration": cal, "rankings": table,
-           "history": ev, "dev": json.load(open(os.path.join(OUT, "dev_models.json")))["results"] if os.path.exists(os.path.join(OUT, "dev_models.json")) else None,
+           "history": ev, "market": MARKET,
+           "dev": (json.load(open(os.path.join(OUT, "dev_models.json")))["results"] if os.path.exists(os.path.join(OUT, "dev_models.json"))
+                   else json.load(open(os.path.join(OUT, "dev.json")))["results"] if os.path.exists(os.path.join(OUT, "dev.json")) else None),
            "test": json.load(open(tp))["results"] if os.path.exists(tp) else None, "features": P.names, "v7": v7,
            "generated": datetime.now().isoformat(timespec="seconds"), "seconds": time.time() - t0}
     tmp = os.path.join(OUT, "rankings.json.tmp")
@@ -536,17 +557,45 @@ def mlp_export_latest():
     print(f"exported the latest MLP fit ({P.dates[-1]}) to {MLP_DIR}", flush=True)
 
 
+def test_r(args):
+    """Final test of the baselines and the ridge candidate only (the SGX protocol's candidate). Runs once."""
+    t0 = time.time()
+    path = os.path.join(OUT, "test_models.json")
+    if os.path.exists(path):
+        raise SystemExit(f"{path} exists: the final test runs once (protocol)")
+    P = Panel()
+    d0, d1 = period_bounds(P, "test")
+    fi = {n: i for i, n in enumerate(P.names)}
+    preds = {"B1 momentum 12-1": P.X[:, fi["mom12_1"]].astype(float), "B2 reversal 1w": -P.X[:, fi["mom5"]].astype(float),
+             "R ridge": walk_forward(P, d0, d1, ridge(), log=None)}
+    res = [evaluate(P, p, d0, d1, k) for k, p in preds.items()]
+    e = res[2]
+    base = max(res[0]["ic"], res[1]["ic"])
+    adoption = {"candidate": e["model"], "ic_gt_0.02_t_gt_2": bool(e["ic"] > 0.02 and e["ic_t_nw"] > 2),
+                "beats_best_baseline": bool(e["ic"] > base), "net_sharpe_gt_0.5": bool(e["ls_sharpe"] > 0.5)}
+    adoption["adopted"] = all(v for k, v in adoption.items() if k != "candidate")
+    os.makedirs(OUT, exist_ok=True)
+    json.dump({"market": MARKET, "period": [P.dates[d0], P.dates[d1]], "results": res, "adoption": adoption,
+               "minutes": (time.time() - t0) / 60}, open(path, "w"), indent=1)
+    for x in res:
+        print(f"  {x['model']:<20} IC {x['ic']:+.4f} (t {x['ic_t_nw']:+.1f})  top>bottom {x['top_beats_bottom']:.0%}  L/S Sharpe {x['ls_sharpe']:+.2f} "
+              f"[10% borrow {x['ls_sharpe_borrow10']:+.2f}]  long-only vs market {x['longonly_vs_qqq_ann']:+.1%}/yr (IR {x['longonly_ir']:+.2f})", flush=True)
+    print(f"adoption: {adoption}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["dev", "models", "mlp-export", "rank"])
+    ap.add_argument("cmd", choices=["dev", "models", "mlp-export", "rank", "test-r"])
     ap.add_argument("--period", choices=["dev", "test", "latest"], default="dev")
     ap.add_argument("--refit", action="store_true", help="retrain G even if saved predictions exist")
+    ap.add_argument("--market", choices=["nasdaq", "sgx"], default="nasdaq")
     a = ap.parse_args()
+    use_market(a.market)
     if a.cmd == "mlp-export" and a.period == "latest":
         return mlp_export_latest()
     if a.cmd == "models" and a.period == "latest":
         raise SystemExit("models runs on dev or test")
-    {"dev": dev, "models": models, "mlp-export": mlp_export, "rank": rank}[a.cmd](a)
+    {"dev": dev, "models": models, "mlp-export": mlp_export, "rank": rank, "test-r": test_r}[a.cmd](a)
 
 
 if __name__ == "__main__":

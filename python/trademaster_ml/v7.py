@@ -342,7 +342,7 @@ def forecast(args):
     out = {"asof": P.dates[last], "model": name, "status": "shadow", "horizon_days": H, "rows": rows}
     # v8 amendment B: news-adjusted variant from the rolling LLM news (fixed prior weights; forward shadow test only)
     news_path = os.path.join("private", "data", "news", "news_today.json")
-    news = json.load(open(news_path)) if os.path.exists(news_path) else None
+    news = json.load(open(news_path)) if os.path.exists(news_path) and v6.MARKET == "nasdaq" else None   # US news only for NASDAQ
     if news and news.get("asof") == P.dates[last]:
         S = news["market"]["S"]
         syms = [P.symbols[P.n[E.a + i]] for i in idx]
@@ -453,10 +453,18 @@ def score(args):
           flush=True)
 
 
+def use_market(market):
+    global OUT
+    v6.use_market(market)
+    OUT = v6.V7_OUT
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["dev", "report", "forecast", "score"])
+    ap.add_argument("--market", choices=["nasdaq", "sgx"], default="nasdaq")
     a = ap.parse_args()
+    use_market(a.market)
     {"dev": dev, "report": report, "forecast": forecast, "score": score}[a.cmd](a)
 
 
