@@ -61,11 +61,16 @@ def _get(path, params, creds, retries=5):
             with urllib.request.urlopen(req, timeout=30) as r:
                 return json.load(r)
         except urllib.error.HTTPError as e:
-            if e.code == 429 and attempt < retries - 1:          # rate limited: back off and retry
+            if e.code in (429, 500, 502, 503, 504) and attempt < retries - 1:   # rate limit or server hiccup: back off, retry
                 time.sleep(2 + 3 * attempt)
                 continue
             body = e.read()[:200].decode("utf-8", "replace")
             raise RuntimeError(f"Alpaca HTTP {e.code}: {body}") from None
+        except (TimeoutError, ConnectionError, urllib.error.URLError, OSError) as e:
+            if attempt < retries - 1:                                 # network timeout or dropped connection: retry
+                time.sleep(5 + 10 * attempt)
+                continue
+            raise RuntimeError(f"Alpaca network error after {retries} tries: {e}") from None
 
 
 def get_bars(symbols, timeframe, start, end=None, feed="sip", adjustment="split", creds=None, pause=0.32, log=None):

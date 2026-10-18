@@ -96,3 +96,54 @@ retraining every 21 days on an expanding window, no-foresight rules, v3 ranges a
 adoption and final-test rules as above. The network size is fixed here and will not be tuned on the test year.
 
 **Hardware.** CPU. The GPU is not needed for this size.
+
+---
+
+## Results (added after the overnight run, 2026-10-18; nothing above was changed)
+**Data.** 329,865 news items (2016 to 16 Oct 2026), all scored by FinBERT on the CPU. 45 inputs: 22 per stock and 23
+market-wide. 685 of 2,563 days were classed as stress.
+
+**Selection.** Weight decay 0.01, chosen by development IC (all three choices gave IC ≈ +0.009). Search settings:
+2 seeds, retraining every 63 days. The final run used the registered 5 seeds, retraining every 21 days.
+
+**Adoption (development, 2017-01-03 → 2025-10-10): NOT ADOPTED. v3 stays live.**
+- Pooled IC +0.0066, t = 0.65. Rule (a) needs t > 2: **fail**.
+- Pooled CRPS ×1e4: v4 256.268 vs v3 256.289. Rule (b): technically lower, but far too small to matter.
+
+**Final test (2025-10-13 → 2026-10-09), reported for completeness**
+
+| Rule | Result |
+|---|---|
+| Calibration, all 4 stocks | pass (it is v3's ranges) |
+| Pooled CRPS skill vs random walk | −0.32%: **fail** |
+| Cross-stock direction | 49.58%, p = 0.66: **fail** |
+
+v4 − v3 test CRPS: −0.545 ×1e4, 95% block-bootstrap CI −1.20 to +0.10, which includes zero.
+
+**Stress vs calm.**
+- **Development, stress days (137 windows):** direction hit 51.46% (one-sided p = 0.013), IC t = 0.6.
+- **Development, calm days:** 49.93%.
+- **Test year:** too few stress windows to measure (fewer than 5).
+- This is a secondary split among many, so p = 0.013 is not strong evidence on its own. It is worth following in the
+  forward record.
+
+**Which layer carries signal (extra check, not used for adoption):**
+
+| Inputs | Development IC (t) | Test IC (t) |
+|---|---|---|
+| Trend / acceleration only | +0.011 (1.2) | +0.059 (2.7) |
+| — of which, stress days in development | −0.006 | — |
+| ETF + macro only | +0.006 (0.5) | −0.000 (0.0) |
+| News only | +0.007 (1.0) | +0.026 (1.1) |
+| Full model, seed set 2 | +0.011 | +0.036 |
+| Full model, seed set 3 | +0.011 | +0.037 |
+
+The seed-set results are stable. Trend-only looked good in the test year but not over 2017–2025, and in stress periods
+its sign was opposite to "steepening falls continue". A one-year result that the nine development years do not
+support is not adopted.
+
+**Hold-out 12–16 Oct, closes inside the 80% range** (information only): identical for v3 and v4.
+
+| | MU | NVDA | AMD | AAPL |
+|---|---|---|---|---|
+| v3 and v4 | 1/5 | 3/5 | 4/5 | 5/5 |
