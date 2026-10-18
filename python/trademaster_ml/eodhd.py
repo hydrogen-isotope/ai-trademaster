@@ -14,6 +14,7 @@ import argparse, json, os, time, urllib.error, urllib.parse, urllib.request
 BASE = "https://eodhd.com/api"
 CONF = os.path.join("private", "config", "eodhd.json")
 OUT = os.path.join("private", "reports", "sgx")
+# NOTE (2026-10-18 coverage check): EODHD does not list SGX at all; ".SG" there is Stuttgart. Kept for reference only.
 TEST = ["D05.SG", "Z74.SG", "ES3.SG", "O39.SG", "C6L.SG"]       # DBS, Singtel, STI ETF, OCBC, Singapore Airlines
 
 
