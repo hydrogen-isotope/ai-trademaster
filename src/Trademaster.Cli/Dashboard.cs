@@ -165,6 +165,15 @@ public static class Dashboard
         }, JsonOpts));
         app.MapGet("/api/state", () => Results.Text(store.Json, "application/json"));
 
+        // v6 cross-stock NASDAQ rankings (research): written by python -m trademaster_ml.v6 rank
+        app.MapGet("/rankings", () => Results.File(Path.Combine(uiDir, "rankings.html"), "text/html; charset=utf-8"));
+        app.MapGet("/api/rankings", () =>
+        {
+            var path = Path.Combine("private", "reports", "v6", "rankings.json");
+            return File.Exists(path) ? Results.Text(File.ReadAllText(path), "application/json")
+                : Results.NotFound(new { error = "no rankings yet: run python -m trademaster_ml.v6 rank" });
+        });
+
         // Forward test (real data, predictions only): files written by python -m trademaster_ml.forward
         string fwdRoot = Path.Combine("private", "data", "forward");
         app.MapGet("/forward", () => Results.File(Path.Combine(uiDir, "forward.html"), "text/html; charset=utf-8"));

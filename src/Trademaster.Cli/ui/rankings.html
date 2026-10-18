@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Trademaster Rankings</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<style>
+:root{--bg:#0b0e11;--panel:#14181d;--panel2:#1b2027;--line:#262c34;--text:#e6e9ee;--muted:#8a93a0;--dim:#5d6672;--up:#16c784;--down:#f6465d;--accent:#3b82f6;--warn:#f0b90b;--mono:ui-monospace,SFMono-Regular,Consolas,monospace}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font:13px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}.up{color:var(--up)}.down{color:var(--down)}.muted{color:var(--muted)}.dim{color:var(--dim)}
+header{height:48px;display:flex;align-items:center;gap:12px;padding:0 14px;border-bottom:1px solid var(--line);background:var(--panel);white-space:nowrap;overflow-x:auto}
+.brand{font-weight:600;font-size:15px}.chip{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;border:1px solid var(--line);background:var(--panel2)}
+.chip.real{color:#7cc4ff;border-color:#1d3f63;background:#0f2134}.chip.warn{color:var(--warn);border-color:#5a4a12;background:#2a2410}.chip.ok{color:var(--up);border-color:#164d36}.chip.bad{color:var(--down);border-color:#5a1f29}
+a{color:#7cc4ff;text-decoration:none}input{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:5px 8px;font:inherit;width:220px}
+.spacer{flex:1}
+main{padding:14px;display:grid;gap:14px;max-width:1500px;margin:0 auto}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
+.card h3{margin:0 0 8px;font-size:13px;font-weight:600}
+.kv{display:grid;grid-template-columns:1fr auto;gap:4px 10px}.kv div:nth-child(odd){color:var(--muted)}.kv div:nth-child(even){text-align:right;font-family:var(--mono)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:8px;min-width:0}.ph{padding:8px 12px;border-bottom:1px solid var(--line);color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.5px;display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.chart{height:260px}.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}
+table{width:100%;border-collapse:collapse}th,td{padding:5px 10px;text-align:right;white-space:nowrap}th{color:var(--muted);font-weight:500;font-size:11px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #1a1f25}
+td.name{text-align:left;color:var(--muted);max-width:150px;overflow:hidden;text-overflow:ellipsis}
+.note{color:var(--muted);font-size:12px;padding:0 2px;line-height:1.5}
+.scroll{max-height:520px;overflow:auto}
+.bar{display:inline-block;height:8px;border-radius:2px;background:var(--accent);vertical-align:middle}
+.why{display:flex;gap:4px;justify-content:flex-end}.why span{font-size:10px;padding:0 4px;border-radius:3px;background:var(--panel2);color:var(--muted)}
+.why span.hi{color:var(--up)}.why span.lo{color:var(--down)}
+@media (max-width:640px){.two{grid-template-columns:1fr}main{padding:10px}input{width:140px}}
+:root{color-scheme:dark}
+*{scrollbar-width:thin;scrollbar-color:#2e333c transparent}
+::-webkit-scrollbar{width:8px;height:8px}::-webkit-scrollbar-track,::-webkit-scrollbar-corner{background:transparent}
+::-webkit-scrollbar-thumb{background:#2e333c;border-radius:4px;border:2px solid transparent;background-clip:padding-box}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">AI Trademaster</span>
+  <span class="chip real">NASDAQ · END OF DAY</span><span class="chip warn">RESEARCH ONLY · NO ORDERS · NOT ADVICE</span>
+  <span class="chip" id="status">loading…</span>
+  <span class="muted" id="asof"></span>
+  <div class="spacer"></div>
+  <a href="/">← markets</a> <a href="/forward">AI signals</a>
+</header>
+<main>
+  <div class="note" id="banner">
+    Every day the model ranks the ~1,000 most-traded NASDAQ companies against each other for the next 5 trading days.
+    It does not predict whether the market goes up; it predicts which stocks do better <i>than the others</i>.
+    "Expected vs median" and "chance to beat the median" come from how each score decile actually did out of sample.
+    The edge per stock is small (published systems: correlation 0.04–0.05); it only shows up across many stocks and weeks.
+  </div>
+  <div class="cards" id="cards"></div>
+  <div class="two">
+    <div class="panel"><div class="ph">Top-ranked (expected to beat peers)</div><div class="scroll" style="max-height:420px"><table><thead><tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>Exp. vs median 5d</th><th>Beat median</th><th>Why</th></tr></thead><tbody id="top"></tbody></table></div></div>
+    <div class="panel"><div class="ph">Bottom-ranked (expected to lag peers)</div><div class="scroll" style="max-height:420px"><table><thead><tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>Exp. vs median 5d</th><th>Beat median</th><th>Why</th></tr></thead><tbody id="bot"></tbody></table></div></div>
+  </div>
+  <div class="two">
+    <div class="panel"><div class="ph">Out-of-sample weekly portfolio, cumulative (net of costs) <span class="dim" id="eqnote"></span></div><div class="chart" id="eq"></div></div>
+    <div class="panel"><div class="ph">Rank correlation with what happened (60-day average) <span class="dim" id="icnote"></span></div><div class="chart" id="ic"></div></div>
+  </div>
+  <div class="panel"><div class="ph">How each score decile did out of sample</div><table><thead><tr><th>Decile</th><th>Avg 5-day return vs median</th><th>Beat the median</th><th>Observations</th><th style="text-align:left"></th></tr></thead><tbody id="cal"></tbody></table></div>
+  <div class="panel"><div class="ph">All ranked stocks <div class="spacer"></div><input id="q" placeholder="filter symbol or name"></div>
+    <div class="scroll"><table><thead><tr><th>#</th><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>Decile</th><th>Exp. vs median 5d</th><th>Beat median</th></tr></thead><tbody id="all"></tbody></table></div></div>
+  <div class="panel"><div class="ph">Model comparison (pre-registered protocol)</div><div class="scroll" style="max-height:none"><table><thead><tr><th>Model</th><th>Period</th><th>IC</th><th>t</th><th>Top beats bottom</th><th>L/S Sharpe</th><th>L/S Sharpe, 10% borrow</th><th>Long-only vs QQQ /yr</th></tr></thead><tbody id="models"></tbody></table></div></div>
+</main>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const pct = (v, d = 1, sign = true) => v == null || !isFinite(v) ? '—' : (sign && v > 0 ? '+' : '') + (v * 100).toFixed(d) + '%';
+const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const WHY = { mom12_1: 'momentum', resid_mom12_1: 'own momentum', dist_252_high: 'near 52w high', vol60: 'volatility', max_ret21: 'lottery spikes',
+  earnings_yield: 'earnings yield', gross_profitability: 'profitability', sue: 'earnings surprise', ind_mom126: 'industry trend' };
+const opts = { layout: { background: { color: '#14181d' }, textColor: '#8a93a0' }, grid: { vertLines: { color: '#1b2027' }, horzLines: { color: '#1b2027' } },
+  rightPriceScale: { borderColor: '#262c34' }, timeScale: { borderColor: '#262c34' }, autoSize: true };
+let DATA = null;
+
+function why(r) {
+  // the three inputs furthest from neutral, coloured by direction
+  return Object.entries(r.why || {}).map(([k, v]) => [k, v]).filter(([, v]) => isFinite(v))
+    .sort((a, b) => Math.abs(b[1] - 0.5) - Math.abs(a[1] - 0.5)).slice(0, 3)
+    .map(([k, v]) => `<span class="${v > 0.5 ? 'hi' : 'lo'}" title="${esc(k)} rank ${(v * 100).toFixed(0)} of 100">${v > 0.5 ? '▲' : '▼'} ${esc(WHY[k] || k)}</span>`).join('');
+}
+function row(r, i, full) {
+  const bar = `<span class="bar" style="width:${Math.max(2, r.score_pct * 0.5)}px"></span>`;
+  return `<tr>${full ? `<td class="num dim">${i + 1}</td>` : ''}<td><b>${esc(r.symbol)}</b></td><td class="name">${esc(r.name)}</td>` +
+    `<td class="num">${r.close.toFixed(2)}</td><td class="num">${bar} ${r.score_pct.toFixed(0)}</td>` +
+    (full ? `<td class="num">${r.decile}</td>` : '') +
+    `<td class="num ${cls(r.exp_rel_5d)}">${pct(r.exp_rel_5d, 2)}</td><td class="num">${pct(r.p_beat, 0, false)}</td>` +
+    (full ? '' : `<td><div class="why">${why(r)}</div></td>`) + '</tr>';
+}
+function renderAll() {
+  const q = $('q').value.trim().toLowerCase();
+  const rows = DATA.rankings.map((r, i) => [r, i]).filter(([r]) => !q || r.symbol.toLowerCase().includes(q) || r.name.toLowerCase().includes(q));
+  $('all').innerHTML = rows.slice(0, 400).map(([r, i]) => row(r, i, true)).join('');
+}
+function card(title, kv) {
+  return `<div class="card"><h3>${title}</h3><div class="kv">${kv.map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('')}</div></div>`;
+}
+async function load() {
+  let d;
+  try { const r = await fetch('/api/rankings'); if (!r.ok) throw new Error((await r.json()).error); d = await r.json(); }
+  catch (e) { $('status').textContent = 'no data'; $('banner').textContent = 'No rankings yet: ' + e.message; return; }
+  DATA = d;
+  $('asof').textContent = `as of close ${d.asof} · ${d.universe} stocks · ${d.model}`;
+  const st = d.status || {};
+  $('status').textContent = st.adopted === true ? 'ADOPTED (final test passed)' : st.adopted === false ? 'NOT ADOPTED (failed final test)' : 'FINAL TEST PENDING';
+  $('status').className = 'chip ' + (st.adopted === true ? 'ok' : st.adopted === false ? 'bad' : 'warn');
+  $('top').innerHTML = d.rankings.slice(0, 25).map(r => row(r, 0, false)).join('');
+  $('bot').innerHTML = d.rankings.slice(-25).reverse().map(r => row(r, 0, false)).join('');
+  renderAll();
+  const cal = d.calibration || [];
+  $('cal').innerHTML = cal.slice().reverse().map(c => `<tr><td class="num">${c.decile}${c.decile === 10 ? ' (top)' : c.decile === 1 ? ' (bottom)' : ''}</td>` +
+    `<td class="num ${cls(c.mean_rel_5d)}">${pct(c.mean_rel_5d, 2)}</td><td class="num">${pct(c.p_beat_median, 1, false)}</td><td class="num dim">${c.n.toLocaleString()}</td>` +
+    `<td style="text-align:left"><span class="bar" style="width:${Math.abs(c.mean_rel_5d) * 6000}px;background:${c.mean_rel_5d > 0 ? 'var(--up)' : 'var(--down)'}"></span></td></tr>`).join('');
+  const h = d.history;
+  const cards = [];
+  if (h) cards.push(card('Out-of-sample record', [['correlation (IC)', h.ic.toFixed(3)], ['t-stat', h.ic_t_nw.toFixed(1)],
+    ['top 10% beat bottom 10%', pct(h.top_beats_bottom, 0, false) + ' of weeks'], ['long-only vs QQQ', pct(h.longonly_vs_qqq_ann) + '/yr']]));
+  if (h) cards.push(card('Long-short (top − bottom 10%)', [['net, 1% borrow', pct(h.ls_net_ann) + '/yr'], ['Sharpe', h.ls_sharpe.toFixed(2)],
+    ['Sharpe, 10% borrow', h.ls_sharpe_borrow10.toFixed(2)], ['max drawdown', pct(h.ls_maxdd, 0, false)]]));
+  cards.push(card('Status', [['protocol', st.adopted === true ? 'adopted' : st.adopted === false ? 'not adopted' : 'final test pending'],
+    ['model', esc(d.model.split(':')[0])], ['generated', esc((d.generated || '').replace('T', ' '))], ['universe', d.universe + ' stocks']]));
+  $('cards').innerHTML = cards.join('');
+  const mrows = [];
+  for (const [per, list] of [['dev 2021–24', d.dev], ['test 2025–26', d.test]])
+    for (const m of list || []) mrows.push(`<tr><td>${esc(m.model)}</td><td>${per}</td><td class="num">${m.ic.toFixed(3)}</td><td class="num">${m.ic_t_nw.toFixed(1)}</td>` +
+      `<td class="num">${pct(m.top_beats_bottom, 0, false)}</td><td class="num">${m.ls_sharpe.toFixed(2)}</td><td class="num">${(m.ls_sharpe_borrow10 ?? NaN).toFixed(2)}</td>` +
+      `<td class="num ${cls(m.longonly_vs_qqq_ann)}">${pct(m.longonly_vs_qqq_ann)}</td></tr>`);
+  $('models').innerHTML = mrows.join('') || '<tr><td colspan="8" class="dim">no results yet</td></tr>';
+  if (h && h.series) {
+    const eq = LightweightCharts.createChart($('eq'), opts), ic = LightweightCharts.createChart($('ic'), opts);
+    const cum = (rows, k) => { let s = 0; return rows.map(r => ({ time: r[0], value: (s += r[k]) * 100 })); };
+    eq.addLineSeries({ color: '#3987e5', lineWidth: 2, title: 'L/S 1% borrow' }).setData(cum(h.series.weeks, 1));
+    eq.addLineSeries({ color: '#eda100', lineWidth: 1, title: 'L/S 10% borrow' }).setData(cum(h.series.weeks, 2));
+    eq.addLineSeries({ color: '#16c784', lineWidth: 1, title: 'long-only − QQQ' }).setData(cum(h.series.weeks, 3));
+    eq.timeScale().fitContent();
+    const s = h.series.ic, avg = [];
+    for (let i = 0; i < s.length; i++) { if (i < 59) continue; let m = 0; for (let k = i - 59; k <= i; k++) m += s[k][1]; avg.push({ time: s[i][0], value: m / 60 }); }
+    const icl = ic.addLineSeries({ color: '#3987e5', lineWidth: 2 });
+    icl.setData(avg);
+    icl.createPriceLine({ price: 0, color: '#5d6672', lineWidth: 1, lineStyle: 2 });
+    ic.timeScale().fitContent();
+    $('eqnote').textContent = `${h.series.weeks[0][0]} → ${h.series.weeks.at(-1)[0]}, % (sum of weekly returns)`;
+  }
+}
+$('q').addEventListener('input', () => DATA && renderAll());
+load();
+</script>
+</body>
+</html>

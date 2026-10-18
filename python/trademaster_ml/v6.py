@@ -6,11 +6,13 @@ logclose.f32, market.f32, ranks.f32, mask.f32}.
 
   dev         baselines B1 (momentum), B2 (reversal) and R (ridge) on development, placebo + timing checks, stop gate
   models      all protocol models (B1, B2, R, G, M, E) on --period dev|test; the test runs once
-  mlp-export  inputs for the GPU MLP trainer (trademaster gpu-mlp)
+  mlp-export  inputs for the GPU MLP trainer (trademaster gpu-mlp); --period latest = one fit on all data
+  rank        today's rankings for the dashboard (CPU only: LightGBM refit monthly + saved MLP weights)
 
 Usage: python -m trademaster_ml.v6 dev | models --period dev | mlp-export --period dev
 """
-import argparse, json, os, sys, time
+import argparse, hashlib, json, os, sys, time
+from datetime import datetime
 
 import numpy as np
 
@@ -109,9 +111,10 @@ def spearman(a, b):
     return float(np.corrcoef(ra, rb)[0, 1])
 
 
-def evaluate(P, pred, d0, d1, label):
-    """IC, decile spread and the weekly long-short / long-only portfolios over days d0..d1 (inclusive)."""
-    ics, spreads = [], []
+def evaluate(P, pred, d0, d1, label, series=False):
+    """IC, decile spread and the weekly long-short / long-only portfolios over days d0..d1 (inclusive).
+    series=True also returns the daily IC and weekly returns (for the dashboard)."""
+    ics, spreads, ic_days, wk_days = [], [], [], []
     for i in range(d0, d1 + 1):
         s, e = P.day_start[i], P.day_start[i + 1]
         if e - s < 50:
@@ -120,6 +123,7 @@ def evaluate(P, pred, d0, d1, label):
         ic = spearman(p, y)
         if np.isfinite(ic):
             ics.append(ic)
+            ic_days.append(P.dates[i])
             ok = np.isfinite(p) & np.isfinite(y)
             q = np.quantile(p[ok], [0.1, 0.9])
             spreads.append(y[ok][p[ok] >= q[1]].mean() - y[ok][p[ok] <= q[0]].mean())
@@ -149,6 +153,7 @@ def evaluate(P, pred, d0, d1, label):
         hits.append(rl > rs)
         turns.append((turn_l + turn_s) / 2)
         prev_l, prev_s = L, S
+        wk_days.append(P.dates[i])
     ls, lo, ls_hard = np.array(ls), np.array(lo), np.array(ls_hard)
     eq = np.cumsum(ls)
     res = {
@@ -163,6 +168,9 @@ def evaluate(P, pred, d0, d1, label):
         "long_leg_ann": float(np.mean(legs_l) * 52), "short_leg_ann": float(np.mean(legs_s) * 52),
         "longonly_vs_qqq_ann": float(lo.mean() * 52), "longonly_ir": float(lo.mean() / lo.std() * np.sqrt(52)) if lo.std() > 0 else float("nan"),
     }
+    if series:
+        res["series"] = {"ic": [[d, float(x)] for d, x in zip(ic_days, ics)],
+                         "weeks": [[d, float(a), float(b), float(c)] for d, a, b, c in zip(wk_days, ls, ls_hard, lo)]}
     return res
 
 
@@ -399,13 +407,159 @@ def models(args):
     print(f"wrote {path} ({out['minutes']:.1f} min)", flush=True)
 
 
+# ---------------------------------------------------------------- daily rankings (dashboard)
+
+MODELS = os.path.join("private", "models", "v6")
+
+
+def latest_schedule(P):
+    """One refit 'today': training labels end on the last panel day; prediction rows = the last day."""
+    t0, r = P.idx(TRAIN_START), P.T
+    end = r - H
+    vstart = max(end - VAL_DAYS, t0)
+    return {"refit": r - 1, "train": [int(P.day_start[t0]), int(P.day_start[max(vstart - H, t0)])],
+            "val": [int(P.day_start[vstart]), int(P.day_start[end])], "pred": [int(P.day_start[r - 1]), int(P.day_start[r])]}
+
+
+def mlp_predict_cpu(X, path):
+    """Seed-averaged MLP output from weights saved by `trademaster gpu-mlp --period latest` (same layout as mlp.hlsl)."""
+    meta = json.load(open(path + ".json"))
+    F, Hd, S = meta["F"], meta["H"], meta["S"]
+    W = np.fromfile(path, np.float32).reshape(S, -1).astype(np.float64)
+    out = np.zeros(len(X))
+    for s in range(S):
+        w = W[s]
+        o = 0
+        W1 = w[o:o + F * Hd].reshape(F, Hd); o += F * Hd
+        b1 = w[o:o + Hd]; o += Hd
+        W2 = w[o:o + Hd * Hd].reshape(Hd, Hd); o += Hd * Hd
+        b2 = w[o:o + Hd]; o += Hd
+        W3 = w[o:o + Hd]; o += Hd
+        b3 = w[o]
+        h = np.maximum(X @ W1 + b1, 0)
+        h = np.maximum(h @ W2 + b2, 0)
+        out += h @ W3 + b3
+    return out / S
+
+
+def calibration(P, score, periods):
+    """Out-of-sample decile table: mean relative 5-day return and share beating the median, by score decile."""
+    ys = [[] for _ in range(10)]
+    for d0, d1 in periods:
+        for i in range(d0, d1 + 1):
+            s, e = P.day_start[i], P.day_start[i + 1]
+            p, y = score[s:e], P.y[s:e]
+            ok = np.isfinite(p) & np.isfinite(y)
+            if ok.sum() < 50:
+                continue
+            dec = np.minimum((np.argsort(np.argsort(p[ok])) * 10) // ok.sum(), 9)
+            for k in range(10):
+                ys[k].append(y[ok][dec == k])
+    out = []
+    for k in range(10):
+        y = np.concatenate(ys[k]) if ys[k] else np.array([np.nan])
+        out.append({"decile": k + 1, "mean_rel_5d": float(np.expm1(np.nanmean(y))), "p_beat_median": float(np.nanmean(y > 0)), "n": int(len(y))})
+    return out
+
+
+def rank(args):
+    import lightgbm as lgb
+    t0 = time.time()
+    P = Panel()
+    last = P.T - 1
+    X = np.hstack([P.X, regime(P)[P.t]]).astype(np.float32)
+    sch = latest_schedule(P)
+    os.makedirs(MODELS, exist_ok=True)
+    month = P.dates[last][:7]
+    fset = hashlib.md5(",".join(P.names).encode()).hexdigest()[:8]       # a new feature set means a new model
+    gpath = os.path.join(MODELS, f"lgb_{month}_{fset}.txt")             # protocol: refit monthly
+    if os.path.exists(gpath):
+        gm = lgb.Booster(model_file=gpath)
+    else:
+        tr, va = slice(*sch["train"]), slice(*sch["val"])
+        ok_tr, ok_va = np.isfinite(P.yrank[tr]), np.isfinite(P.yrank[va])
+        params = {**LGB_PARAMS, "num_threads": max(1, (os.cpu_count() or 4) - 2), "seed": 0}
+        rounds = params.pop("n_estimators")
+        dtr = lgb.Dataset(X[tr][ok_tr], P.yrank[tr][ok_tr])
+        gm = lgb.train(params, dtr, num_boost_round=rounds, valid_sets=[lgb.Dataset(X[va][ok_va], P.yrank[va][ok_va], reference=dtr)],
+                       callbacks=[lgb.early_stopping(50, verbose=False)])
+        gm.save_model(gpath, num_iteration=gm.best_iteration)
+    rows = slice(*sch["pred"])
+    g = gm.predict(X[rows])
+    mpath = os.path.join(MODELS, "mlp_latest.f32")
+    have_m = os.path.exists(mpath)
+    rk = lambda v: (np.argsort(np.argsort(v)) / max(len(v) - 1, 1)) - 0.5
+    if have_m:
+        m = mlp_predict_cpu(X[rows].astype(np.float64), mpath)
+        score, label = rk(g) + rk(m), "E: LightGBM + GPU-trained MLP"
+    else:
+        score, label = rk(g), "G: LightGBM (no MLP weights yet)"
+    # out-of-sample history of the same model, for calibration, IC and portfolio curves
+    hist, periods = None, []
+    for per in ("dev", "test"):
+        gp, mp = os.path.join(OUT, f"pred_G_{per}.npy"), os.path.join(MLP_DIR, f"pred_M_{per}.f32")
+        if not os.path.exists(gp):
+            continue
+        h = xs_rank_pred(P, np.load(gp))
+        if have_m and os.path.exists(mp):
+            h = h + xs_rank_pred(P, np.fromfile(mp, np.float32).astype(float))
+        hist = h if hist is None else np.where(np.isfinite(h), h, hist)
+        periods.append(period_bounds(P, per))
+    cal = calibration(P, hist, periods) if hist is not None else []
+    ev = evaluate(P, hist, periods[-1][0], periods[-1][1], label, series=True) if hist is not None else None
+    # today's table
+    names = {a["symbol"]: a.get("name") or "" for a in json.load(open(os.path.join("private", "data", "us", "assets.json")))}
+    n_today = P.n[rows]
+    pct = np.argsort(np.argsort(score)) / max(len(score) - 1, 1)
+    dec = np.minimum((pct * 10).astype(int), 9)
+    fi = {n: i for i, n in enumerate(P.names)}
+    why = [k for k in ("mom12_1", "resid_mom12_1", "dist_252_high", "vol60", "max_ret21", "earnings_yield", "gross_profitability",
+                       "sue", "ind_mom126") if k in fi]
+    table = []
+    for k, j in enumerate(n_today):
+        x = P.X[rows][k]
+        table.append({"symbol": P.symbols[j], "name": names.get(P.symbols[j], ""), "close": float(np.exp(P.lc[last, j])),
+                      "score_pct": float(pct[k] * 100), "decile": int(dec[k]) + 1,
+                      "exp_rel_5d": cal[dec[k]]["mean_rel_5d"] if cal else None, "p_beat": cal[dec[k]]["p_beat_median"] if cal else None,
+                      "why": {w: float(x[fi[w]] + 0.5) for w in why}})
+    table.sort(key=lambda r: -r["score_pct"])
+    status = {"adopted": None, "note": "final test not run yet"}
+    tp = os.path.join(OUT, "test_models.json")
+    if os.path.exists(tp):
+        t = json.load(open(tp))
+        status = {"adopted": t.get("adoption", {}).get("adopted"), "note": "per the pre-registered final test", "adoption": t.get("adoption")}
+    out = {"asof": P.dates[last], "model": label, "status": status, "universe": len(table), "calibration": cal, "rankings": table,
+           "history": ev, "dev": json.load(open(os.path.join(OUT, "dev_models.json")))["results"] if os.path.exists(os.path.join(OUT, "dev_models.json")) else None,
+           "test": json.load(open(tp))["results"] if os.path.exists(tp) else None, "features": P.names,
+           "generated": datetime.now().isoformat(timespec="seconds"), "seconds": time.time() - t0}
+    tmp = os.path.join(OUT, "rankings.json.tmp")
+    json.dump(out, open(tmp, "w"))
+    os.replace(tmp, os.path.join(OUT, "rankings.json"))
+    print(f"rankings {P.dates[last]}: {len(table)} stocks, model {label}; top: {', '.join(r['symbol'] for r in table[:10])}", flush=True)
+
+
+def mlp_export_latest():
+    P = Panel()
+    X = np.hstack([P.X, regime(P)[P.t]]).astype(np.float32)
+    os.makedirs(MLP_DIR, exist_ok=True)
+    X.tofile(os.path.join(MLP_DIR, "X.f32"))
+    P.yrank.astype(np.float32).tofile(os.path.join(MLP_DIR, "y.f32"))
+    json.dump({"rows": int(X.shape[0]), "features": int(X.shape[1]), "period": "latest", "asof": P.dates[-1],
+               "refits": [latest_schedule(P)]}, open(os.path.join(MLP_DIR, "schedule_latest.json"), "w"))
+    print(f"exported the latest MLP fit ({P.dates[-1]}) to {MLP_DIR}", flush=True)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["dev", "models", "mlp-export"])
-    ap.add_argument("--period", choices=["dev", "test"], default="dev")
+    ap.add_argument("cmd", choices=["dev", "models", "mlp-export", "rank"])
+    ap.add_argument("--period", choices=["dev", "test", "latest"], default="dev")
     ap.add_argument("--refit", action="store_true", help="retrain G even if saved predictions exist")
     a = ap.parse_args()
-    {"dev": dev, "models": models, "mlp-export": mlp_export}[a.cmd](a)
+    if a.cmd == "mlp-export" and a.period == "latest":
+        return mlp_export_latest()
+    if a.cmd == "models" and a.period == "latest":
+        raise SystemExit("models runs on dev or test")
+    {"dev": dev, "models": models, "mlp-export": mlp_export, "rank": rank}[a.cmd](a)
 
 
 if __name__ == "__main__":

@@ -54,7 +54,7 @@ static int Help()
                      [--n 30,300,1000] [--k 1,10,100,1000]   Inference latency (GPU needs --allow-gpu + safety gate)
           gpu-features --in private/data/us/gpu [--out same] [--top 1000] [--min-price 5] [--cpu] [--check]
                      [--allow-gpu] [--override-gpu-stability]  v6 feature panel + cross-stock ranks (HLSL on the GPU)
-          gpu-mlp  --period dev|test [--dir private/reports/v6/mlp] [--seeds 10] [--cpu]
+          gpu-mlp  --period dev|test|latest [--dir private/reports/v6/mlp] [--seeds 10] [--cpu]
                      [--allow-gpu] [--override-gpu-stability]  v6 model M: walk-forward MLP ensemble trained in HLSL
         """);
     return 0;
@@ -356,6 +356,21 @@ static int GpuMlpCmd(Dictionary<string, string> o)
             Console.WriteLine($"  refit {++k}/{refits.Count} (day {r.GetProperty("refit").GetInt32()}), {sw.Elapsed.TotalMinutes:F1} min elapsed");
             var p = Trademaster.Gpu.GpuMlp.FitPredict(be, y, F, tr, va, pr, opt, seedBase: 1000 * k, log: Console.Out);
             Array.Copy(p, 0, pred, pr.Item1, p.Length);
+        }
+        if (period == "latest")
+        {
+            // weights for daily CPU inference (python -m trademaster_ml.v6 rank); the GPU is never used unattended
+            var models = Path.Combine("private", "models", "v6");
+            Directory.CreateDirectory(models);
+            var w = be.ReadParameters();
+            using (var fs = File.Create(Path.Combine(models, "mlp_latest.f32")))
+                fs.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(w.AsSpan()));
+            File.WriteAllText(Path.Combine(models, "mlp_latest.f32.json"), System.Text.Json.JsonSerializer.Serialize(new
+            {
+                F, H = opt.Hidden, S = opt.Seeds, asof = sch.RootElement.TryGetProperty("asof", out var a) ? a.GetString() : null,
+                device = be.Device, trained = DateTime.Now.ToString("s"),
+            }));
+            Console.WriteLine($"saved MLP weights to {Path.Combine(models, "mlp_latest.f32")}");
         }
         using (var fs = File.Create(Path.Combine(dir, $"pred_M_{period}.f32")))
             fs.Write(System.Runtime.InteropServices.MemoryMarshal.AsBytes(pred.AsSpan()));
