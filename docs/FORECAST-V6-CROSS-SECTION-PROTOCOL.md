@@ -96,5 +96,42 @@ Any change to these rules after a v6 result is seen is written below as a dated 
 ## Amendments
 (none yet)
 
+## Development checkpoint (2026-10-18; price features only, EDGAR not yet available)
+
+**Setup:** panel of 2,713 days × 6,501 NASDAQ symbols, 2,580,894 universe stock-days; development
+2021-01-04 → 2024-12-31.
+
+| model | IC | NW t | IC > 0 | L/S net /yr | L/S Sharpe | max DD | top > bottom | turnover | long-only vs QQQ /yr |
+|---|---|---|---|---|---|---|---|---|---|
+| B1 momentum 12-1 | +0.029 | 3.0 | 57% | +35% | 1.09 | 40% | 59% | 17% | −16% |
+| B2 reversal 1w | +0.007 | 1.1 | 51% | +2% | 0.06 | 43% | 54% | 85% | −39% |
+| **R ridge** | **+0.068** | **8.1** | 67% | +57% | 1.87 | 36% | 62% | 42% | −10% |
+| placebo (shuffled) | +0.002 | 1.5 | — | — | — | — | — | — | — |
+| R, features 1 day older | +0.066 | 7.6 | 66% | +52% | 1.68 | 39% | 61% | 38% | −10% |
+
+**Stop gate:** passed. Placebo ≈ 0; one extra day of lag barely changes the IC, so there is no sign of look-ahead.
+
+**Where the edge comes from (diagnostics, development only):**
+- **Strongest single features:**
+  - low volatility / lottery: vol60 −0.080, idio_vol60 −0.077, max_ret21 −0.071;
+  - distance from the 52-week high: +0.061;
+  - momentum: resid_mom12_1 +0.030, mom12_1 +0.029.
+
+  These are the documented low-risk / MAX / 52-week-high anomalies.
+- **Every year is positive:** IC 0.075 (2021), 0.061 (2022), 0.051 (2023), 0.084 (2024).
+- **Most of the long-short return is the short leg.** The bottom-decile stocks (speculative, high-volatility small and
+  mid caps) fell every year. Annualised arithmetic mean returns:
+
+  | year | short leg | long leg | QQQ |
+  |---|---|---|---|
+  | 2021 | −16% | +21% | +28% |
+  | 2022 | −90% | −21% | −39% |
+  | 2023 | −37% | +19% | +48% |
+  | 2024 | −83% | +21% | +28% |
+
+  The long leg trails QQQ in up years.
+- **Caveat:** such names are often hard to borrow, at far more than the protocol's 1%/yr. The long-short Sharpe
+  therefore overstates what is achievable. The long-only result (−10%/yr vs QQQ) is the conservative view.
+
 ## Results
-(not yet run)
+(final test not yet run)
