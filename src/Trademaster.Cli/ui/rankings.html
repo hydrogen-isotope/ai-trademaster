@@ -14,6 +14,7 @@ header{height:48px;display:flex;align-items:center;gap:12px;padding:0 14px;borde
 .chip.real{color:#7cc4ff;border-color:#1d3f63;background:#0f2134}.chip.warn{color:var(--warn);border-color:#5a4a12;background:#2a2410}.chip.ok{color:var(--up);border-color:#164d36}.chip.bad{color:var(--down);border-color:#5a1f29}
 a{color:#7cc4ff;text-decoration:none}input{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:4px;padding:5px 8px;font:inherit;width:220px}
 .spacer{flex:1}
+.mkt button{background:var(--panel2);color:var(--muted);border:1px solid var(--line);padding:3px 10px;font:inherit;cursor:pointer}.mkt button:first-child{border-radius:4px 0 0 4px}.mkt button:last-child{border-radius:0 4px 4px 0;border-left:none}.mkt button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
 main{padding:14px;display:grid;gap:14px;max-width:1500px;margin:0 auto}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px 14px}
@@ -38,7 +39,7 @@ td.name{text-align:left;color:var(--muted);max-width:150px;overflow:hidden;text-
 <body>
 <header>
   <span class="brand">AI Trademaster</span>
-  <span class="chip real">NASDAQ · END OF DAY</span><span class="chip warn">RESEARCH ONLY · NO ORDERS · NOT ADVICE</span>
+  <span class="mkt"><button id="m-nasdaq" data-m="nasdaq">NASDAQ</button><button id="m-sgx" data-m="sgx">SGX</button></span><span class="chip real" id="mktchip">END OF DAY</span><span class="chip warn" id="sgxnote" style="display:none" title="Built from Eulerpool data: only companies listed today (delisted ones missing), market = synthetic STI proxy">SURVIVOR-ONLY DATA · STI PROXY</span><span class="chip warn">RESEARCH ONLY · NO ORDERS · NOT ADVICE</span>
   <span class="chip" id="status">loading…</span><span class="chip warn" id="v7chip" title="v7 price forecasts are in a forward shadow test until 60 trading days are scored">PRICE FORECAST · SHADOW</span><span class="chip" id="upd" style="display:none"></span>
   <span class="muted" id="asof"></span>
   <div class="spacer"></div>
@@ -46,7 +47,7 @@ td.name{text-align:left;color:var(--muted);max-width:150px;overflow:hidden;text-
 </header>
 <main>
   <div class="note" id="banner">
-    Every day the model ranks the ~1,000 most-traded NASDAQ companies against each other for the next 5 trading days.
+    Every day the model ranks the most-traded companies of the chosen market (NASDAQ ~1,000, SGX ~120) against each other for the next 5 trading days.
     It does not predict whether the market goes up; it predicts which stocks do better <i>than the others</i>.
     "Expected vs median" and "chance to beat the median" come from how each score decile actually did out of sample.
     The edge per stock is small (published systems: correlation 0.04–0.05); it only shows up across many stocks and weeks.
@@ -69,8 +70,8 @@ td.name{text-align:left;color:var(--muted);max-width:150px;overflow:hidden;text-
   </div>
   <div class="panel"><div class="ph">How each score decile did out of sample</div><table><thead><tr><th>Decile</th><th>Avg 5-day return vs median</th><th>Beat the median</th><th>Observations</th><th style="text-align:left"></th></tr></thead><tbody id="cal"></tbody></table></div>
   <div class="panel"><div class="ph">All ranked stocks <div class="spacer"></div><input id="q" placeholder="filter symbol or name"></div>
-    <div class="scroll"><table><thead><tr><th>#</th><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>Decile</th><th>Exp. vs median 5d</th><th>Beat median</th><th>5-day price</th><th>80% range</th><th>95% range</th><th>P(up)</th><th>P(beats QQQ)</th><th title="Local AI model's read of this stock's headlines over the last 5 sessions (-2 bad … +2 good)">News</th><th title="Forecast adjusted by the news (unproven, in forward test)">P(up) with news</th></tr></thead><tbody id="all"></tbody></table></div></div>
-  <div class="panel"><div class="ph">Model comparison (pre-registered protocol)</div><div class="scroll" style="max-height:none"><table><thead><tr><th>Model</th><th>Period</th><th>IC</th><th>t</th><th>Top beats bottom</th><th>L/S Sharpe</th><th>L/S Sharpe, 10% borrow</th><th>Long-only vs QQQ /yr</th></tr></thead><tbody id="models"></tbody></table></div></div>
+    <div class="scroll"><table><thead><tr><th>#</th><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>Decile</th><th>Exp. vs median 5d</th><th>Beat median</th><th>5-day price</th><th>80% range</th><th>95% range</th><th>P(up)</th><th>P(beats market)</th><th title="Local AI model's read of this stock's headlines over the last 5 sessions (-2 bad … +2 good)">News</th><th title="Forecast adjusted by the news (unproven, in forward test)">P(up) with news</th></tr></thead><tbody id="all"></tbody></table></div></div>
+  <div class="panel"><div class="ph">Model comparison (pre-registered protocol)</div><div class="scroll" style="max-height:none"><table><thead><tr><th>Model</th><th>Period</th><th>IC</th><th>t</th><th>Top beats bottom</th><th>L/S Sharpe</th><th>L/S Sharpe, 10% borrow</th><th id="lohdr">Long-only vs market /yr</th></tr></thead><tbody id="models"></tbody></table></div></div>
 </main>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
@@ -83,6 +84,11 @@ const WHY = { mom12_1: 'momentum', resid_mom12_1: 'own momentum', dist_252_high:
 const opts = { layout: { background: { color: '#14181d' }, textColor: '#8a93a0' }, grid: { vertLines: { color: '#1b2027' }, horzLines: { color: '#1b2027' } },
   rightPriceScale: { borderColor: '#262c34' }, timeScale: { borderColor: '#262c34' }, autoSize: true };
 let DATA = null;
+const MARKET = new URLSearchParams(location.search).get('market') === 'sgx' ? 'sgx' : 'nasdaq';
+const BENCH = MARKET === 'sgx' ? 'STI proxy' : 'QQQ';
+document.querySelectorAll('.mkt button').forEach(b => { b.classList.toggle('on', b.dataset.m === MARKET);
+  b.onclick = () => { if (b.dataset.m !== MARKET) location.search = b.dataset.m === 'sgx' ? '?market=sgx' : ''; }; });
+if (MARKET === 'sgx') { document.getElementById('sgxnote').style.display = ''; document.title = 'AI Trademaster Rankings · SGX'; }
 
 function why(r) {
   // the three inputs furthest from neutral, coloured by direction
@@ -126,7 +132,7 @@ function card(title, kv) {
 }
 async function load() {
   let d;
-  try { const r = await fetch('/api/rankings'); if (!r.ok) throw new Error((await r.json()).error); d = await r.json(); }
+  try { const r = await fetch('/api/rankings' + (MARKET === 'sgx' ? '?market=sgx' : '')); if (!r.ok) throw new Error((await r.json()).error); d = await r.json(); }
   catch (e) { $('status').textContent = 'no data'; $('banner').textContent = 'No rankings yet: ' + e.message; return; }
   DATA = d;
   $('asof').textContent = `as of close ${d.asof} · ${d.universe} stocks · ${d.model}`;
@@ -143,7 +149,7 @@ async function load() {
   const h = d.history;
   const cards = [];
   if (h) cards.push(card('Out-of-sample record', [['correlation (IC)', h.ic.toFixed(3)], ['t-stat', h.ic_t_nw.toFixed(1)],
-    ['top 10% beat bottom 10%', pct(h.top_beats_bottom, 0, false) + ' of weeks'], ['long-only vs QQQ', pct(h.longonly_vs_qqq_ann) + '/yr']]));
+    ['top 10% beat bottom 10%', pct(h.top_beats_bottom, 0, false) + ' of weeks'], ['long-only vs ' + BENCH, pct(h.longonly_vs_qqq_ann) + '/yr']]));
   if (h) cards.push(card('Long-short (top − bottom 10%)', [['net, 1% borrow', pct(h.ls_net_ann) + '/yr'], ['Sharpe', h.ls_sharpe.toFixed(2)],
     ['Sharpe, 10% borrow', h.ls_sharpe_borrow10.toFixed(2)], ['max drawdown', pct(h.ls_maxdd, 0, false)]]));
   if (d.v7) {
@@ -179,7 +185,7 @@ async function load() {
     const cum = (rows, k) => { let s = 0; return rows.map(r => ({ time: r[0], value: (s += r[k]) * 100 })); };
     eq.addLineSeries({ color: '#3987e5', lineWidth: 2, title: 'L/S 1% borrow' }).setData(cum(h.series.weeks, 1));
     eq.addLineSeries({ color: '#eda100', lineWidth: 1, title: 'L/S 10% borrow' }).setData(cum(h.series.weeks, 2));
-    eq.addLineSeries({ color: '#16c784', lineWidth: 1, title: 'long-only − QQQ' }).setData(cum(h.series.weeks, 3));
+    eq.addLineSeries({ color: '#16c784', lineWidth: 1, title: 'long-only − ' + BENCH }).setData(cum(h.series.weeks, 3));
     eq.timeScale().fitContent();
     const s = h.series.ic, avg = [];
     for (let i = 0; i < s.length; i++) { if (i < 59) continue; let m = 0; for (let k = i - 59; k <= i; k++) m += s[k][1]; avg.push({ time: s[i][0], value: m / 60 }); }

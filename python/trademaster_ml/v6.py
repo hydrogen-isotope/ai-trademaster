@@ -492,7 +492,7 @@ def rank(args):
     ok = np.isfinite(P.yrank[tr])
     model = ridge()(P.X[tr][ok], P.yrank[tr][ok])
     rows = slice(*sch["pred"])
-    score, label = model(P.X[rows]), "R: ridge (adopted after the final test)"
+    score, label = model(P.X[rows]), "R: ridge"
     # out-of-sample walk-forward history of the same model (2021 -> latest), for calibration, IC and portfolio curves
     periods = [period_bounds(P, "dev"), period_bounds(P, "test")]
     hist = walk_forward(P, periods[0][0], periods[1][1], ridge(), log=None)

@@ -136,14 +136,14 @@ def update():
     full. Then rebuild the panel."""
     syms = [a["symbol"] for a in json.load(open(os.path.join(DIR, "assets.json")))]
     since = time.time() - 21 * 86400
-    stats = {"updated": 0, "refetched": 0, "failed": 0}
+    stats = {"updated": 0, "refetched": 0, "no_recent_bars": 0}
 
     def one(s):
         path = os.path.join(BARS, s + ".json")
         old = json.load(open(path)) if os.path.exists(path) else []
         recent = _fetch(s, since)
         if not recent:
-            stats["failed"] += 1
+            stats["no_recent_bars"] += 1                                  # illiquid or never traded: nothing new
             return
         known = {r[0]: r[4] for r in old}
         overlap = [(known[r[0]], r[4]) for r in recent if r[0] in known and known[r[0]]]

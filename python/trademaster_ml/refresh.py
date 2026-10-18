@@ -43,6 +43,31 @@ def news_step(args):
         print(f"[refresh] news step skipped: {type(e).__name__}: {e}", flush=True)
 
 
+def sgx_step():
+    """SGX (Eulerpool): stream recent days, rebuild features, price forecasts and rankings when a new close exists.
+    Optional: any failure is reported and NASDAQ results are kept."""
+    from . import sgx, v6, v7
+    try:
+        status("running", "SGX prices")
+        last = sgx.update()
+        p = os.path.join("private", "reports", "sgx", "v6", "rankings.json")
+        if os.path.exists(p) and json.load(open(p)).get("asof") == last:
+            return
+        sgx.export()
+        status("running", "SGX features")
+        subprocess.run([EXE, "gpu-features", "--cpu", "--in", os.path.join("private", "data", "sgx", "gpu"),
+                        "--top", "150", "--min-price", "0.2"], check=True)
+        status("running", "SGX price forecasts and rankings")
+        v7.use_market("sgx")
+        v7.score(None)
+        v7.forecast(None)
+        v6.rank(None)
+    except Exception as e:  # noqa: BLE001
+        print(f"[refresh] SGX step failed: {type(e).__name__}: {e}", flush=True)
+    finally:
+        v7.use_market("nasdaq")
+
+
 def run(args):
     if os.path.exists(LOCK) and time.time() - os.path.getmtime(LOCK) < 3600:
         print("[refresh] another refresh is running; skipping", flush=True)
@@ -51,6 +76,7 @@ def run(args):
     t0 = time.time()
     try:
         from . import universe_us, fundamentals, v6, v7
+        v7.use_market("nasdaq")
         status("running", "new daily prices")
         last = universe_us.update()
         if not args.force and rankings_asof() == last:
@@ -60,6 +86,7 @@ def run(args):
             v7.forecast(None)
             status("running", "rankings")
             v6.rank(None)
+            sgx_step()
             status("done", f"news refreshed; prices already up to date (close {last})", asof=last, seconds=round(time.time() - t0))
             return
         status("running", "SEC filings older than 7 days")
@@ -75,6 +102,7 @@ def run(args):
         v7.forecast(None)
         status("running", "rankings")
         v6.rank(None)
+        sgx_step()
         status("done", f"updated to close {last}", asof=last, seconds=round(time.time() - t0))
     except Exception as e:  # noqa: BLE001 - report any failure on the dashboard, keep the old rankings
         status("error", f"{type(e).__name__}: {e}", seconds=round(time.time() - t0))

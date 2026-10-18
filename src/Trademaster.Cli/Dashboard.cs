@@ -169,9 +169,11 @@ public static class Dashboard
 
         // v6 cross-stock NASDAQ rankings (research): written by python -m trademaster_ml.v6 rank
         app.MapGet("/rankings", () => Results.File(Path.Combine(uiDir, "rankings.html"), "text/html; charset=utf-8"));
-        app.MapGet("/api/rankings", () =>
+        app.MapGet("/api/rankings", (string? market) =>
         {
-            var path = Path.Combine("private", "reports", "v6", "rankings.json");
+            var path = market == "sgx"
+                ? Path.Combine("private", "reports", "sgx", "v6", "rankings.json")
+                : Path.Combine("private", "reports", "v6", "rankings.json");
             return File.Exists(path) ? Results.Text(File.ReadAllText(path), "application/json")
                 : Results.NotFound(new { error = "no rankings yet: run python -m trademaster_ml.v6 rank" });
         });
