@@ -228,61 +228,70 @@ static int BenchOnnx(Dictionary<string, string> o)
     return 0;
 }
 
-// Reads <in>/meta.json {"T","N"} + logclose.f32 + volume.f32 ([T,N] float32, written by trademaster_ml.universe_us export);
-// writes raw.f32 and ranks.f32 ([F,T,N]), mask.f32 ([T,N]) and features.json. --check also runs the CPU reference and
-// compares. The GPU path passes the same safety gate as every other GPU use.
+// Reads <in>/meta.json {"T","N","extras":[...]} + logclose.f32, volume.f32 ([T,N] float32), market.f32 ([T]),
+// eligible.f32 ([N]), optional industry.f32 ([N]) and extra_<name>.f32 ([T,N]); all written by Python
+// (trademaster_ml.universe_us export). Writes raw.f32 and ranks.f32 ([F,T,N]), mask.f32 ([T,N]) and features.json.
+// --check also runs the CPU reference and compares. The GPU path passes the same safety gate as every other GPU use.
 static int GpuFeaturesCmd(Dictionary<string, string> o)
 {
     string dir = o.GetValueOrDefault("in", Path.Combine("private", "data", "us", "gpu"));
     string outDir = o.GetValueOrDefault("out", dir);
     using var meta = System.Text.Json.JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "meta.json")));
     int T = meta.RootElement.GetProperty("T").GetInt32(), N = meta.RootElement.GetProperty("N").GetInt32();
-    int topK = Int(o, "top", 1000);
-    float minPrice = float.Parse(o.GetValueOrDefault("min-price", "5"), CultureInfo.InvariantCulture);
-    float[] Load(string name)
+    float[] Load(string name, long len)
     {
         var bytes = File.ReadAllBytes(Path.Combine(dir, name));
-        if (bytes.Length != (long)T * N * 4) throw new InvalidDataException($"{name}: expected {T}x{N} float32");
-        var a = new float[T * N];
+        if (bytes.Length != len * 4) throw new InvalidDataException($"{name}: expected {len} float32 values");
+        var a = new float[len];
         Buffer.BlockCopy(bytes, 0, a, 0, bytes.Length);
         return a;
     }
-    var lc = Load("logclose.f32");
-    var vol = Load("volume.f32");
-    Console.WriteLine($"panel {T} days x {N} stocks; universe top {topK} by dollar volume, price >= {minPrice}");
+    var extras = meta.RootElement.TryGetProperty("extras", out var ex)
+        ? ex.EnumerateArray().Select(e => e.GetString()!).Select(n => (n, Load($"extra_{n}.f32", (long)T * N))).ToList()
+        : [];
+    var inputs = new Trademaster.Gpu.GpuFeatures.Inputs(T, N, Load("logclose.f32", (long)T * N), Load("volume.f32", (long)T * N),
+        Load("market.f32", T), Load("eligible.f32", N), File.Exists(Path.Combine(dir, "industry.f32")) ? Load("industry.f32", N) : null,
+        extras, Int(o, "top", 1000), float.Parse(o.GetValueOrDefault("min-price", "5"), CultureInfo.InvariantCulture));
+    Console.WriteLine($"panel {T} days x {N} stocks, {extras.Count} extra input(s), industries {(inputs.Industry is null ? "missing" : "present")}; " +
+                      $"universe top {inputs.TopK} by dollar volume, price >= {inputs.MinPrice}");
 
     Trademaster.Gpu.GpuFeatures.Result r;
-    if (o.ContainsKey("cpu")) r = Trademaster.Gpu.GpuFeatures.RunCpu(lc, vol, T, N, topK, minPrice);
+    if (o.ContainsKey("cpu"))
+    {
+        using var cpu = new Trademaster.Gpu.GpuFeatures.Cpu(inputs);
+        r = Trademaster.Gpu.GpuFeatures.Build(inputs, cpu, Console.Out);
+    }
     else
     {
         GpuGate.Require(o.ContainsKey("allow-gpu"), o.ContainsKey("override-gpu-stability"), GpuHealth.Check());
-        r = Trademaster.Gpu.GpuFeatures.RunGpu(lc, vol, T, N, topK, minPrice, Int(o, "device", -1), Console.Out);
+        using var gpu = new Trademaster.Gpu.GpuFeatures.Gpu(inputs, Int(o, "device", -1));
+        Console.WriteLine($"GPU: {gpu.Device}");
+        r = Trademaster.Gpu.GpuFeatures.Build(inputs, gpu, Console.Out);
     }
-    Console.WriteLine($"{r.Device}: {r.Seconds:F2} s");
+    Console.WriteLine($"{r.Device}: {r.Seconds:F2} s for {r.Names.Length} features");
 
     if (o.ContainsKey("check") && r.Device != "CPU")
     {
-        var c = Trademaster.Gpu.GpuFeatures.RunCpu(lc, vol, T, N, topK, minPrice);
+        using var cpu = new Trademaster.Gpu.GpuFeatures.Cpu(inputs);
+        var c = Trademaster.Gpu.GpuFeatures.Build(inputs, cpu);
         Console.WriteLine($"CPU reference: {c.Seconds:F2} s ({c.Seconds / r.Seconds:F1}x the GPU time)");
-        int maskDiff = 0;
-        for (int i = 0; i < r.Mask.Length; i++) if (r.Mask[i] != c.Mask[i]) maskDiff++;
-        Console.WriteLine($"universe mask: {maskDiff} of {r.Mask.Length:N0} cells differ");
+        Console.WriteLine($"universe mask: {r.Mask.Zip(c.Mask).Count(p => p.First != p.Second)} of {r.Mask.Length:N0} cells differ");
+        (double maxAbs, int nanDiff) Cmp(float[] a, float[] b)
+        {
+            double m = 0; int nd = 0;
+            for (int i = 0; i < a.Length; i++)
+            {
+                bool fa = float.IsFinite(a[i]), fb = float.IsFinite(b[i]);
+                if (fa != fb) nd++;
+                else if (fa) m = Math.Max(m, Math.Abs(a[i] - b[i]));
+            }
+            return (m, nd);
+        }
         for (int f = 0; f < r.Raw.Length; f++)
         {
-            (double maxAbs, int nanDiff) Cmp(float[] a, float[] b)
-            {
-                double m = 0; int nd = 0;
-                for (int i = 0; i < a.Length; i++)
-                {
-                    bool fa = float.IsFinite(a[i]), fb = float.IsFinite(b[i]);
-                    if (fa != fb) nd++;
-                    else if (fa) m = Math.Max(m, Math.Abs(a[i] - b[i]));
-                }
-                return (m, nd);
-            }
             var (rawMax, rawNan) = Cmp(r.Raw[f], c.Raw[f]);
             var (rankMax, rankNan) = Cmp(r.Ranks[f], c.Ranks[f]);
-            Console.WriteLine($"  {Trademaster.Gpu.GpuFeatures.Names[f],-18} raw max|diff| {rawMax:E2} (NaN mismatches {rawNan}),  rank max|diff| {rankMax:E2} (NaN mismatches {rankNan})");
+            Console.WriteLine($"  {r.Names[f],-20} raw max|diff| {rawMax:E2} (NaN mismatches {rawNan}),  rank max|diff| {rankMax:E2} (NaN mismatches {rankNan})");
         }
     }
 
@@ -297,7 +306,7 @@ static int GpuFeaturesCmd(Dictionary<string, string> o)
     Save("mask.f32", [r.Mask]);
     File.WriteAllText(Path.Combine(outDir, "features.json"), System.Text.Json.JsonSerializer.Serialize(new
     {
-        T, N, features = Trademaster.Gpu.GpuFeatures.Names, top = topK, min_price = minPrice, device = r.Device, seconds = r.Seconds,
+        T, N, features = r.Names, top = inputs.TopK, min_price = inputs.MinPrice, device = r.Device, seconds = r.Seconds,
     }));
     Console.WriteLine($"wrote {outDir}");
     return 0;

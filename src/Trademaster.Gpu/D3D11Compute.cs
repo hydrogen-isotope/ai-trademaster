@@ -197,6 +197,14 @@ public sealed unsafe class D3D11Compute : IDisposable
         ((delegate* unmanaged<nint, uint, uint, nint*, uint*, void>)V(_context)[CtxCSSetUavs])(_context, 0, (uint)uavs.Length, nulls, null);
     }
 
+    /// <summary>Overwrites a GPU buffer from CPU memory (same length).</summary>
+    public void Write<T>(GpuBuffer dst, ReadOnlySpan<T> src) where T : unmanaged
+    {
+        if (sizeof(T) != 4 || src.Length != dst.Length) throw new ArgumentException("source must match the buffer length");
+        fixed (T* p = src)
+            ((delegate* unmanaged<nint, nint, uint, void*, void*, uint, uint, void>)V(_context)[CtxUpdateSubresource])(_context, dst.Buffer, 0, null, p, 0, 0);
+    }
+
     public void Flush() => ((delegate* unmanaged<nint, void>)V(_context)[CtxFlush])(_context);
 
     /// <summary>Copies a GPU buffer back to the CPU (waits for the GPU to finish the work that writes it).</summary>
