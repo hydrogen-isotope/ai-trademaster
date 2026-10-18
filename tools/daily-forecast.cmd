@@ -11,3 +11,5 @@ set PY=python\.venv\Scripts\python.exe -W ignore
 %PY% -m trademaster_ml.daily_forecast score
 rem v2 (GARCH-t + self-correcting ranges) passed its pre-registered test; see docs/FORECAST-V2-PROTOCOL.md
 %PY% -m trademaster_ml.daily_v2 forecast
+rem v6 NASDAQ cross-stock rankings (see docs/FORECAST-V6-CROSS-SECTION-PROTOCOL.md)
+call "%~dp0daily-v6.cmd"

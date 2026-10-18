@@ -11,7 +11,7 @@ filed version is used (later restatements would be look-ahead). Values older tha
 
 The SEC User-Agent (it must contain a contact email) is read from private/config/sec.json {"user_agent": "..."}.
 
-Usage: python -m trademaster_ml.fundamentals fetch | panel
+Usage: python -m trademaster_ml.fundamentals fetch [--max-age-days 7] | panel
 """
 import argparse, gzip, json, os, threading, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -110,7 +110,7 @@ def universe_symbols():
     return [s for s, e in zip(meta["symbols"], ever) if e]
 
 
-def fetch():
+def fetch(max_age_days=None):
     ua, rate = _ua(), _Rate(5)
     os.makedirs(EDGAR, exist_ok=True)
     tick = _sec("https://www.sec.gov/files/company_tickers.json", ua, rate)
@@ -120,7 +120,9 @@ def fetch():
     json.dump(have, open(os.path.join(EDGAR, "cik_map.json"), "w"))
     print(f"{len(syms)} symbols were ever in the universe; {len(have)} have a current SEC CIK "
           f"({len(syms) - len(have)} without: mostly delisted or renamed)", flush=True)
-    todo = sorted(set(have.values()) - {int(f[:-5]) for f in os.listdir(EDGAR) if f[:-5].isdigit()})
+    fresh = {int(f[:-5]) for f in os.listdir(EDGAR) if f[:-5].isdigit()
+             and (max_age_days is None or time.time() - os.path.getmtime(os.path.join(EDGAR, f)) < max_age_days * 86400)}
+    todo = sorted(set(have.values()) - fresh)                  # new companies, plus stale ones when refreshing
     t0, done = time.time(), [0]
 
     def one(cik):
@@ -345,8 +347,9 @@ def panel():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["fetch", "panel"])
+    ap.add_argument("--max-age-days", type=float, default=None, help="fetch: also re-fetch companies older than this")
     a = ap.parse_args()
-    {"fetch": fetch, "panel": panel}[a.cmd]()
+    fetch(a.max_age_days) if a.cmd == "fetch" else panel()
 
 
 if __name__ == "__main__":
