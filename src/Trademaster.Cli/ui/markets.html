@@ -237,6 +237,9 @@ function fresh(m, asof) {
     (LASTCHECK ? ` Last checked ${new Date(LASTCHECK).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}.` : '') + `</span>`;
 }
 
+const addSessions = (asof, h) => { let d = new Date(asof + 'T12:00:00Z');                 // weekdays only (no holiday calendar)
+  for (let i = 0; i < h; i++) do { d = new Date(d.getTime() + 86400000); } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+  return d.toISOString().slice(0, 10); };
 const dayOf = asof => asof ? new Date(asof + 'T12:00:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }) : 'last session';
 // While the market is open, forecasts made from the last close are for today's close; show how far the price has already moved.
 function liveNote(m, sym, asof, close) {
@@ -462,7 +465,7 @@ async function viewStock(m, sym) {
   const tok = (viewStock.tok = (viewStock.tok || 0) + 1), fv = m === 'nasdaq' ? await fairData() : null;
   setTimeout(() => loadEval(m, sym, tok), 0);
   return `<h1>${esc(sym)} <span class="muted" style="font-weight:400">${esc(r.name)}</span> <span class="chip">${M.name}</span>${inMom ? ' <span class="chip warn">IN MOMENTUM PICKS</span>' : ''}</h1>` +
-    `<div class="lead">${fresh(m, d.asof)} Price forecasts are for ${HZL[HZ][2]} and are in a forward test. Horizon: ${sel}` +
+    `<div class="lead">${fresh(m, d.asof)} Price forecasts are for ${HZL[HZ][2]}, to the close of <b>${dayOf(addSessions(d.asof, +HZ))}</b>, and are in a forward test. Horizon: ${sel}` +
     (m === 'nasdaq' ? ` <a href="/?symbol=${encodeURIComponent(sym)}">Open chart in Watchlist →</a>` : '') + `</div>` + liveNote(m, sym, d.asof, r.close) +
     `<div class="panel"><div class="ph">Analysis report summary <span class="chip warn">UNPROVEN · NOT ADVICE</span></div><div class="pad" id="report">${report(m, r, d, fv, null)}</div></div>` +
     `<div class="panel"><div class="ph"><span>Recent weeks and ${HZL[HZ][2]} <span class="dim" style="text-transform:none;letter-spacing:0">(drag or scroll the chart for more history)</span></span><div class="spacer"></div><span class="legend"><span id="vtoggles" style="display:flex;gap:14px;flex-wrap:wrap"></span>` +

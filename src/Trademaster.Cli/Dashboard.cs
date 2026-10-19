@@ -201,7 +201,13 @@ public static class Dashboard
             return File.Exists(path) ? Results.Text(File.ReadAllText(path), "application/json") : Results.Json(new { status = "none" });
         });
         // pull new closes now (the page asks once a newer close should exist, e.g. after the US or SGX market closes)
-        app.MapPost("/api/refresh", () => { var (started, reason) = StockEval.StartRefresh(); return Results.Json(new { started, reason }); });
+        app.MapPost("/api/refresh", (string? ifNew) =>
+        {
+            // ifNew=1 (every page on open): only when a market has finished a session the forecasts don't cover yet
+            if (ifNew == "1" && !StockEval.NewCloseExpected(DateTimeOffset.UtcNow)) return Results.Json(new { started = false, reason = "up to date" });
+            var (started, reason) = StockEval.StartRefresh();
+            return Results.Json(new { started, reason });
+        });
         app.MapGet("/api/rankings/status", () =>
         {
             var path = Path.Combine("private", "reports", "v6", "refresh_status.json");

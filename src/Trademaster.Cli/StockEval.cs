@@ -178,6 +178,7 @@ public static partial class StockEval
     /// A clicked stock is still evaluated first.</summary>
     public static bool EnsureQueue(int port)
     {
+        if (NewCloseExpected(DateTimeOffset.UtcNow)) return false;     // the update queues every stock itself once the new close is in
         var key = $"{Asof("nasdaq")}|{Asof("sgx")}";
         lock (StartLock)
         {
@@ -201,6 +202,21 @@ public static partial class StockEval
         });
         return true;
     }
+
+    /// <summary>The last finished session's date for a market: a weekday after its close plus 20 minutes (bars settle).</summary>
+    public static string LastFinishedSession(string market, DateTimeOffset now)
+    {
+        var (tzId, close) = market == "sgx" ? (OperatingSystem.IsWindows() ? "Singapore Standard Time" : "Asia/Singapore", new TimeSpan(17, 20, 0))
+                                            : (OperatingSystem.IsWindows() ? "Eastern Standard Time" : "America/New_York", new TimeSpan(16, 20, 0));
+        var local = TimeZoneInfo.ConvertTime(now, TimeZoneInfo.FindSystemTimeZoneById(tzId)).DateTime;
+        var d = local.TimeOfDay >= close ? local.Date : local.Date.AddDays(-1);
+        while (d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) d = d.AddDays(-1);
+        return d.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>True when a market has a finished session newer than the one its forecasts are built on.</summary>
+    public static bool NewCloseExpected(DateTimeOffset now) =>
+        new[] { "nasdaq", "sgx" }.Any(mk => Asof(mk) is string a && string.CompareOrdinal(a, LastFinishedSession(mk, now)) < 0);
 
     private static DateTime lastRefreshStart = DateTime.MinValue;
 
