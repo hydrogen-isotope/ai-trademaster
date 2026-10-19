@@ -12,7 +12,7 @@ The SEC User-Agent (private/config/sec.json) is only ever sent to sec.gov.
 
 Usage: python -m trademaster_ml.profiles build MU AMD --cpu | show MU
 """
-import argparse, gzip, html, json, math, os, re, sys, time, urllib.request
+import argparse, glob, gzip, html, json, math, os, re, sys, time, urllib.request
 from datetime import datetime, timedelta, timezone
 
 from . import alpaca, eulerpool, fundamentals, llm_news
@@ -248,16 +248,20 @@ def path(market, sym):
     return os.path.join(DIR, market, f"{sym}.json")
 
 
-def load(market, sym):
+def load(market, sym, asof=None):
     p = path(market, sym)
     if not os.path.exists(p):
         return None
     pr = json.load(open(p, encoding="utf-8"))
-    if datetime.now() - datetime.fromisoformat(pr["built"]) > timedelta(days=MAX_AGE_DAYS):
-        return None
+    sec_src = (pr.get("source") or {}).get("kind", "").startswith("SEC")
+    if not sec_src and datetime.now() - datetime.fromisoformat(pr["built"]) > timedelta(days=MAX_AGE_DAYS):
+        return None                                                        # descriptions: rebuilt after 120 days
+    if sec_src and asof and newer_annual_report(pr, sym, asof):
+        return None                                                        # filings: rebuilt when a newer annual report exists
     if not pr.get("mapped_v3"):                                            # older profiles: same clean-up, without a model call
         tidy(pr, sym, "", "", sec_tickers())
         pr["mapped_v3"] = True
+    pr["named_by"] = reverse_links(market, sym)
     return pr
 
 
@@ -314,7 +318,7 @@ def tidy(pr, sym, name, text, tickers, port=None):
             if nw[:1] == me:
                 pr["removed"]["itself"].append(e["name"])
                 continue
-            e["ticker"] = map_ticker(e, tickers)
+            e["ticker"] = e["ticker"] if str(e.get("ticker") or "").endswith(".SI") else map_ticker(e, tickers)   # SGX peers keep theirs
             if e["ticker"] == sym:
                 pr["removed"]["itself"].append(e["name"])
                 continue
@@ -328,6 +332,14 @@ def tidy(pr, sym, name, text, tickers, port=None):
                 unverified.append(e["name"])
             keep.append(e)
         pr[k] = keep
+    # acronym duplicates: "OCBC Bank" (no ticker) vs "Oversea-Chinese Banking Corporation" (O39.SI): keep the one with a ticker
+    initials = lambda n: "".join(w[0] for w in re.split(r"[\s\-]+", re.sub(r"[^A-Za-z\s\-]", " ", n or "").lower()) if w)
+    for k in ("customers", "suppliers", "competitors"):
+        full = [initials(e["name"]) for e in pr[k] if e.get("ticker")]
+        dup = [e for e in pr[k] if not e.get("ticker") and any(f.startswith(_norm(e["name"])[0]) and len(_norm(e["name"])[0]) >= 3 for f in full)]
+        pr["removed"]["duplicate"] += [e["name"] for e in dup]
+        pr[k] = [e for e in pr[k] if e not in dup]
+        unverified = [n for n in unverified if n not in [e["name"] for e in dup]]
     if port and unverified:
         dead, ask = set(), []
         for n in sorted(set(unverified)):                                   # market data first, Qwen's memory only if unknown
@@ -341,6 +353,110 @@ def tidy(pr, sym, name, text, tickers, port=None):
             pr["removed"]["no_longer_exist"] += [e["name"] for e in pr[k] if e["name"] in dead]
             pr[k] = [e for e in pr[k] if e["name"] not in dead]
     return pr
+
+
+def _ident(market, sym):
+    """Eulerpool identifier: the ticker for US stocks, the ISIN for SGX."""
+    if market == "sgx":
+        a = next((x for x in json.load(open(os.path.join("private", "data", "sgx", "assets.json"))) if x["symbol"] == sym), None)
+        return a.get("isin") if a else None
+    return sym
+
+
+def segments(market, sym, asof, lag_days=75):
+    """Amendment H: revenue split from Eulerpool's segment data (the company's XBRL filings): the latest fiscal period
+    ending >= lag_days before `asof` whose shares sum to 90-110%, business segments preferred over product lines,
+    plus the same split about a year earlier."""
+    ident = _ident(market, sym)
+    if not ident:
+        return None
+    try:
+        st, d = eulerpool.call("GET", f"equity/segments/{ident}")
+    except Exception:  # noqa: BLE001
+        return None
+    if st != 200 or not isinstance(d, list):
+        return None
+    limit = (datetime.fromisoformat(asof) - timedelta(days=lag_days)).strftime("%Y-%m-%d")
+    groups = {}
+    for x in d:
+        if x.get("period") and x["period"] <= limit and x.get("percentage") is not None and x.get("label"):
+            groups.setdefault((x["axis"], x["period"]), {})[x["label"]] = float(x["percentage"])
+    ok = {k: v for k, v in groups.items() if len(v) >= 2 and 90 <= sum(v.values()) <= 110}
+    if not ok:
+        return None
+    pref = lambda k: (k[1], 1 if "BusinessSegments" in k[0] else 0)
+    axis, period = max(ok, key=pref)
+    cur = ok[(axis, period)]
+    prev_keys = [k for k in ok if k[0] == axis and 300 <= (datetime.fromisoformat(period) - datetime.fromisoformat(k[1])).days <= 430]
+    prev = ok[max(prev_keys, key=lambda k: k[1])] if prev_keys else {}
+    items = sorted(cur.items(), key=lambda kv: -kv[1])[:8]
+    return {"period": period, "axis": "business segments" if "BusinessSegments" in axis else "products and services",
+            "items": [{"label": k, "pct": round(v, 1), "prev_pct": round(prev[k], 1) if k in prev else None} for k, v in items],
+            "prev_period": max(prev_keys, key=lambda k: k[1])[1] if prev_keys else None, "source": "Eulerpool segment data (company XBRL filings)"}
+
+
+def peers(market, sym):
+    """Amendment H: Eulerpool's peer list, as {name, ticker}: US tickers by the strict name match, SGX by ISIN."""
+    ident = _ident(market, sym)
+    if not ident:
+        return []
+    try:
+        st, d = eulerpool.call("GET", f"equity/peers/{ident}")
+    except Exception:  # noqa: BLE001
+        return []
+    if st != 200 or not isinstance(d, list):
+        return []
+    sgx = {a.get("isin"): a["symbol"] for a in json.load(open(os.path.join("private", "data", "sgx", "assets.json")))} \
+        if os.path.exists(os.path.join("private", "data", "sgx", "assets.json")) else {}
+    tickers = sec_tickers()
+    out = []
+    for x in d[:8]:
+        nm, isin = x.get("peer_name") or "", x.get("peer_isin") or ""
+        t = sgx.get(isin) if isin.startswith("SG") else (find_ticker(nm, tickers) if isin.startswith("US") else None)
+        if nm:
+            out.append({"name": nm, "ticker": t or "", "from": "peer list"})
+    return out
+
+
+def reverse_links(market, sym):
+    """Amendment H: companies whose own profile names this one: X lists it as a supplier -> X is its customer, and vice
+    versa. Built from every stored profile, so it grows as more companies are profiled."""
+    out = []
+    for f in glob.glob(os.path.join(DIR, "*", "*.json")):
+        try:
+            other = json.load(open(f, encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if other.get("symbol") in (None, sym):
+            continue
+        for k, role in (("suppliers", "customer"), ("customers", "supplier")):
+            if any(e.get("ticker") == sym for e in other.get(k, [])):
+                out.append({"name": other.get("name") or other["symbol"], "ticker": other["symbol"] if other.get("market") == "nasdaq" else "",
+                            "role": role, "named_by": other["symbol"]})
+    return out
+
+
+def newer_annual_report(pr, sym, asof):
+    """True if SEC has a newer annual report than the profile's source (checked at most weekly)."""
+    src = pr.get("source") or {}
+    if not src.get("kind", "").startswith("SEC") or not src.get("filed"):
+        return False
+    last = pr.get("checked")
+    if last and datetime.now() - datetime.fromisoformat(last) < timedelta(days=7):
+        return False
+    cmap = os.path.join(fundamentals.EDGAR, "cik_map.json")
+    cik = json.load(open(cmap)).get(sym) if os.path.exists(cmap) else None
+    if not cik:
+        return False
+    try:
+        sub = fundamentals._sec(f"https://data.sec.gov/submissions/CIK{int(cik):010d}.json", fundamentals._ua(), _rate)
+    except Exception:  # noqa: BLE001
+        return False
+    r = (sub or {}).get("filings", {}).get("recent", {})
+    newest = max((r["filingDate"][i] for i, f in enumerate(r.get("form", [])) if f in ANNUAL and r["filingDate"][i] <= asof), default=None)
+    pr["checked"] = datetime.now().isoformat(timespec="seconds")
+    json.dump(pr, open(path(pr["market"], sym), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    return bool(newest and newest > src["filed"])
 
 
 def market_status(name):
@@ -392,8 +508,14 @@ def build(market, sym, asof, name="", port=None):
         pr = clean(json.loads(r.get("content", "")))
     except (ValueError, TypeError, AttributeError):
         return None
+    pr["segments"] = segments(market, sym, asof)
+    if pr["segments"]:                                                     # real revenue split replaces Qwen's shares
+        for x in pr.get("products", []):
+            x["revenue_share_pct"] = 0
+    have = {_norm(e["name"])[:1] and _norm(e["name"])[0] for e in pr.get("competitors", [])}
+    pr["competitors"] = pr.get("competitors", []) + [e for e in peers(market, sym) if _norm(e["name"])[:1] and _norm(e["name"])[0] not in have]
     tidy(pr, sym, name, text, sec_tickers(), port)
-    pr.update({"mapped_v3": True, "symbol": sym, "market": market, "source": src, "built": datetime.now().isoformat(timespec="seconds"),
+    pr.update({"mapped_v3": True, "name": name or sym, "symbol": sym, "market": market, "source": src, "built": datetime.now().isoformat(timespec="seconds"),
                "seconds": round(time.time() - t0, 1)})
     os.makedirs(os.path.dirname(path(market, sym)), exist_ok=True)
     json.dump(pr, open(path(market, sym), "w", encoding="utf-8"), ensure_ascii=False, indent=1)
@@ -407,6 +529,9 @@ def related_news(pr, cutoff, days=7, per=3, max_companies=6):
         for e in pr.get(role, []):
             if e.get("ticker") and e["ticker"] not in [x[0] for x in rel]:
                 rel.append((e["ticker"], role[:-1], e["name"]))
+    for e in pr.get("named_by", []):                                       # amendment H reverse links
+        if e.get("ticker") and e["ticker"] not in [x[0] for x in rel]:
+            rel.append((e["ticker"], e["role"], e["name"]))
     rel = rel[:max_companies]
     if not rel:
         return []
@@ -425,8 +550,8 @@ def related_news(pr, cutoff, days=7, per=3, max_companies=6):
     return [{"ticker": t, "role": role, "name": nm, "headlines": out[t]} for t, role, nm in rel if out[t]]
 
 
-def prompt_block(pr, rel):
-    """Text added to the analysis prompt for variant B."""
+def prompt_block(pr, rel, moves=None):
+    """Text added to the analysis prompt for variant B (moves: SGX peers' 5-session price moves, {ticker: return})."""
     if not pr:
         return ""
     src = pr["source"]
@@ -436,8 +561,17 @@ def prompt_block(pr, rel):
     for k in ("customers", "suppliers", "competitors"):
         if pr.get(k):
             L.append(f"- {k}: " + ", ".join(e["name"] + (f" ({e['ticker']})" if e.get("ticker") else "") for e in pr[k]))
+    seg = pr.get("segments")
+    if seg:
+        L.append(f"- revenue split by {seg['axis']} (fiscal period ending {seg['period']}): " + "; ".join(
+            f"{x['label']} {x['pct']:.0f}%" + (f" (a year earlier {x['prev_pct']:.0f}%)" if x.get("prev_pct") is not None else "") for x in seg["items"]))
+    if pr.get("named_by"):
+        L.append("- named in other companies' filings as their supplier/customer: " + ", ".join(
+            f"{e['name']} ({e['named_by']}, a {e['role']})" for e in pr["named_by"][:6]))
     if pr.get("drivers"):
         L.append("- what drives its sales and profits: " + "; ".join(pr["drivers"]))
+    if moves:
+        L.append("- its peers' share price moves over the last 5 sessions: " + ", ".join(f"{t} {r:+.1%}" for t, r in moves.items()))
     if rel:
         L += ["", "Recent news about its customers, suppliers and competitors (last 5 sessions):"]
         for r in rel:

@@ -20,7 +20,7 @@ forward test.
 
 Usage: python -m trademaster_ml.stock_eval eval MU --allow-gpu
 """
-import argparse, json, math, os, re, subprocess, sys, time, urllib.request
+import argparse, glob, json, math, os, re, subprocess, sys, time, urllib.request
 from datetime import datetime, timedelta, timezone
 
 import numpy as np
@@ -357,14 +357,14 @@ def parse_verdict(text):
     return {**FALLBACK, "positives": [], "negatives": []}, False
 
 
-def ask_probability(prompt, json_text, sym, h=5, slot=0):
+def ask_probability(prompt, json_text, sym, h=5, slot=0, direction="higher"):
     """Amendment E: after its verdict, Qwen's own chance (0-100) that the price is higher in 5 trading days. Qwen writes
     numbers digit by digit, so the first answer token is the tens digit: P_qwen is the expectation over that digit's
     probabilities (digit d counts as 10d + 5; "1" may also start 100, which is rare). This is graded, unlike a one-word
     rise/fall answer, which simply repeated the verdict with ~100% certainty in the hand check.
     Returns (P_qwen, probability mass on digit tokens)."""
     follow = (f"{prompt}{json_text}<|im_end|>\n<|im_start|>user\nGiven all of this, what is the chance (0 to 100) that {sym}'s "
-              f"price is higher in {h} trading day{'s' if h > 1 else ''} than at the last close? Answer with a whole number only.<|im_end|>\n"
+              f"price is {direction} in {h} trading day{'s' if h > 1 else ''} than at the last close? Answer with a whole number only.<|im_end|>\n"
               "<|im_start|>assistant\n")
     body = {"prompt": follow, "n_predict": 1, "temperature": 0, "n_probs": 30, "cache_prompt": True, "id_slot": slot}
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}/completion", json.dumps(body).encode(), {"Content-Type": "application/json"})
@@ -438,27 +438,39 @@ def evaluate(market, sym, device="GPU", log=print):
     def run(prompt):
         text, timing = generate(prompt)
         verdict, ok = parse_verdict(text)
-        pq = {h: ask_probability(prompt, text, sym, h) for h in sorted(ctx["hz"])}   # v8 amendment F
-        return {"verdict": verdict, "ok": ok, "pq": pq, "vws": {h: views(ctx, pq[h][0], verdict["risk"], h) for h in pq}, "timing": timing}
+        pq, lean = {}, {}
+        for h in sorted(ctx["hz"]):                                          # v8 amendments F and H
+            hi, m_hi = ask_probability(prompt, text, sym, h)
+            lo, m_lo = ask_probability(prompt, text, sym, h, direction="lower")
+            raw = hi / (hi + lo) if hi + lo > 0 else 0.5                      # symmetric: no lean from the question's wording
+            shift = shifts.get(h, 0.0)
+            pq[h] = (float(np.clip(raw - shift, 0.02, 0.98)), min(m_hi, m_lo))
+            lean[h] = {"p_higher": hi, "p_lower": lo, "p_raw": raw, "shift": shift}
+        return {"verdict": verdict, "ok": ok, "pq": pq, "lean": lean, "timing": timing,
+                "vws": {h: views(ctx, pq[h][0], verdict["risk"], h) for h in pq}}
 
     def pack(r):
         return {"ai": {**r["verdict"], "parse_ok": r["ok"], "p_qwen": r["pq"][5][0], "p_mass": round(r["pq"][5][1], 3),
                        "p_qwen_h": {str(h): v[0] for h, v in r["pq"].items()}, **r["timing"]},
-                "horizons": {str(h): {"views": v, "signal": v["total"]["signal"], "p_qwen": r["pq"][h][0], "p_mass": round(r["pq"][h][1], 3)}
-                             for h, v in r["vws"].items()},
+                "horizons": {str(h): {"views": v, "signal": v["total"]["signal"], "p_qwen": r["pq"][h][0], "p_mass": round(r["pq"][h][1], 3),
+                                      **r["lean"][h]} for h, v in r["vws"].items()},
                 "signal": r["vws"][5]["total"]["signal"]}
 
+    shifts = {h: lean_shift(market, h) for h in ctx["hz"]}                   # amendment H, from earlier evaluations only
     A = run(build_prompt(ctx, news)[0])
     # v8 amendment G, variant B: the same analysis with the company's product profile and its related companies' news
     prof, rel, B = None, [], None
     try:
-        prof = profiles.load(market, sym) or profiles.build(market, sym, ctx["asof"], name=ctx["name"], port=PORT)
+        prof = profiles.load(market, sym, ctx["asof"]) or profiles.build(market, sym, ctx["asof"], name=ctx["name"], port=PORT)
+        if prof and "named_by" not in prof:
+            prof["named_by"] = profiles.reverse_links(market, sym)
         if prof:
             try:
                 rel = profiles.related_news(prof, news_cut)
             except Exception as e:  # noqa: BLE001 - related news is optional
                 log(f"[eval] related news for {sym} skipped: {type(e).__name__}: {e}", flush=True)
-            B = run(build_prompt(ctx, news, extra=profiles.prompt_block(prof, rel))[0])
+            moves = peer_moves(market, prof) if market == "sgx" else None
+            B = run(build_prompt(ctx, news, extra=profiles.prompt_block(prof, rel, moves))[0])
     except Exception as e:  # noqa: BLE001 - the profile variant must never block the main analysis
         log(f"[eval] product-profile variant for {sym} skipped: {type(e).__name__}: {e}", flush=True)
     main = B or A
@@ -482,12 +494,30 @@ def evaluate(market, sym, device="GPU", log=print):
         for h, v in r["vws"].items():
             cth = {"asof": ctx["asof"], "symbol": sym, "close": ctx["close"], "m": ctx["hz"][h]["m"], "sd": ctx["hz"][h]["sd"]}
             _shadow(market, cth, v["total"]["m"], v["total"]["sd"], r["verdict"], r["ok"], h=h, variant=variant,
-                    extra={"p_qwen": r["pq"][h][0], "p_total": v["total"]["p_up"], "m_qwen": v["qwen"]["m"], "signal": v["total"]["signal"], "w": W_QWEN})
+                    extra={"p_qwen": r["pq"][h][0], "p_total": v["total"]["p_up"], "m_qwen": v["qwen"]["m"], "signal": v["total"]["signal"], "w": W_QWEN,
+                           **r["lean"][h]})
     _index_add(market, ctx["asof"], sym, out)
     desc = lambda r: (f"{r['verdict']['lean']}/{r['verdict']['confidence']}/{r['verdict']['risk']}"
                       + "".join(f" {h}d Qwen {r['pq'][h][0]:.0%} total {r['vws'][h]['total']['p_up']:.0%} [{r['vws'][h]['total']['signal']}]" for h in sorted(r["vws"])))
     log(f"[eval] {market} {sym} {ctx['asof']}: A {desc(A)}" + (f" | B (profile, {len(rel)} related) {desc(B)}" if B else " | no profile")
         + f"; {len(news['headlines']) if news else 0} headlines; {time.time() - t0:.1f}s", flush=True)
+    return out
+
+
+def peer_moves(market, prof, sessions=5):
+    """Amendment H: SGX peers' share price moves over the last 5 sessions, from our own SGX data (no SGX news source)."""
+    d = _market_dirs(market)
+    meta = json.load(open(os.path.join(d["gpu"], "meta.json")))
+    T, N = meta["T"], meta["N"]
+    lc = np.memmap(os.path.join(d["gpu"], "logclose.f32"), np.float32, "r", shape=(T, N))
+    out = {}
+    for e in prof.get("competitors", []):
+        t = e.get("ticker")
+        if t and t in meta["symbols"]:
+            j = meta["symbols"].index(t)
+            a, b = float(lc[T - 1 - sessions, j]), float(lc[T - 1, j])
+            if np.isfinite(a) and np.isfinite(b):
+                out[t] = math.expm1(b - a)
     return out
 
 
@@ -508,13 +538,37 @@ def _shadow(market, ctx, m2, sd2, verdict, ok, extra=None, h=5, variant="A"):
                             **(extra or {})}) + "\n")
 
 
+LEAN_WINDOW, LEAN_MIN = 200, 30
+
+
+def lean_shift(market, h):
+    """Amendment H: Qwen's average lean over its last LEAN_WINDOW evaluations at horizon h (raw Qwen chance minus the
+    model's), this market's if it has >= LEAN_MIN, else all markets pooled, else 0. Uses no outcomes."""
+    def pairs(mk):
+        out = []
+        for f in sorted(glob.glob(os.path.join(EVALS, mk, "index_*.json")), reverse=True):
+            for e in json.load(open(f)).values():
+                x = (e.get("h") or {}).get(str(h))
+                if x and x.get("sym_q") and x.get("p_model") is not None:      # symmetric-question evaluations only (amendment H)
+                    out.append(x["p_raw"] - x["p_model"])
+            if len(out) >= LEAN_WINDOW:
+                break
+        return out[:LEAN_WINDOW]
+    own = pairs(market)
+    if len(own) >= LEAN_MIN:
+        return float(np.mean(own))
+    pooled = (own + [d for mk in ("nasdaq", "sgx") if mk != market for d in pairs(mk)])[:LEAN_WINDOW]
+    return float(np.mean(pooled)) if len(pooled) >= LEAN_MIN else 0.0
+
+
 def _index_add(market, asof, sym, out):
     path = os.path.join(EVALS, market, f"index_{asof}.json")
     idx = json.load(open(path)) if os.path.exists(path) else {}
     idx[sym] = {"p_up": out["advised"]["p_up"], "median": out["advised"]["median"], "lo80": out["advised"]["lo80"],
                 "hi80": out["advised"]["hi80"], "lean": out["ai"]["lean"], "confidence": out["ai"]["confidence"], "risk": out["ai"]["risk"],
                 "signal": out["signal"], "p_qwen": out["ai"]["p_qwen"], "p_model": out["model"]["p_up"],
-                "h": {k: {"p_up": v["views"]["total"]["p_up"], "signal": v["signal"], "p_qwen": v["p_qwen"], "p_model": v["views"]["model"]["p_up"]}
+                "h": {k: {"p_up": v["views"]["total"]["p_up"], "signal": v["signal"], "p_qwen": v["p_qwen"], "p_model": v["views"]["model"]["p_up"],
+                          "p_raw": v.get("p_raw", v["p_qwen"]), "sym_q": "p_lower" in v}
                       for k, v in out.get("horizons", {}).items()}}
     _dump(idx, path)
 

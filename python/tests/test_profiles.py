@@ -68,6 +68,10 @@ def test_prompt_block_lists_profile_and_related_news():
     assert "SEC 10-K filed 2026-10-09" in b and "DRAM (~70% of revenue)" in b and "NAND;" not in b.split("products: ")[1][:5]
     assert "Apple (AAPL)" in b and "Samsung" in b and "AAPL (customer), 2026-10-15: Apple cuts orders" in b
     assert P.prompt_block(None, []) == ""
+    pr["segments"] = {"period": "2025-08-28", "axis": "products and services", "items": [{"label": "DRAM", "pct": 76.5, "prev_pct": 70.1}]}
+    pr["named_by"] = [{"name": "NVIDIA", "ticker": "NVDA", "role": "customer", "named_by": "NVDA"}]
+    b = P.prompt_block(pr, [], {"O39.SI": -0.021})
+    assert "DRAM 76% (a year earlier 70%)" in b and "NVIDIA (NVDA, a customer)" in b and "O39.SI -2.1%" in b
 
 
 if __name__ == "__main__":

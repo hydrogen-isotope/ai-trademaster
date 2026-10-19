@@ -70,6 +70,20 @@ def test_shadow_log_written_once_per_stock_and_close():
         assert len(lines) == 1 and json.loads(lines[0])["m_adv"] == 0.004
 
 
+def test_lean_shift_uses_only_symmetric_evaluations_and_falls_back():
+    with tempfile.TemporaryDirectory() as tmp:
+        se.EVALS = tmp
+        os.makedirs(os.path.join(tmp, "nasdaq"))
+        os.makedirs(os.path.join(tmp, "sgx"))
+        old = {f"O{i}": {"h": {"5": {"p_raw": 0.9, "p_model": 0.5}}} for i in range(50)}            # one-sided era: ignored
+        new = {f"N{i}": {"h": {"5": {"p_raw": 0.58, "p_model": 0.50, "sym_q": True}}} for i in range(40)}
+        json.dump(old, open(os.path.join(tmp, "nasdaq", "index_2026-10-15.json"), "w"))
+        json.dump(new, open(os.path.join(tmp, "nasdaq", "index_2026-10-16.json"), "w"))
+        assert close(se.lean_shift("nasdaq", 5), 0.08)
+        assert close(se.lean_shift("sgx", 5), 0.08)                     # SGX has < 30: pooled
+        assert se.lean_shift("nasdaq", 1) == 0.0                         # nothing at this horizon yet
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

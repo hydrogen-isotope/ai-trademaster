@@ -642,7 +642,11 @@ function profileCard(r, m) {                                  // v8 amendment G:
   return `<div class="card" style="margin-top:12px"><h3>Company profile <span class="dim" style="font-weight:400">— what Qwen knows about the business (B)</span></h3>` +
     `<div style="margin-bottom:6px">${esc(p.summary)}</div>` +
     (p.products && p.products.length ? `<div><span class="muted">Products:</span> ${p.products.map(x => esc(x.name) + (x.revenue_share_pct ? ` <span class="dim">~${x.revenue_share_pct}%</span>` : '')).join(', ')}</div>` : '') +
-    list('Customers', p.customers) + list('Suppliers', p.suppliers) + list('Competitors', p.competitors) +
+    (p.segments ? `<div><span class="muted">Revenue split (${esc(p.segments.axis)}, year to ${esc(p.segments.period)}):</span> ` +
+      p.segments.items.map(x => `${esc(x.label)} <b>${x.pct.toFixed(0)}%</b>` + (x.prev_pct != null ? ` <span class="dim">(${x.prev_pct.toFixed(0)}% a year before)</span>` : '')).join(', ') +
+      ` <span class="dim">— ${esc(p.segments.source)}</span></div>` : '') +
+    list('Customers', p.customers) + list('Suppliers', p.suppliers) + list('Competitors and peers', p.competitors) +
+    (p.named_by && p.named_by.length ? `<div><span class="muted">Named in other companies' filings:</span> ${p.named_by.map(e => `${link(e)} <span class="dim">(as its ${esc(e.role)})</span>`).join(', ')}</div>` : '') +
     (p.drivers && p.drivers.length ? `<div><span class="muted">What drives sales:</span> ${p.drivers.map(esc).join('; ')}</div>` : '') +
     `<div class="dim" style="margin-top:6px;font-size:11.5px">From ${src.url ? `<a href="${esc(src.url)}" target="_blank" rel="noopener">${esc(src.kind)}</a>` : esc(src.kind || '')}` +
     `${src.filed ? ' filed ' + esc(src.filed) : ''}, summarised by Qwen; it can be incomplete.</div>` +
@@ -657,6 +661,8 @@ function aiBody(r, m) {
     `<div class="card"><h3>Research signal ${sigChip(sig)}</h3><div class="kv">` +
       `<div>chance of a rise (${HZL[hk][1]})</div><div>${pup(t.p_up)}</div>` +
       (pq != null ? `<div>Qwen alone said</div><div>${pup(pq)} rise</div>` : '') +
+      (hh && hh.p_lower != null ? `<div title="Qwen's chance of higher / lower, combined, then its average lean over recent evaluations removed">Qwen's lean correction</div>` +
+        `<div class="dim">${(hh.p_higher * 100).toFixed(0)}% up / ${(hh.p_lower * 100).toFixed(0)}% down → ${(hh.p_raw * 100).toFixed(0)}%, shift ${hh.shift >= 0 ? '−' : '+'}${Math.abs(hh.shift * 100).toFixed(1)} pts</div>` : '') +
       `<div>model alone</div><div>${pup(V.model.p_up)}</div></div>` +
       `<div class="dim" style="margin-top:6px;font-size:11.5px">Buy at ≥ 58%, sell at ≤ 42% (fixed in advance). A research indicator in a forward test, not advice.</div></div>` +
     card(`Qwen + models, ${HZL[hk][1]}`, [['median', `${M.ccy}${px(t.median)} (${pct(t.exp_ret, 1)})`], ['most likely (50%)', t.lo50 != null ? `${px(t.lo50)} – ${px(t.hi50)}` : '—'],
