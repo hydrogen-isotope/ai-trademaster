@@ -249,6 +249,11 @@ def path(market, sym):
 
 
 def load(market, sym, asof=None):
+    from . import profiles_haiku                                           # amendment I: the researched profile first
+    hp = profiles_haiku.load(market, sym)
+    if hp:
+        hp["named_by"] = reverse_links(market, sym)
+        return hp
     p = path(market, sym)
     if not os.path.exists(p):
         return None
@@ -422,7 +427,10 @@ def reverse_links(market, sym):
     """Amendment H: companies whose own profile names this one: X lists it as a supplier -> X is its customer, and vice
     versa. Built from every stored profile, so it grows as more companies are profiled."""
     out = []
-    for f in glob.glob(os.path.join(DIR, "*", "*.json")):
+    haiku = glob.glob(os.path.join("private", "data", "profiles_haiku", "*", "*.checked.json"))
+    have = {os.path.basename(f)[:-len(".checked.json")] for f in haiku}
+    qwen = [f for f in glob.glob(os.path.join(DIR, "*", "*.json")) if os.path.basename(f)[:-5] not in have]
+    for f in haiku + qwen:                                                 # a researched profile replaces the Qwen one
         try:
             other = json.load(open(f, encoding="utf-8"))
         except (OSError, ValueError):
@@ -555,7 +563,11 @@ def prompt_block(pr, rel, moves=None):
     if not pr:
         return ""
     src = pr["source"]
-    L = [f"Company profile (from its {src['kind']}{' filed ' + src['filed'] if src.get('filed') else ''}): {pr.get('summary', '')}"]
+    if "Haiku" in src.get("kind", ""):
+        L = [f"Company profile (researched from {'its ' + src['filing_kind'] + ' filed ' + src['filed'] + ' and ' if src.get('filed') and src.get('filing_kind') else 'its filings and '}"
+             f"sources dated 2023 or later): {pr.get('summary', '')}"]
+    else:
+        L = [f"Company profile (from its {src['kind']}{' filed ' + src['filed'] if src.get('filed') else ''}): {pr.get('summary', '')}"]
     if pr.get("products"):
         L.append("- products: " + "; ".join(p["name"] + (f" (~{p['revenue_share_pct']}% of revenue)" if p.get("revenue_share_pct") else "") for p in pr["products"]))
     for k in ("customers", "suppliers", "competitors"):

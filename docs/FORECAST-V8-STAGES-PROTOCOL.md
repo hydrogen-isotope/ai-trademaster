@@ -301,6 +301,18 @@ Claude Haiku.**
   `evals/<market>/b_qwen_profiles/` and are not part of the forward test. B's forward test starts from this
   amendment.
 - **Refresh.** Haiku profiles are re-researched when a newer annual report exists (as in H), or after 180 days.
+- **Run (2026-10-19).** 43 Haiku subagents of about 10 companies each produced all 419 profiles.
+  - The first batch searched only once per company and returned thin profiles. It was redone after the instructions
+    were tightened to 3–6 searches per company.
+  - Checked results:
+    - NASDAQ: a median of 10 named relationships per company, 242 of 300 with at least one named customer or supplier,
+      2 empty;
+    - SGX: a median of 5 (most are Eulerpool peers), 58 of 119 with a customer or supplier, 13 empty.
+  - The checks removed 222 duplicates, 76 companies whose shares no longer trade (e.g. VMware, Twitter, Activision; also
+    some still operating privately, e.g. Razer, as the rule requires), 10 self-references and 1 category.
+  - Eulerpool's description was found to belong to a different company for several SGX stocks (Moneymax, ISDN, LHN,
+    PSC, InnoTek, Multi-Chem). The Haiku profiles follow the company's own filings and press instead.
+  - Pilot profiles outside the coverage (LMAT, ODD, OLED, SMPL, WAY) are kept aside and are not used.
 
 ## Results
 

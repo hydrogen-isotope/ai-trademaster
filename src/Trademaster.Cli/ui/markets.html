@@ -634,12 +634,15 @@ function toggleView(k, on) {
 }
 function profileCard(r, m) {                                  // v8 amendment G: what the company sells and who it deals with
   const p = r.profile; if (!p) return '';
-  const link = e => e.ticker ? `<a href="#/nasdaq/stock/${encodeURIComponent(e.ticker)}" title="${esc(e.ticker)}">${esc(e.name)}</a>` : esc(e.name);
+  const tip = e => esc([e.ticker, e.evidence, e.source_date].filter(Boolean).join(' · '));
+  const mkt = t => /\.SI$/.test(t) ? 'sgx' : 'nasdaq';
+  const link = e => (e.ticker ? `<a href="#/${mkt(e.ticker)}/stock/${encodeURIComponent(e.ticker)}" title="${tip(e)}">${esc(e.name)}</a>` : `<span title="${tip(e)}">${esc(e.name)}</span>`) +
+    (e.source_url ? `<sup><a href="${esc(e.source_url)}" target="_blank" rel="noopener" title="source${e.source_date ? ', ' + esc(e.source_date) : ''}" style="margin-left:2px">src</a></sup>` : '');
   const list = (label, xs) => xs && xs.length ? `<div><span class="muted">${label}:</span> ${xs.map(link).join(', ')}</div>` : '';
   const src = p.source || {};
   const rel = (r.related || []).flatMap(x => x.headlines.map(h => `<tr><td style="text-align:left;width:60px"><b>${esc(x.ticker)}</b></td><td class="dim" style="text-align:left;width:80px">${esc(x.role)}</td>` +
     `<td class="dim" style="width:80px;text-align:left">${esc(h.t.slice(0, 10))}</td><td style="text-align:left;white-space:normal">${esc(h.headline)}</td></tr>`));
-  return `<div class="card" style="margin-top:12px"><h3>Company profile <span class="dim" style="font-weight:400">— what Qwen knows about the business (B)</span></h3>` +
+  return `<div class="card" style="margin-top:12px"><h3>Company profile <span class="dim" style="font-weight:400">— what the analysis knows about the business (B)</span></h3>` +
     `<div style="margin-bottom:6px">${esc(p.summary)}</div>` +
     (p.products && p.products.length ? `<div><span class="muted">Products:</span> ${p.products.map(x => esc(x.name) + (x.revenue_share_pct ? ` <span class="dim">~${x.revenue_share_pct}%</span>` : '')).join(', ')}</div>` : '') +
     (p.segments ? `<div><span class="muted">Revenue split (${esc(p.segments.axis)}, year to ${esc(p.segments.period)}):</span> ` +
@@ -648,8 +651,9 @@ function profileCard(r, m) {                                  // v8 amendment G:
     list('Customers', p.customers) + list('Suppliers', p.suppliers) + list('Competitors and peers', p.competitors) +
     (p.named_by && p.named_by.length ? `<div><span class="muted">Named in other companies' filings:</span> ${p.named_by.map(e => `${link(e)} <span class="dim">(as its ${esc(e.role)})</span>`).join(', ')}</div>` : '') +
     (p.drivers && p.drivers.length ? `<div><span class="muted">What drives sales:</span> ${p.drivers.map(esc).join('; ')}</div>` : '') +
-    `<div class="dim" style="margin-top:6px;font-size:11.5px">From ${src.url ? `<a href="${esc(src.url)}" target="_blank" rel="noopener">${esc(src.kind)}</a>` : esc(src.kind || '')}` +
-    `${src.filed ? ' filed ' + esc(src.filed) : ''}, summarised by Qwen; it can be incomplete.</div>` +
+    `<div class="dim" style="margin-top:6px;font-size:11.5px">` + (/Haiku/.test(src.kind || '')
+      ? `Researched by Claude Haiku from ${src.url ? `<a href="${esc(src.url)}" target="_blank" rel="noopener">${esc(src.filing_kind || 'its filing')}</a>` + (src.filed ? ' filed ' + esc(src.filed) : '') : 'its filings'} and the web (sources dated 2023 or later); hover a name for the evidence. It can be incomplete.`
+      : `From ${src.url ? `<a href="${esc(src.url)}" target="_blank" rel="noopener">${esc(src.kind)}</a>` : esc(src.kind || '')}${src.filed ? ' filed ' + esc(src.filed) : ''}, summarised by Qwen; it can be incomplete.`) + `</div>` +
     (rel.length ? `<details style="margin-top:8px"><summary class="muted" style="cursor:pointer">News about its customers, suppliers and competitors (${rel.length})</summary><table><tbody>${rel.join('')}</tbody></table></details>` : '') +
     `</div>`;
 }
