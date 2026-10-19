@@ -200,6 +200,16 @@ the cache and the logging rule are unchanged.
   - The asymmetry is a known weakness. The 60-day re-fit may add an intercept to correct it.
   - These outputs are in `evals/handcheck4/` and are not part of the forward test.
 
+**F (2026-10-19, with v7 amendment A, before any 1-day or 20-day Qwen result). Qwen at three horizons.**
+- In the same conversation after its verdict, Qwen is asked for the chance (0–100) that the price is higher in 1, 5 and
+  20 trading days. These are three questions, each read the same way as in amendment E.
+- Each horizon's P_total = P_model(h) + 0.5 · (P_qwen(h) − 0.5), clipped to [0.05, 0.95], using that horizon's v7 shape
+  and recalibration levels.
+- The same buy/sell thresholds apply (0.58 / 0.42).
+- Every horizon is logged to its own shadow file (`advice_shadow.jsonl` for 5 days; `advice_shadow_h1.jsonl`,
+  `advice_shadow_h20.jsonl`).
+- The same promotion rule applies per horizon. A horizon whose v7 model failed its gate is not shown.
+
 ## Results
 
 ### Test A: staging vs one ridge (no news), run 2026-10-18

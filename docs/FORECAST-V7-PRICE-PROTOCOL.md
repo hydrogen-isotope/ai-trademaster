@@ -62,7 +62,25 @@ a small edge.
 - All of the above split by v6 decile.
 
 ## Amendments
-(none yet)
+
+**A (2026-10-19, at the user's request, before any 1-day or 20-day result). Horizons of 1 and 20 trading days.**
+- **Model.** The 5-day model is unchanged in every way except the horizon h, which is now a parameter (h ∈ {1, 5, 20}).
+  For each h:
+  - the drift is shrunk the same way and scaled to h days;
+  - the GJR-GARCH variance is summed over h steps;
+  - the idiosyncratic variance is h · idio²;
+  - the cross-stock ridge and its decile tilt table are fitted on h-day returns;
+  - the symmetric recalibration uses h-day PITs.
+- **Selection.** The tilt shrink is chosen by CRPS on development 2021–2024 among {0.5, 0.75, 1.0}. 2025–26 is reported
+  as *seen*, as for 5 days.
+- **Gate for showing a horizon in the app**, decided before looking:
+  1. on development, mean CRPS is below RW's;
+  2. 80% coverage is within 0.75–0.85 on development and on the seen period.
+
+  A horizon that fails is not shown.
+- **Forward test.** Each horizon has its own shadow log (`v7/h1/`, `v7/h20/`) and the same promotion rule as 5 days,
+  with block bootstrap blocks of max(5, h) dates, because 20-day outcomes overlap.
+- **App.** 1 day is the default view; 5 days and 20 days ("1M") are selectable.
 
 ## Results
 
