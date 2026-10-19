@@ -256,6 +256,31 @@ analysis.**
     - An earlier one-shot "which no longer exist?" question removed real companies (Sandisk, re-listed in 2025;
       Powerchip) and missed Credit Suisse, so it was replaced before any outcome.
 
+**H (2026-10-19, before any advised forecast matured; the first 1-day outcome is the US close of 2026-10-19).
+Qwen's up-lean, and profile data.**
+- **Observed (no outcomes involved).** Over 40 five-day evaluations of stocks chosen evenly from both ends of the
+  ranking, Qwen said "up" 24 times and "down" 12 times. Its mean chance of a rise was 0.56 against the model's 0.50.
+- **Symmetric question.** After the verdict, Qwen is asked both the chance (0–100) that the price is *higher* and the
+  chance that it is *lower* in h trading days, each read as in amendment E.
+  P_raw = P_higher / (P_higher + P_lower). This removes the tendency to agree with the direction a question suggests.
+- **Re-centring.**
+  - Qwen's average lean over its recent evaluations is removed: P_qwen = P_raw − (mean(P_raw) − mean(P_model)).
+  - The window is the last 200 evaluations of that horizon (all stocks, before this one). It uses the market's own
+    window once it has ≥ 30 evaluations, otherwise all markets pooled, otherwise no shift.
+  - Qwen then decides only how a stock compares with the rest; the market-wide direction comes from the tested model.
+    No outcome is used.
+  - P_total = P_model + 0.5 · (P_qwen − 0.5) as before. P_raw, the shift and P_qwen are all logged.
+- **Profile data (variant B only).**
+  - **Revenue split** from Eulerpool's segment data, which comes from the company's XBRL filings. It uses the latest
+    fiscal period that ended at least 75 days before the forecast close and whose shares sum to 90–110%, plus the year
+    before. These numbers replace Qwen's revenue shares.
+  - **Peers** from Eulerpool's peer list are added to the competitors, with the same clean-up and ticker rules. For SGX
+    peers, the prompt gets their 5-session price moves from our SGX data, since SGX has no news source.
+  - **Reverse links.** If company X's profile names Y as a customer (supplier), Y's profile gains X as a supplier
+    (customer), marked "named by X".
+  - **Rebuild** when a newer annual report than the profile's source exists (checked at most weekly), instead of after
+    120 days.
+
 ## Results
 
 ### Test A: staging vs one ridge (no news), run 2026-10-18
