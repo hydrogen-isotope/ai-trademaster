@@ -194,6 +194,8 @@ public static class Dashboard
             var path = Path.Combine("private", "reports", "sgx", "momentum.json");
             return File.Exists(path) ? Results.Text(File.ReadAllText(path), "application/json") : Results.Json(new { status = "none" });
         });
+        // pull new closes now (the page asks once a newer close should exist, e.g. after the US or SGX market closes)
+        app.MapPost("/api/refresh", () => { var (started, reason) = StockEval.StartRefresh(); return Results.Json(new { started, reason }); });
         app.MapGet("/api/rankings/status", () =>
         {
             var path = Path.Combine("private", "reports", "v6", "refresh_status.json");

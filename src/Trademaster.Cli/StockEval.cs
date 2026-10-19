@@ -152,4 +152,34 @@ public static partial class StockEval
             lastStart = DateTime.UtcNow;
         }
     }
+
+    private static DateTime lastRefreshStart = DateTime.MinValue;
+
+    /// <summary>Start the background update (new closes, news, forecasts, rankings, SGX, indexes) unless one is running or
+    /// finished in the last 15 minutes. The user is at the PC (the page asked), so the news is read on the GPU.</summary>
+    public static (bool Started, string Reason) StartRefresh()
+    {
+        lock (StartLock)
+        {
+            var status = Path.Combine("private", "reports", "v6", "refresh_status.json");
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(status));
+                var st = doc.RootElement.GetProperty("state").GetString();
+                var age = DateTime.Now - File.GetLastWriteTime(status);
+                if (st == "running" && age < TimeSpan.FromHours(1)) return (false, "an update is already running");
+                if (age < TimeSpan.FromMinutes(15)) return (false, "checked less than 15 minutes ago");
+            }
+            catch (Exception) { }
+            if (DateTime.UtcNow - lastRefreshStart < TimeSpan.FromMinutes(15)) return (false, "started less than 15 minutes ago");
+            var py = Path.Combine("python", ".venv", "Scripts", "python.exe");
+            if (!File.Exists(py)) return (false, "python environment not found");
+            var psi = new ProcessStartInfo(Path.GetFullPath(py)) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Directory.GetCurrentDirectory() };
+            foreach (var a in new[] { "-W", "ignore", "-m", "trademaster_ml.refresh", "--gpu-news" }) psi.ArgumentList.Add(a);
+            psi.Environment["PYTHONPATH"] = "python";
+            Process.Start(psi);
+            lastRefreshStart = DateTime.UtcNow;
+            return (true, "update started");
+        }
+    }
 }

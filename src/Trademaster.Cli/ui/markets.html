@@ -192,6 +192,36 @@ function caveat(m, d) {
   return `<div class="lead">${out.map(esc).join(' ')}</div>`;
 }
 
+// ---------------------------------------------------------------- data freshness: which close, when the next one comes
+const SESS = { nasdaq: { tz: 'America/New_York', open: [9, 30], close: [16, 0], name: 'US' }, sgx: { tz: 'Asia/Singapore', open: [9, 0], close: [17, 0], name: 'SGX' } };
+let LASTCHECK = null;                                            // time of the last update check (from /api/rankings/status)
+function zoned(day, [h, mi], tz) {                               // a wall-clock time in tz on `day` (YYYY-MM-DD) as a Date
+  const [y, mo, d] = day.split('-').map(Number), guess = Date.UTC(y, mo - 1, d, h, mi);
+  const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' })
+    .formatToParts(new Date(guess)).map(x => [x.type, x.value]));
+  const shown = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute);
+  return new Date(guess - (shown - guess));
+}
+let lastPull = 0;
+function pullNow() {                                              // ask the app to fetch the new close (at most every 15 min)
+  if (Date.now() - lastPull < 15 * 60000) return;
+  lastPull = Date.now();
+  fetch('/api/refresh', { method: 'POST' }).catch(() => { });
+}
+function fresh(m, asof) {
+  const S = SESS[m]; if (!S || !asof) return '';
+  let d = new Date(asof + 'T12:00:00Z');
+  do { d = new Date(d.getTime() + 86400000); } while (d.getUTCDay() === 0 || d.getUTCDay() === 6);
+  const nd = d.toISOString().slice(0, 10), open = zoned(nd, S.open, S.tz), close = zoned(nd, S.close, S.tz), now = new Date();
+  const loc = t => t.toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  const day = new Date(asof + 'T12:00:00Z').toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' });
+  const next = now < open ? `This is the latest: the next ${S.name} session opens ${loc(open)} your time.`
+    : now < close ? `The ${S.name} market is open now; today's close is added after it ends at ${loc(close)} your time (forecasts never use an unfinished day).`
+    : (pullNow(), `A newer ${S.name} close should now exist: pulling it now (this page updates by itself when done).`);
+  return `<span title="Prices are daily closes; the app checks for new ones each time it opens">Data: ${S.name} close of ${day}. ${next}` +
+    (LASTCHECK ? ` Last checked ${new Date(LASTCHECK).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}.` : '') + `</span>`;
+}
+
 // ---------------------------------------------------------------- views
 async function viewAll() {
   crumbs({ m: null }, 'All markets');
@@ -234,7 +264,7 @@ async function viewOverview(m) {
     ['data as of', esc(d.asof)], ['universe', d.universe + ' stocks'], ['generated', esc((d.generated || '').replace('T', ' ').slice(0, 16))]]));
   const tbl = (title, rows) => `<div class="panel"><div class="ph">${title}</div><div class="scroll" style="max-height:none"><table><thead>${SHORT_HEAD}</thead><tbody>` +
     rows.map(r => shortRow(m, r)).join('') + '</tbody></table></div></div>';
-  return `<h1>${M.name} ${statusChip(d)}</h1>${caveat(m, d)}<div class="cards">${cards.join('')}</div>` +
+  return `<h1>${M.name} ${statusChip(d)}</h1><div class="lead">${fresh(m, d.asof)}</div>${caveat(m, d)}<div class="cards">${cards.join('')}</div>` +
     `<div class="two">${tbl('Top-ranked · expected to beat peers', d.rankings.slice(0, 10))}${tbl('Bottom-ranked · expected to lag peers', d.rankings.slice(-10).reverse())}</div>` +
     `<div class="tools"><a href="#/${m}/rankings">All ${d.universe} ranked stocks →</a><a href="#/${m}/forecasts">Price forecasts →</a><a href="#/${m}/record">How the model did →</a></div>`;
 }
@@ -395,10 +425,10 @@ async function viewStock(m, sym) {
   const tok = (viewStock.tok = (viewStock.tok || 0) + 1);
   setTimeout(() => loadEval(m, sym, tok), 0);
   return `<h1>${esc(sym)} <span class="muted" style="font-weight:400">${esc(r.name)}</span> <span class="chip">${M.name}</span>${inMom ? ' <span class="chip warn">IN MOMENTUM PICKS</span>' : ''}</h1>` +
-    `<div class="lead">Close ${esc(d.asof)}. Forecasts are for the next 5 trading days and are in a forward test.` +
+    `<div class="lead">${fresh(m, d.asof)} Forecasts are for the next 5 trading days and are in a forward test.` +
     (m === 'nasdaq' ? ` <a href="/?symbol=${encodeURIComponent(sym)}">Open chart in Watchlist →</a>` : '') + `</div>` +
     `<div class="panel"><div class="ph"><span>Last year and the next 5 trading days</span><div class="spacer"></div><span class="legend"><span id="vtoggles" style="display:flex;gap:14px;flex-wrap:wrap"></span>` +
-    `<span class="dim">thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div>` +
+    `<span class="dim">green = above today's close, red = below · thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div>` +
     `<div style="position:relative"><div class="chart" id="stockchart" style="height:340px"></div><div class="spinwrap" id="spin"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub">asking for the analysis</div></div></div></div></div>` +
     `<div class="panel" id="aipanel" style="position:relative;min-height:120px"><div class="ph">AI analysis (Qwen, local, post-processed by our models) <span class="chip warn">UNPROVEN · FORWARD TEST</span></div>` +
     `<div class="spinwrap" id="spin2"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub2">Qwen is reading ${m === 'nasdaq' ? 'its news, ' : ''}the numbers and its peers</div></div></div><div class="pad" id="aibody"></div></div>` +
@@ -429,8 +459,9 @@ function lineChart(id, lines, cone, opts = {}) {
   if (cone) {
     const add = (k, style, w, c, title) => ch.addLineSeries({ color: c, lineWidth: w, lineStyle: style, priceLineVisible: false, lastValueVisible: !!title,
       title: title || '', crosshairMarkerVisible: false }).setData(cone.pts.map(p => ({ time: p.date, value: p[k] })));
-    add('lo95', 1, 1, cone.color + '55'); add('hi95', 1, 1, cone.color + '55'); add('lo80', 2, 1, cone.color + '99'); add('hi80', 2, 1, cone.color + '99');
-    add('lo50', 0, 1, cone.color); add('hi50', 0, 1, cone.color); add('median', 0, 3, cone.color, opts.mini ? '' : '5-day');
+    const end = cone.pts[cone.pts.length - 1], c = k => (end[k] >= cone.pts[0].median ? '#16c784' : '#f6465d');   // above / below today's close
+    add('lo95', 1, 1, c('lo95') + '55'); add('hi95', 1, 1, c('hi95') + '55'); add('lo80', 2, 1, c('lo80') + '99'); add('hi80', 2, 1, c('hi80') + '99');
+    add('lo50', 0, 1, c('lo50')); add('hi50', 0, 1, c('hi50')); add('median', 0, 3, c('median'), opts.mini ? '' : '5-day');
   }
   const n = lines[0].data.length;
   requestAnimationFrame(() => opts.all ? ch.timeScale().fitContent() : ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - (opts.days || 70)), to: n + (cone ? 7 : 1) }));
@@ -458,7 +489,7 @@ async function viewIndexes(m) {
   const th = (k, label, tip) => `<th class="sort ${S.sort === k ? 'on' : ''}" title="${tip || ''}" onclick="UI.sectors.sort='${k}';render()">${label}${S.sort === k ? ' ▼' : ''}</th>`;
   setTimeout(() => { for (const sym of ['ONEQ', 'QQQ', 'SPY']) if (E[sym]) lineChart('mini-' + sym, [{ data: E[sym].series.slice(-130), color: '#e6e9ee', width: 1.5 }],
     E[sym].forecast ? { pts: E[sym].forecast.cone, color: E[sym].forecast.median >= E[sym].close ? '#16c784' : '#f6465d' } : null, { mini: true, all: true }); }, 0);
-  return `<h1>NASDAQ indexes & sectors</h1><div class="lead">${esc(X.note)} Close ${esc(X.asof)}.</div>` +
+  return `<h1>NASDAQ indexes & sectors</h1><div class="lead">${esc(X.note)}<br>${fresh('nasdaq', X.asof)}</div>` +
     `<div class="cards">${card('ONEQ')}${card('QQQ')}${card('SPY')}</div>` +
     `<div class="panel"><div class="ph">Sector groups (our ${Object.keys(X.members).length} NASDAQ stocks, equal weight) <span class="dim" style="text-transform:none;letter-spacing:0">click a sector for its chart and members</span></div><div style="overflow:auto"><table><thead><tr>` +
     `<th>Sector</th>${th('n', 'Stocks')}${th('d1', 'Today')}${th('w1', '1 week')}${th('m1', '1 month')}${th('ytd', 'YTD')}<th title="Share of its stocks that rose today">Up today</th>` +
@@ -505,7 +536,7 @@ async function viewIndex(m, sym) {
   setTimeout(() => lineChart('idxchart', [{ data: e.series, color: '#e6e9ee' }], f ? { pts: f.cone, color: f.median >= e.close ? '#16c784' : '#f6465d' } : null, { days: 90 }), 0);
   return `<h1>${esc(name)} <span class="chip">via ${etf} ETF</span></h1>` +
     `<div class="lead">${etf} is an exchange-traded fund that tracks the ${esc(name)}; the index itself is not in our data, so its price is the ETF's, not the index level. Close ${esc(e.last)}.</div>` +
-    `<div class="panel"><div class="ph">Last months and the next 5 trading days <span class="legend"><span class="dim">thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div><div class="chart" id="idxchart" style="height:340px"></div></div>` +
+    `<div class="panel"><div class="ph">Last months and the next 5 trading days <span class="legend"><span class="dim">green = above today's close, red = below · thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div><div class="chart" id="idxchart" style="height:340px"></div></div>` +
     `<div class="cards">${card('Performance', [['close', px(e.close)], ['today', ret(e.stats.d1)], ['1 week', ret(e.stats.w1)], ['1 month', ret(e.stats.m1)], ['year to date', ret(e.stats.ytd)], ['1 year', ret(e.stats.y1)]])}` +
     (f ? card('5-day forecast', [['median', `${px(f.median)} (${pct(f.exp_ret, 1)})`], ['most likely (50%)', `${px(f.lo50)} – ${px(f.hi50)}`], ['80% range', `${px(f.lo80)} – ${px(f.hi80)}`],
       ['95% range', `${px(f.lo95)} – ${px(f.hi95)}`], ['P(up)', pup(f.p_up)], ['beta to QQQ', f.beta.toFixed(2)]]) : '') + `</div>` +
@@ -554,23 +585,24 @@ function drawStock(r, m) {
   const only = avail.length === 1;                                       // still evaluating: just the model
   drawStock.series = {};
   for (const [k, label, col0] of avail) {
-    const v = V[k], color = col0 || (v.median >= r.close ? '#16c784' : '#f6465d'), alpha = a => color + a;
+    const v = V[k], end = v.cone[v.cone.length - 1];
+    const dir = key => (end[key] >= r.close ? '#16c784' : '#f6465d');         // green if that line ends above today's close, red if below
+    const col = key => col0 || dir(key), color = col('median'), alpha = (key, a) => col(key) + a;
     const ss = [];
     const add = (key, style, w, c, title) => { const se = ch.addLineSeries({ color: c, lineWidth: w, lineStyle: style, priceLineVisible: false,
       lastValueVisible: !!title, title: title || '', crosshairMarkerVisible: false }); se.setData(v.cone.filter(p => p[key] != null).map(p => ({ time: p.date, value: p[key] }))); ss.push(se); };
-    add('lo95', 1, 1, alpha('55')); add('hi95', 1, 1, alpha('55')); add('lo80', 2, 1, alpha('99')); add('hi80', 2, 1, alpha('99'));
-    if (v.cone[1] && v.cone[1].lo50 != null) { add('lo50', 0, 1, color); add('hi50', 0, 1, color); }
+    add('lo95', 1, 1, alpha('lo95', '55')); add('hi95', 1, 1, alpha('hi95', '55')); add('lo80', 2, 1, alpha('lo80', '99')); add('hi80', 2, 1, alpha('hi80', '99'));
+    if (v.cone[1] && v.cone[1].lo50 != null) { add('lo50', 0, 1, col('lo50')); add('hi50', 0, 1, col('hi50')); }
     add('median', 0, 3, color, k === 'total' ? 'AI' : k === 'qwen' ? 'Qwen' : 'model');
     drawStock.series[k] = ss;
     const on = only || !!SHOWN[k];
     ss.forEach(se => se.applyOptions({ visible: on }));
-    if (k === 'total' && $('lgTotal')) $('lgTotal').style.background = color;
   }
   const n = r.history.length;
   requestAnimationFrame(() => ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 70), to: n + 7 }));   // ~3 months + the 5-day cone
   if ($('vtoggles')) $('vtoggles').innerHTML = avail.length > 1 ? avail.map(([k, label, col0]) =>
     `<label style="cursor:pointer;white-space:nowrap"><input type="checkbox" ${SHOWN[k] ? 'checked' : ''} onchange="toggleView('${k}',this.checked)"> ` +
-    `<i ${k === 'total' ? 'id="lgTotal"' : ''} style="background:${col0 || (V.total.median >= r.close ? '#16c784' : '#f6465d')}"></i>${label}</label>`).join('')
+    `<i style="background:${col0 || 'linear-gradient(90deg,#16c784 50%,#f6465d 50%)'}"></i>${label}</label>`).join('')
     : '<span><i style="background:#8a93a0"></i>model only (Qwen still evaluating)</span>';
 }
 function toggleView(k, on) {
@@ -669,6 +701,7 @@ let wasRunning = false;
 async function pollRefresh() {
   try {
     const s = await (await fetch('/api/rankings/status')).json(), el = $('upd');
+    if (s.time) LASTCHECK = s.time;
     if (s.state === 'running') { el.style.display = ''; el.className = 'chip warn'; el.textContent = 'UPDATING · ' + s.step; wasRunning = true; }
     else if (s.state === 'error') { el.style.display = ''; el.className = 'chip bad'; el.textContent = 'UPDATE FAILED'; el.title = s.step; }
     else if (s.state === 'done') {
