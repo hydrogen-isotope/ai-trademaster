@@ -158,6 +158,16 @@ def context(market, sym, rankings=None, news=None):
     if row is None:
         raise NotForecast(f"{sym} has no price forecast for the close of {asof} (outside the forecast universe)")
     _, m, sd, close = row
+    hz = {5: {"m": float(m), "sd": float(sd), "R": np.array(rec["R_v7"])}}
+    for h in (1, 20):                                                      # v7 amendment A: shown only if the gate passed
+        hd = os.path.join(d["v7"], f"h{h}")
+        g = os.path.join(hd, "gate.json")
+        if not (os.path.exists(g) and json.load(open(g)).get("pass")):
+            continue
+        rh = _shadow_record(hd, asof)
+        rw = next((r for r in rh["rows"] if r[0] == sym), None) if rh else None
+        if rw:
+            hz[h] = {"m": float(rw[1]), "sd": float(rw[2]), "R": np.array(rh["R_v7"])}
     raw = np.memmap(os.path.join(d["gpu"], "raw.f32"), np.float32, "r", shape=(len(feats), T, N))
     rk = np.memmap(os.path.join(d["gpu"], "ranks.f32"), np.float32, "r", shape=(len(feats), T, N))
     facts = []
@@ -203,7 +213,7 @@ def context(market, sym, rankings=None, news=None):
     return {"market": market, "symbol": sym, "name": names.get(sym, rr["name"] if rr else ""), "asof": asof, "close": float(close),
             "m": float(m), "sd": float(sd), "R": np.array(rec["R_v7"]), "facts": facts, "universe": int(len(rec["rows"])),
             "rank": {"score_pct": rr["score_pct"], "decile": rr["decile"]} if rr else None, "industry": industry,
-            "peers": peers, "market_news": mkt, "history": history}
+            "peers": peers, "market_news": mkt, "history": history, "hz": hz}
 
 
 def own_headlines(sym, asof, now=None):
@@ -345,14 +355,14 @@ def parse_verdict(text):
     return {**FALLBACK, "positives": [], "negatives": []}, False
 
 
-def ask_probability(prompt, json_text, sym, slot=0):
+def ask_probability(prompt, json_text, sym, h=5, slot=0):
     """Amendment E: after its verdict, Qwen's own chance (0-100) that the price is higher in 5 trading days. Qwen writes
     numbers digit by digit, so the first answer token is the tens digit: P_qwen is the expectation over that digit's
     probabilities (digit d counts as 10d + 5; "1" may also start 100, which is rare). This is graded, unlike a one-word
     rise/fall answer, which simply repeated the verdict with ~100% certainty in the hand check.
     Returns (P_qwen, probability mass on digit tokens)."""
     follow = (f"{prompt}{json_text}<|im_end|>\n<|im_start|>user\nGiven all of this, what is the chance (0 to 100) that {sym}'s "
-              "price is higher in 5 trading days than at the last close? Answer with a whole number only.<|im_end|>\n"
+              f"price is higher in {h} trading day{'s' if h > 1 else ''} than at the last close? Answer with a whole number only.<|im_end|>\n"
               "<|im_start|>assistant\n")
     body = {"prompt": follow, "n_predict": 1, "temperature": 0, "n_probs": 30, "cache_prompt": True, "id_slot": slot}
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}/completion", json.dumps(body).encode(), {"Content-Type": "application/json"})
@@ -366,15 +376,16 @@ def ask_probability(prompt, json_text, sym, slot=0):
     return (float(np.dot(pr / mass, np.arange(10) * 10 + 5)) / 100 if mass > 0 else 0.5), mass
 
 
-def views(ctx, p_qwen, risk):
-    """The three logged views: total (Qwen post-processed by our models), Qwen only, model only."""
-    close, m, sd, R, asof = ctx["close"], ctx["m"], ctx["sd"], ctx["R"], ctx["asof"]
+def views(ctx, p_qwen, risk, h=5):
+    """The three logged views at horizon h: total (Qwen post-processed by our models), Qwen only, model only."""
+    x = ctx["hz"][h] if "hz" in ctx else {"m": ctx["m"], "sd": ctx["sd"], "R": ctx["R"]}
+    close, m, sd, R, asof = ctx["close"], x["m"], x["sd"], x["R"], ctx["asof"]
     p_model = p_up(m, sd, R)
     p_tot = combine(p_model, p_qwen)
     sd_t = sd * RISK_SD[risk]
     m_t = m_for_p_up(p_tot, sd_t, R)
     m_q = m_for_p_up(float(np.clip(p_qwen, 0.02, 0.98)), sd, R)
-    mk = lambda mm, ss: {**dist(close, mm, ss, R), "cone": cone(close, asof, mm, ss, R), "m": mm, "sd": ss}
+    mk = lambda mm, ss: {**dist(close, mm, ss, R), "cone": cone(close, asof, mm, ss, R, days=h), "m": mm, "sd": ss}
     return {"total": {**mk(m_t, sd_t), "signal": signal(p_tot), "w": W_QWEN, "sd_mult": RISK_SD[risk]},
             "qwen": {**mk(m_q, sd), "signal": signal(float(np.clip(p_qwen, *P_CLIP)))},
             "model": {**mk(m, sd), "signal": signal(p_model)}}
@@ -408,7 +419,9 @@ def partial(ctx):
     base = dist(ctx["close"], ctx["m"], ctx["sd"], ctx["R"])
     return {"status": "evaluating", "market": ctx["market"], "symbol": ctx["symbol"], "name": ctx["name"], "asof": ctx["asof"],
             "close": ctx["close"], "history": ctx["history"], "model": {**base, "cone": cone(ctx["close"], ctx["asof"], ctx["m"], ctx["sd"], ctx["R"])},
-            "facts": ctx["facts"], "rank": ctx["rank"], "industry": ctx["industry"], "peers": ctx["peers"], "market_news": ctx["market_news"]}
+            "facts": ctx["facts"], "rank": ctx["rank"], "industry": ctx["industry"], "peers": ctx["peers"], "market_news": ctx["market_news"],
+            "horizons": {str(h): {"model": {**dist(ctx["close"], x["m"], x["sd"], x["R"]), "cone": cone(ctx["close"], ctx["asof"], x["m"], x["sd"], x["R"], days=h)}}
+                         for h, x in sorted(ctx.get("hz", {}).items())}}
 
 
 def evaluate(market, sym, device="GPU", log=print):
@@ -421,32 +434,44 @@ def evaluate(market, sym, device="GPU", log=print):
     prompt, user = build_prompt(ctx, news)
     text, timing = generate(prompt)
     verdict, ok = parse_verdict(text)
-    p_q, mass = ask_probability(prompt, text, sym)
-    vw = views(ctx, p_q, verdict["risk"])
+    pq = {h: ask_probability(prompt, text, sym, h) for h in sorted(ctx["hz"])}       # v8 amendment F
+    vws = {h: views(ctx, pq[h][0], verdict["risk"], h) for h in pq}
+    p_q, mass = pq[5]
+    vw = vws[5]
     out = partial(ctx)
     out.update({"status": "done", "version": 2, "generated": datetime.now().isoformat(timespec="seconds"),
                 "views": vw, "advised": vw["total"], "model": vw["model"], "signal": vw["total"]["signal"],
                 "ai": {**verdict, "parse_ok": ok, "p_qwen": p_q, "p_mass": round(mass, 3), "model": MODEL_NAME, "device": device,
                        "seconds": round(time.time() - t0, 1), **timing},
-                "news": news, "status_note": "Qwen + models: unproven (forward shadow test, v8 amendment E)"})
+                "news": news, "status_note": "Qwen + models: unproven (forward shadow test, v8 amendments E-F)",
+                "horizons": {str(h): {"views": vws[h], "signal": vws[h]["total"]["signal"], "p_qwen": pq[h][0], "p_mass": round(pq[h][1], 3)}
+                             for h in vws}})
+    out["ai"]["p_qwen_h"] = {str(h): pq[h][0] for h in pq}
     m2, sd2 = vw["total"]["m"], vw["total"]["sd"]
     _dump(out, cache_path(market, sym, ctx["asof"]))
     try:
         os.remove(cache_path(market, sym, ctx["asof"], "partial.json"))
     except OSError:
         pass
-    _shadow(market, ctx, m2, sd2, verdict, ok, extra={"p_qwen": p_q, "p_total": vw["total"]["p_up"], "m_qwen": vw["qwen"]["m"],
-                                                       "signal": vw["total"]["signal"], "w": W_QWEN})
+    for h, v in vws.items():
+        cth = {"asof": ctx["asof"], "symbol": sym, "close": ctx["close"], "m": ctx["hz"][h]["m"], "sd": ctx["hz"][h]["sd"]}
+        _shadow(market, cth, v["total"]["m"], v["total"]["sd"], verdict, ok, h=h,
+                extra={"p_qwen": pq[h][0], "p_total": v["total"]["p_up"], "m_qwen": v["qwen"]["m"], "signal": v["total"]["signal"], "w": W_QWEN})
     _index_add(market, ctx["asof"], sym, out)
     log(f"[eval] {market} {sym} {ctx['asof']}: {verdict['lean']} / {verdict['confidence']} / {verdict['risk']}"
         f"{'' if ok else ' (unparsable -> neutral)'}; Qwen chance of rise {p_q:.0%} (digit mass {mass:.2f}); P(up) model {out['model']['p_up']:.0%} "
         f"-> total {out['advised']['p_up']:.0%} [{out['signal']}]; "
-        f"{len(news['headlines']) if news else 0} headlines; {time.time() - t0:.1f}s", flush=True)
+        + "".join(f"{h}d: Qwen {pq[h][0]:.0%} total {vws[h]['total']['p_up']:.0%} [{vws[h]['total']['signal']}]; " for h in vws if h != 5)
+        + f"{len(news['headlines']) if news else 0} headlines; {time.time() - t0:.1f}s", flush=True)
     return out
 
 
-def _shadow(market, ctx, m2, sd2, verdict, ok, extra=None):
-    path = os.path.join(EVALS, market, "advice_shadow.jsonl")
+def shadow_path(market, h=5):
+    return os.path.join(EVALS, market, "advice_shadow.jsonl" if h == 5 else f"advice_shadow_h{h}.jsonl")
+
+
+def _shadow(market, ctx, m2, sd2, verdict, ok, extra=None, h=5):
+    path = shadow_path(market, h)
     key = f'"asof": "{ctx["asof"]}", "symbol": "{ctx["symbol"]}"'
     if os.path.exists(path) and key in open(path, encoding="utf-8").read():
         return                                                             # one advised forecast per stock and close
@@ -462,7 +487,9 @@ def _index_add(market, asof, sym, out):
     idx = json.load(open(path)) if os.path.exists(path) else {}
     idx[sym] = {"p_up": out["advised"]["p_up"], "median": out["advised"]["median"], "lo80": out["advised"]["lo80"],
                 "hi80": out["advised"]["hi80"], "lean": out["ai"]["lean"], "confidence": out["ai"]["confidence"], "risk": out["ai"]["risk"],
-                "signal": out["signal"], "p_qwen": out["ai"]["p_qwen"], "p_model": out["model"]["p_up"]}
+                "signal": out["signal"], "p_qwen": out["ai"]["p_qwen"], "p_model": out["model"]["p_up"],
+                "h": {k: {"p_up": v["views"]["total"]["p_up"], "signal": v["signal"], "p_qwen": v["p_qwen"], "p_model": v["views"]["model"]["p_up"]}
+                      for k, v in out.get("horizons", {}).items()}}
     _dump(idx, path)
 
 
@@ -669,8 +696,10 @@ def start_daemon(app_url="http://127.0.0.1:5080"):
 
 def score(a):
     market = getattr(a, "market", "nasdaq") if a else "nasdaq"
+    H = getattr(a, "horizon", 5) if a else 5
     d = _market_dirs(market)
-    path = os.path.join(EVALS, market, "advice_shadow.jsonl")
+    path = shadow_path(market, H)
+    v7dir = d["v7"] if H == 5 else os.path.join(d["v7"], f"h{H}")
     if not os.path.exists(path):
         print(f"[eval] {market}: no advised forecasts yet", flush=True)
         return None
@@ -686,16 +715,16 @@ def score(a):
     days = []
     for asof, rows in sorted(by_date.items()):
         t = di.get(asof)
-        if t is None or t + v6.H > T - 1:
+        if t is None or t + H > T - 1:
             continue
-        rec = _shadow_record(d["v7"], asof)
+        rec = _shadow_record(v7dir, asof)
         if not rec:
             continue
         R = np.array(rec["R_v7"])
         rows = [r for r in rows if r["symbol"] in si]
         j = np.array([si[r["symbol"]] for r in rows])
         y = np.full(len(j), np.nan)
-        for k in range(1, v6.H + 1):
+        for k in range(1, H + 1):
             v = lc[t + k, j].astype(np.float64)
             y = np.where(np.isfinite(v), v - lc[t, j], y)
         ok = np.isfinite(y)
@@ -714,11 +743,11 @@ def score(a):
                      "buy_n": int((sig == "buy").sum()), "buy_right": int(((sig == "buy") & (y > 0)).sum()),
                      "sell_n": int((sig == "sell").sum()), "sell_right": int(((sig == "sell") & (y < 0)).sum())})
     n_rows = sum(x["n"] for x in days)
-    out = {"market": market, "matured_dates": len(days), "matured_forecasts": n_rows, "needed_dates": 60, "needed_forecasts": 300,
+    out = {"market": market, "horizon": H, "matured_dates": len(days), "matured_forecasts": n_rows, "needed_dates": 60, "needed_forecasts": 300,
            "logged": sum(len(v) for v in by_date.values()), "days": days, "status": "collecting"}
     if len(days) >= 5:
         from .daily_v4 import block_bootstrap_diff
-        out["crps_adv_minus_model"] = block_bootstrap_diff([x["crps_adv"] for x in days], [x["crps_model"] for x in days])
+        out["crps_adv_minus_model"] = block_bootstrap_diff([x["crps_adv"] for x in days], [x["crps_model"] for x in days], block=max(5, H))
         w = np.array([x["n"] for x in days], float)
         for k in ("hit_adv", "hit_model", "cov80_adv"):
             v = np.array([x[k] for x in days])
@@ -732,7 +761,7 @@ def score(a):
     if len(days) >= 60 and n_rows >= 300:
         promoted = out["crps_adv_minus_model"][2] < 0 and out["hit_adv"] >= out["hit_model"] and 0.75 <= out["cov80_adv"] <= 0.85
         out["status"] = "promoted" if promoted else "not promoted: advice weights set to 0"
-    _dump(out, os.path.join(EVALS, market, "advice_score.json"))
+    _dump(out, os.path.join(EVALS, market, "advice_score.json" if H == 5 else f"advice_score_h{H}.json"))
     print(f"[eval] {market} advice forward test: {len(days)} of 60 dates, {n_rows} of 300 forecasts matured ({out['status']})", flush=True)
     return out
 
@@ -742,6 +771,7 @@ def main():
     ap.add_argument("cmd", choices=["eval", "serve", "batch", "score", "prompt"])
     ap.add_argument("symbols", nargs="*")
     ap.add_argument("--market", choices=["nasdaq", "sgx"], default="nasdaq")
+    ap.add_argument("--horizon", type=int, choices=[1, 5, 20], default=5)
     ap.add_argument("--allow-gpu", action="store_true")
     ap.add_argument("--cpu", action="store_true")
     ap.add_argument("--app-url", default="http://127.0.0.1:5080")

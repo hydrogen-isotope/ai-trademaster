@@ -160,6 +160,20 @@ function crumbs(r, last) {
   $('crumbs').innerHTML = parts.join(' › ');
 }
 
+// ---------------------------------------------------------------- forecast horizon (v7 amendment A): 1 day by default
+let HZP = (() => { try { return localStorage.getItem('tm.hz') || '1'; } catch (e) { return '1'; } })();   // the user's choice
+let HZ = HZP;                                                    // what this page shows (falls back if a market lacks HZP)
+const HZL = { '1': ['1D', '1-day', 'tomorrow’s close (1 trading day)'], '5': ['5D', '5-day', 'the next 5 trading days'], '20': ['1M', '1-month', 'the next 20 trading days (about a month)'] };
+const hzOk = d => ['5'].concat(Object.entries((d && d.v7 && d.v7.horizons) || {}).filter(([, x]) => x.gate && x.gate.pass).map(([h]) => h));
+const fcOf = r => HZ === '5' ? r.fc : r['fc' + HZ];
+const aiAt = (AI, sym) => { const e = AI[sym]; if (!e) return null; if (e.h && e.h[HZ]) return { ...e, ...e.h[HZ] }; return HZ === '5' ? e : null; };
+function hzSel(avail) {
+  HZ = avail.includes(HZP) ? HZP : avail.includes('1') ? '1' : '5';
+  return `<span class="seg" title="Forecast horizon">${['1', '5', '20'].filter(h => avail.includes(h)).map(h =>
+    `<button class="${HZ === h ? 'on' : ''}" onclick="setHZ('${h}')">${HZL[h][0]}</button>`).join('')}</span>`;
+}
+function setHZ(h) { HZ = HZP = h; try { localStorage.setItem('tm.hz', h); } catch (e) { } render(); }
+
 // ---------------------------------------------------------------- shared pieces
 function card(title, kv) {
   return `<div class="card"><h3>${title}</h3><div class="kv">${kv.map(([k, v]) => `<div>${k}</div><div>${v}</div>`).join('')}</div></div>`;
@@ -169,7 +183,7 @@ function why(r) {
     .map(([k, v]) => `<span class="${v > 0.5 ? 'hi' : 'lo'}" title="${esc(k)} rank ${(v * 100).toFixed(0)} of 100">${v > 0.5 ? '▲' : '▼'} ${esc(WHY[k] || k)}</span>`).join('');
 }
 function rangeBar(r) {
-  const f = r.fc; if (!f) return '<span class="dim">—</span>';
+  const f = fcOf(r); if (!f) return '<span class="dim">—</span>';
   const lo = f.lo95, hi = f.hi95, w = hi - lo; if (!(w > 0)) return '';
   const pos = v => Math.max(0, Math.min(100, (v - lo) / w * 100));
   return `<span class="rng" title="95%: ${px(f.lo95)}–${px(f.hi95)} · 80%: ${px(f.lo80)}–${px(f.hi80)} · median ${px(f.median)} · now ${px(r.close)}">` +
@@ -180,10 +194,10 @@ function rangeBar(r) {
 const go = (m, sym) => `location.hash='#/${m}/stock/${encodeURIComponent(sym)}'`;
 function shortRow(m, r) {
   return `<tr class="click" onclick="${go(m, r.symbol)}"><td><b>${esc(r.symbol)}</b></td><td class="name">${esc(r.name)}</td><td class="num">${px(r.close)}</td>` +
-    `<td class="num">${r.score_pct.toFixed(0)}</td><td class="num">${r.fc ? px(r.fc.median) : '—'}</td><td>${rangeBar(r)}</td><td class="num">${pup(r.fc && r.fc.p_up)}` +
-    `${r.fc && r.fc.news && r.fc.news.n ? ` <span class="dim">→</span> ${pup(r.fc.news.p_up)}` : ''}</td><td><div class="why">${why(r)}</div></td></tr>`;
+    `<td class="num">${r.score_pct.toFixed(0)}</td><td class="num">${fcOf(r) ? px(fcOf(r).median) : '—'}</td><td>${rangeBar(r)}</td><td class="num">${pup(fcOf(r) && fcOf(r).p_up)}` +
+    `${HZ === '5' && r.fc && r.fc.news && r.fc.news.n ? ` <span class="dim">→</span> ${pup(r.fc.news.p_up)}` : ''}</td><td><div class="why">${why(r)}</div></td></tr>`;
 }
-const SHORT_HEAD = '<tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>5-day median</th><th>95% / 80% range</th><th>P(up)</th><th>Why</th></tr>';
+const SHORT_HEAD_ = () => `<tr><th>Symbol</th><th style="text-align:left">Company</th><th>Close</th><th>Score</th><th>${HZL[HZ][1]} median</th><th>95% / 80% range</th><th>P(up)</th><th>Why</th></tr>`;
 function caveat(m, d) {
   const out = [];
   if (m === 'sgx') out.push('Built from Eulerpool data: only companies listed today (stocks that delisted in the past are missing, so past results look better than reality). Market = a home-made STI proxy, not the real STI.');
@@ -226,24 +240,26 @@ function fresh(m, asof) {
 async function viewAll() {
   crumbs({ m: null }, 'All markets');
   const [n, s, mo] = await Promise.all([data('nasdaq'), data('sgx'), momentum()]);
+  const selAll = hzSel(['1', '5', '20'].filter(h => [n, s].some(x => x && !x.error && hzOk(x).includes(h))));
   const one = (k, d) => {
     const M = MARKETS[k];
     if (!d || d.error) return `<div class="card"><h3>${M.name}</h3><div class="dim">No data yet (${esc(d && d.error)})</div></div>`;
-    const withFc = d.rankings.filter(r => r.fc);
-    const byUp = withFc.slice().sort((a, b) => b.fc.p_up - a.fc.p_up);
+    const hk = hzOk(d).includes(HZ) ? HZ : '5', fo = r => hk === '5' ? r.fc : r['fc' + hk];   // this market's nearest horizon
+    const withFc = d.rankings.filter(r => fo(r));
+    const byUp = withFc.slice().sort((a, b) => fo(b).p_up - fo(a).p_up);
     const li = r => `<div class="click" style="display:flex;gap:8px;padding:2px 0;cursor:pointer;min-width:0" onclick="event.stopPropagation();${go(k, r.symbol)}"><b style="width:70px;flex:none">${esc(r.symbol)}</b>` +
-      `<span class="muted" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span><span style="flex:none">${pup(r.fc.p_up)}</span></div>`;
+      `<span class="muted" style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.name)}</span><span style="flex:none">${pup(fo(r).p_up)}</span></div>`;
     const nw = d.v7 && d.v7.news;
     return `<div class="card mcard" onclick="location.hash='#/${k}/overview'"><h3>${M.region} · ${M.name} ${statusChip(d)}</h3>` +
       `<div class="muted" style="margin-bottom:8px">close ${esc(d.asof)} · ${d.universe} stocks ranked · price forecasts: forward test</div>` +
       (nw ? `<div style="margin:6px 0 10px"><div class="muted" style="margin-bottom:4px">Market news (AI read, last 5 sessions): <b class="${cls(nw.market_index)}">${nw.market_index >= 0 ? '+' : ''}${nw.market_index.toFixed(2)}</b></div>` +
         `<div class="gauge"><i style="left:${(nw.market_index + 1) * 50}%"></i></div></div>` : '') +
       (k === 'sgx' && mo && mo.status && mo.status !== 'none' ? `<div class="muted" style="margin-bottom:8px">Momentum test: <span class="chip warn">${esc(mo.status)}</span> ${mo.matured_months} of ${mo.needed_months} months scored</div>` : '') +
-      `<div class="two" style="gap:12px;grid-template-columns:1fr 1fr"><div><div class="muted">Highest chance up (5 days)</div>${byUp.slice(0, 5).map(li).join('')}</div>` +
+      `<div class="two" style="gap:12px;grid-template-columns:1fr 1fr"><div><div class="muted">Highest chance up (${HZL[hk][1]})</div>${byUp.slice(0, 5).map(li).join('')}</div>` +
       `<div><div class="muted">Lowest chance up</div>${byUp.slice(-5).reverse().map(li).join('')}</div></div>` +
       `<div style="margin-top:10px"><a href="#/${k}/overview">Open ${M.name} →</a></div></div>`;
   };
-  return `<h1>All markets</h1><div class="lead">Pick an exchange to see its rankings, 5-day price forecasts and model record. Search any symbol at the top.</div>` +
+  return `<h1>All markets ${selAll}</h1><div class="lead">Pick an exchange to see its rankings, price forecasts and model record. Search any stock, index or sector at the top.</div>` +
     `<div class="two">${one('nasdaq', n)}${one('sgx', s)}</div>`;
 }
 
@@ -262,7 +278,7 @@ async function viewOverview(m) {
       ['forecasts scored', `${sc.matured_forecasts ?? 0} of 300`], ['evaluator', dm.state === 'running' ? `working (${esc(dm.current && dm.current.symbol)})` : esc(dm.state || 'not started')]])); }
   cards.push(card('Status', [['ranking', st.adopted === true ? 'adopted' : st.adopted === false ? 'not adopted' : 'pending'],
     ['data as of', esc(d.asof)], ['universe', d.universe + ' stocks'], ['generated', esc((d.generated || '').replace('T', ' ').slice(0, 16))]]));
-  const tbl = (title, rows) => `<div class="panel"><div class="ph">${title}</div><div class="scroll" style="max-height:none"><table><thead>${SHORT_HEAD}</thead><tbody>` +
+  const tbl = (title, rows) => `<div class="panel"><div class="ph">${title}</div><div class="scroll" style="max-height:none"><table><thead>${SHORT_HEAD_()}</thead><tbody>` +
     rows.map(r => shortRow(m, r)).join('') + '</tbody></table></div></div>';
   return `<h1>${M.name} ${statusChip(d)}</h1><div class="lead">${fresh(m, d.asof)}</div>${caveat(m, d)}<div class="cards">${cards.join('')}</div>` +
     `<div class="two">${tbl('Top-ranked · expected to beat peers', d.rankings.slice(0, 10))}${tbl('Bottom-ranked · expected to lag peers', d.rankings.slice(-10).reverse())}</div>` +
@@ -295,26 +311,27 @@ async function viewForecasts(m) {
   const [d, ev] = await Promise.all([data(m), evals(m)]), M = MARKETS[m], AI = (ev && ev.index) || {};
   crumbs({ m }, 'Price forecasts');
   if (d.error) return `<div class="empty">${esc(d.error)}</div>`;
-  const s = UI.forecasts, q = s.q.toLowerCase(), news = m === 'nasdaq';
-  const keys = { pup_desc: r => -r.fc.p_up, pup_asc: r => r.fc.p_up, move_desc: r => -r.fc.exp_ret, move_asc: r => r.fc.exp_ret,
-    width: r => -(r.fc.hi80 - r.fc.lo80) / r.close, sym: r => r.symbol };
-  const rows = d.rankings.filter(r => r.fc && (!q || r.symbol.toLowerCase().includes(q) || r.name.toLowerCase().includes(q)));
+  const s = UI.forecasts, q = s.q.toLowerCase();
+  const sel = hzSel(hzOk(d)), H5 = HZ === '5', news = m === 'nasdaq' && H5;   // the AI news adjustment exists for 5 days only
+  const keys = { pup_desc: r => -fcOf(r).p_up, pup_asc: r => fcOf(r).p_up, move_desc: r => -fcOf(r).exp_ret, move_asc: r => fcOf(r).exp_ret,
+    width: r => -(fcOf(r).hi80 - fcOf(r).lo80) / r.close, sym: r => r.symbol };
+  const rows = d.rankings.filter(r => fcOf(r) && (!q || r.symbol.toLowerCase().includes(q) || r.name.toLowerCase().includes(q)));
   const k = keys[s.sort] || keys.pup_desc;
   rows.sort((a, b) => { const x = k(a), y = k(b); return x < y ? -1 : x > y ? 1 : 0; });
   const th = (key, label) => `<th class="sort ${s.sort.startsWith(key) ? 'on' : ''}" onclick="UI.forecasts.sort=UI.forecasts.sort==='${key}_desc'?'${key}_asc':'${key}_desc';render()">${label}${s.sort === key + '_desc' ? ' ▼' : s.sort === key + '_asc' ? ' ▲' : ''}</th>`;
-  return `<h1>${M.name} 5-day price forecasts <span class="chip warn">FORWARD TEST</span></h1>` +
-    `<div class="lead">Median price in 5 trading days, the 80% and 95% ranges (bar: thin = 95%, thick = 80%, white line = today's close, dot = median), and the chance the price is higher. ` +
+  return `<h1>${M.name} ${HZL[HZ][1]} price forecasts ${sel} <span class="chip warn">FORWARD TEST</span></h1>` +
+    `<div class="lead">Median price at ${HZL[HZ][2]}, the 80% and 95% ranges (bar: thin = 95%, thick = 80%, white line = today's close, dot = median), and the chance the price is higher. ` +
     `Ranges have been well calibrated in testing; up/down is right ~51–52% on a typical stock and 56–58% on the bottom-ranked ones.${news ? ' "With news" adds the local AI model\'s read of the last 5 sessions (unproven).' : ''}</div>` +
     `<div class="panel"><div class="ph"><span>${rows.length} stocks</span><div class="spacer"></div><span class="tools"><input id="fq" placeholder="filter symbol or name" value="${esc(s.q)}" oninput="UI.forecasts.q=this.value;rerenderKeep('fq')"></span></div>` +
-    `<div class="scroll"><table><thead><tr>${th('sym', 'Symbol')}<th style="text-align:left">Company</th><th>Close</th>${th('move', '5-day median')}<th>Range</th>` +
+    `<div class="scroll"><table><thead><tr>${th('sym', 'Symbol')}<th style="text-align:left">Company</th><th>Close</th>${th('move', HZL[HZ][1] + ' median')}<th>Range</th>` +
     `<th>80% range</th>${th('width', '80% width')}${th('pup', 'P(up)')}<th>P(beats ${M.bench})</th>${news ? '<th>News</th><th>P(up) with news</th>' : ''}<th title="Qwen + models P(up) and research signal, for stocks already evaluated (click a stock to evaluate it)">AI P(up) · signal</th></tr></thead><tbody>` +
-    rows.slice(0, 600).map(r => { const f = r.fc, n = f.news;
+    rows.slice(0, 600).map(r => { const f = fcOf(r), n = H5 ? f.news : null;
       return `<tr class="click" onclick="${go(m, r.symbol)}"><td><b>${esc(r.symbol)}</b></td><td class="name">${esc(r.name)}</td><td class="num">${px(r.close)}</td>` +
         `<td class="num ${cls(f.median - r.close)}">${px(f.median)} <span class="dim">${pct(f.exp_ret, 1)}</span></td><td>${rangeBar(r)}</td>` +
         `<td class="num dim">${px(f.lo80)}–${px(f.hi80)}</td><td class="num dim">${pct((f.hi80 - f.lo80) / r.close, 0, false)}</td><td class="num">${pup(f.p_up)}</td><td class="num">${pup(f.p_beat_qqq)}</td>` +
         (news ? (n && n.n ? `<td class="num ${cls(n.news_dir)}">${n.news_dir > 0 ? '+' : ''}${n.news_dir.toFixed(1)} <span class="dim">(${n.n})</span></td><td class="num">${pup(n.p_up)}</td>` : '<td class="num dim">—</td><td class="num dim">—</td>') : '') +
-        (AI[r.symbol] ? `<td class="num" title="Qwen + models (Qwen alone: ${AI[r.symbol].p_qwen != null ? (AI[r.symbol].p_qwen * 100).toFixed(0) + '% rise' : '—'}; model alone ${(f.p_up * 100).toFixed(0)}%)">${pup(AI[r.symbol].p_up)} ` +
-          `${AI[r.symbol].signal && AI[r.symbol].signal !== 'none' ? sigChip(AI[r.symbol].signal).replace(' SIGNAL', '') : ''}</td>` : '<td class="num dim">—</td>') + '</tr>'; }).join('') +
+        (aiAt(AI, r.symbol) ? `<td class="num" title="Qwen + models (Qwen alone: ${aiAt(AI, r.symbol).p_qwen != null ? (aiAt(AI, r.symbol).p_qwen * 100).toFixed(0) + '% rise' : '—'}; model alone ${(f.p_up * 100).toFixed(0)}%)">${pup(aiAt(AI, r.symbol).p_up)} ` +
+          `${aiAt(AI, r.symbol).signal && aiAt(AI, r.symbol).signal !== 'none' ? sigChip(aiAt(AI, r.symbol).signal).replace(' SIGNAL', '') : ''}</td>` : '<td class="num dim">—</td>') + '</tr>'; }).join('') +
     '</tbody></table></div></div>';
 }
 
@@ -409,13 +426,13 @@ async function viewStock(m, sym) {
   crumbs({ m }, sym);
   const r = !d.error && d.rankings.find(x => x.symbol === sym);
   if (!r) return `<h1>${esc(sym)}</h1><div class="empty">${esc(sym)} is not in today's ${M.name} universe (the ~${d.universe || '?'} most-traded stocks).</div>`;
-  const f = r.fc, n = f && f.news, mo = m === 'sgx' ? await momentum() : null;
+  const sel = hzSel(hzOk(d)), f = fcOf(r), n = HZ === '5' && f && f.news, mo = m === 'sgx' ? await momentum() : null;
   const inMom = mo && (mo.provisional_picks || []).some(x => x.symbol === sym);
   const cards = [
     card('Today', [['close', `${M.ccy}${px(r.close)}`], ['rank score', `${r.score_pct.toFixed(0)} of 100`], ['decile', `${r.decile} of 10`], ['ranking', d.status && d.status.adopted === false ? 'not adopted' : 'adopted']]),
     card('vs other stocks (5 days)', [['expected vs median', pct(r.exp_rel_5d, 2)], ['chance to beat median', pct(r.p_beat, 0, false)], ['from', 'out-of-sample decile record']]),
   ];
-  if (f) cards.push(card('Own price (5 days)', [['median', `${M.ccy}${px(f.median)} (${pct(f.exp_ret, 1)})`], ['80% range', `${px(f.lo80)} – ${px(f.hi80)}`],
+  if (f) cards.push(card(`Own price (${HZL[HZ][1]})`, [['median', `${M.ccy}${px(f.median)} (${pct(f.exp_ret, 1)})`], ['80% range', `${px(f.lo80)} – ${px(f.hi80)}`],
     ['95% range', `${px(f.lo95)} – ${px(f.hi95)}`], ['P(up)', pup(f.p_up) + (n && n.n ? ` <span class="dim">→ with news</span> ${pup(n.p_up)}` : '')]]));
   const news = n && n.top && n.top.length ? `<div class="panel"><div class="ph">Its news, last 5 sessions (AI read · ${n.n} headlines · score ${n.news_dir > 0 ? '+' : ''}${n.news_dir.toFixed(1)})</div><table><tbody>` +
     n.top.map(x => `<tr><td class="num ${cls(x.dir)}" style="width:60px">${x.dir > 0 ? '+' : ''}${x.dir.toFixed(2)}</td><td class="dim" style="width:90px;text-align:left">${esc((x.t || '').slice(5, 16).replace('T', ' '))}</td>` +
@@ -425,14 +442,14 @@ async function viewStock(m, sym) {
   const tok = (viewStock.tok = (viewStock.tok || 0) + 1);
   setTimeout(() => loadEval(m, sym, tok), 0);
   return `<h1>${esc(sym)} <span class="muted" style="font-weight:400">${esc(r.name)}</span> <span class="chip">${M.name}</span>${inMom ? ' <span class="chip warn">IN MOMENTUM PICKS</span>' : ''}</h1>` +
-    `<div class="lead">${fresh(m, d.asof)} Forecasts are for the next 5 trading days and are in a forward test.` +
+    `<div class="lead">${fresh(m, d.asof)} Price forecasts are for ${HZL[HZ][2]} and are in a forward test. Horizon: ${sel}` +
     (m === 'nasdaq' ? ` <a href="/?symbol=${encodeURIComponent(sym)}">Open chart in Watchlist →</a>` : '') + `</div>` +
-    `<div class="panel"><div class="ph"><span>Last year and the next 5 trading days</span><div class="spacer"></div><span class="legend"><span id="vtoggles" style="display:flex;gap:14px;flex-wrap:wrap"></span>` +
+    `<div class="panel"><div class="ph"><span>Recent months and ${HZL[HZ][2]}</span><div class="spacer"></div><span class="legend"><span id="vtoggles" style="display:flex;gap:14px;flex-wrap:wrap"></span>` +
     `<span class="dim">green = above today's close, red = below · thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div>` +
     `<div style="position:relative"><div class="chart" id="stockchart" style="height:340px"></div><div class="spinwrap" id="spin"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub">asking for the analysis</div></div></div></div></div>` +
     `<div class="panel" id="aipanel" style="position:relative;min-height:120px"><div class="ph">AI analysis (Qwen, local, post-processed by our models) <span class="chip warn">UNPROVEN · FORWARD TEST</span></div>` +
     `<div class="spinwrap" id="spin2"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub2">Qwen is reading ${m === 'nasdaq' ? 'its news, ' : ''}the numbers and its peers</div></div></div><div class="pad" id="aibody"></div></div>` +
-    (f ? `<div class="panel pad big"><div class="muted" style="margin-bottom:6px">5-day range: thin = 95%, thick = 80%, white line = today's close, dot = median</div>${rangeBar(r)}` +
+    (f ? `<div class="panel pad big"><div class="muted" style="margin-bottom:6px">${HZL[HZ][1]} range: thin = 95%, thick = 80%, white line = today's close, dot = median</div>${rangeBar(r)}` +
       `<div style="display:flex;justify-content:space-between" class="num dim"><span>${px(f.lo95)}</span><span>${px(f.hi95)}</span></div></div>` : '') +
     `<div class="cards">${cards.join('')}</div>` +
     `<div class="two"><div class="panel"><div class="ph">What drives its rank (percentile among peers)</div><table><tbody>${whyList || '<tr><td class="dim">—</td></tr>'}</tbody></table></div>${news || `<div class="panel"><div class="ph">News</div><div class="empty">${m === 'nasdaq' ? 'No headlines in the last 5 sessions.' : 'No SGX news source yet.'}</div></div>`}</div>`;
@@ -461,14 +478,15 @@ function lineChart(id, lines, cone, opts = {}) {
       title: title || '', crosshairMarkerVisible: false }).setData(cone.pts.map(p => ({ time: p.date, value: p[k] })));
     const end = cone.pts[cone.pts.length - 1], c = k => (end[k] >= cone.pts[0].median ? '#16c784' : '#f6465d');   // above / below today's close
     add('lo95', 1, 1, c('lo95') + '55'); add('hi95', 1, 1, c('hi95') + '55'); add('lo80', 2, 1, c('lo80') + '99'); add('hi80', 2, 1, c('hi80') + '99');
-    add('lo50', 0, 1, c('lo50')); add('hi50', 0, 1, c('hi50')); add('median', 0, 3, c('median'), opts.mini ? '' : '5-day');
+    add('lo50', 0, 1, c('lo50')); add('hi50', 0, 1, c('hi50')); add('median', 0, 3, c('median'), opts.mini ? '' : HZL[HZ][0]);
   }
   const n = lines[0].data.length;
-  requestAnimationFrame(() => opts.all ? ch.timeScale().fitContent() : ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - (opts.days || 70)), to: n + (cone ? 7 : 1) }));
+  requestAnimationFrame(() => opts.all ? ch.timeScale().fitContent() : ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - (opts.days || 70)), to: n + (cone ? (opts.fut || 7) : 1) }));
 }
+const efc = e => (e.forecasts && e.forecasts[HZ]) || (HZ === '5' ? e.forecast : null);
 function fcLine(f, close) {
   if (!f) return '<span class="dim">no forecast</span>';
-  return `5-day: median ${px(f.median)} <span class="${cls(f.median - close)}">${pct(f.median / close - 1, 1)}</span> · most likely ${px(f.lo50)}–${px(f.hi50)} · P(up) ${pup(f.p_up)}`;
+  return `${HZL[HZ][1]}: median ${px(f.median)} <span class="${cls(f.median - close)}">${pct(f.median / close - 1, 1)}</span> · most likely ${px(f.lo50)}–${px(f.hi50)} · P(up) ${pup(f.p_up)}`;
 }
 async function viewIndexes(m) {
   crumbs({ m }, 'Indexes & sectors');
@@ -481,15 +499,15 @@ async function viewIndexes(m) {
       `<div style="display:flex;align-items:baseline;gap:10px;margin-bottom:6px"><b class="num" style="font-size:20px">${px(e.close)}</b>${ret(e.stats.d1)} <span class="dim">today</span></div>` +
       `<div class="chart" id="mini-${sym}" style="height:110px;margin:0 -4px 8px"></div>` +
       `<div class="kv"><div>1 week</div><div>${ret(e.stats.w1)}</div><div>1 month</div><div>${ret(e.stats.m1)}</div><div>year to date</div><div>${ret(e.stats.ytd)}</div></div>` +
-      `<div class="muted" style="margin-top:8px;font-size:12px">${fcLine(e.forecast, e.close)}</div></div>`; };
+      `<div class="muted" style="margin-top:8px;font-size:12px">${fcLine(efc(e), e.close)}</div></div>`; };
   const S = UI.sectors || (UI.sectors = { sort: 'd1' });
   const keyf = { d1: x => -(x.stats.d1 ?? -9), w1: x => -(x.stats.w1 ?? -9), m1: x => -(x.stats.m1 ?? -9), ytd: x => -(x.stats.ytd ?? -9), n: x => -x.n,
     pup: x => -(x.avg_p_up ?? 0), news: x => -(x.news ? x.news.mean : -9) }[S.sort] || (x => 0);
   const secs = X.sectors.slice().sort((a, b) => keyf(a) - keyf(b));
   const th = (k, label, tip) => `<th class="sort ${S.sort === k ? 'on' : ''}" title="${tip || ''}" onclick="UI.sectors.sort='${k}';render()">${label}${S.sort === k ? ' ▼' : ''}</th>`;
   setTimeout(() => { for (const sym of ['ONEQ', 'QQQ', 'SPY']) if (E[sym]) lineChart('mini-' + sym, [{ data: E[sym].series.slice(-130), color: '#e6e9ee', width: 1.5 }],
-    E[sym].forecast ? { pts: E[sym].forecast.cone, color: E[sym].forecast.median >= E[sym].close ? '#16c784' : '#f6465d' } : null, { mini: true, all: true }); }, 0);
-  return `<h1>NASDAQ indexes & sectors</h1><div class="lead">${esc(X.note)}<br>${fresh('nasdaq', X.asof)}</div>` +
+    efc(E[sym]) ? { pts: efc(E[sym]).cone } : null, { mini: true, all: true }); }, 0);
+  return `<h1>NASDAQ indexes & sectors ${hzSel(Object.keys((E.QQQ && E.QQQ.forecasts) || { '5': 1 }))}</h1><div class="lead">${esc(X.note)}<br>${fresh('nasdaq', X.asof)}</div>` +
     `<div class="cards">${card('ONEQ')}${card('QQQ')}${card('SPY')}</div>` +
     `<div class="panel"><div class="ph">Sector groups (our ${Object.keys(X.members).length} NASDAQ stocks, equal weight) <span class="dim" style="text-transform:none;letter-spacing:0">click a sector for its chart and members</span></div><div style="overflow:auto"><table><thead><tr>` +
     `<th>Sector</th>${th('n', 'Stocks')}${th('d1', 'Today')}${th('w1', '1 week')}${th('m1', '1 month')}${th('ytd', 'YTD')}<th title="Share of its stocks that rose today">Up today</th>` +
@@ -523,8 +541,8 @@ async function viewSector(m, key) {
     card('Today', [['stocks up', x.breadth == null ? '—' : pct(x.breadth, 0, false)], ['avg P(up), 5 days', pup(x.avg_p_up)], ['avg rank score', x.avg_score == null ? '—' : x.avg_score.toFixed(0)],
       ['news (AI, 5 sessions)', x.news ? `${x.news.mean > 0 ? '+' : ''}${x.news.mean.toFixed(2)} over ${x.news.n_stocks} stocks` : '—']]) +
     card('AI signals (Qwen + models)', [['buy', x.signals.buy], ['sell', x.signals.sell], ['stocks evaluated', `${x.signals.evaluated} of ${x.n}`], ['', '<span class="dim">click a stock to evaluate it</span>']]) + `</div>` +
-    `<div class="panel"><div class="ph">Its stocks, by rank score</div><div class="scroll"><table><thead>${SHORT_HEAD.replace('<th>Why</th>', '<th>AI</th><th>Why</th>')}</thead><tbody>` +
-    mem.map(r => shortRow(m, r).replace('<td><div class="why">', `<td class="num">${AI[r.symbol] ? pup(AI[r.symbol].p_up) + ' ' + (AI[r.symbol].signal !== 'none' ? sigChip(AI[r.symbol].signal).replace(' SIGNAL', '') : '') : '<span class="dim">—</span>'}</td><td><div class="why">`)).join('') +
+    `<div class="panel"><div class="ph">Its stocks, by rank score</div><div class="scroll"><table><thead>${SHORT_HEAD_().replace('<th>Why</th>', '<th>AI</th><th>Why</th>')}</thead><tbody>` +
+    mem.map(r => shortRow(m, r).replace('<td><div class="why">', `<td class="num">${aiAt(AI, r.symbol) ? pup(aiAt(AI, r.symbol).p_up) + ' ' + (aiAt(AI, r.symbol).signal !== 'none' ? sigChip(aiAt(AI, r.symbol).signal).replace(' SIGNAL', '') : '') : '<span class="dim">—</span>'}</td><td><div class="why">`)).join('') +
     '</tbody></table></div></div>';
 }
 async function viewIndex(m, sym) {
@@ -532,13 +550,13 @@ async function viewIndex(m, sym) {
   const [name, etf] = INDEX_NAMES[sym] || [e ? e.label : sym, sym];
   crumbs({ m }, name);
   if (!e) return `<div class="empty">No data for ${esc(sym)}.</div>`;
-  const f = e.forecast;
-  setTimeout(() => lineChart('idxchart', [{ data: e.series, color: '#e6e9ee' }], f ? { pts: f.cone, color: f.median >= e.close ? '#16c784' : '#f6465d' } : null, { days: 90 }), 0);
+  const sel = hzSel(Object.keys(e.forecasts || { '5': 1 })), f = efc(e);
+  setTimeout(() => lineChart('idxchart', [{ data: e.series, color: '#e6e9ee' }], f ? { pts: f.cone } : null, { days: 90, fut: +HZ + 2 }), 0);
   return `<h1>${esc(name)} <span class="chip">via ${etf} ETF</span></h1>` +
     `<div class="lead">${etf} is an exchange-traded fund that tracks the ${esc(name)}; the index itself is not in our data, so its price is the ETF's, not the index level. Close ${esc(e.last)}.</div>` +
-    `<div class="panel"><div class="ph">Last months and the next 5 trading days <span class="legend"><span class="dim">green = above today's close, red = below · thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div><div class="chart" id="idxchart" style="height:340px"></div></div>` +
+    `<div class="panel"><div class="ph">Recent months and ${HZL[HZ][2]} ${sel} <span class="legend"><span class="dim">green = above today's close, red = below · thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div><div class="chart" id="idxchart" style="height:340px"></div></div>` +
     `<div class="cards">${card('Performance', [['close', px(e.close)], ['today', ret(e.stats.d1)], ['1 week', ret(e.stats.w1)], ['1 month', ret(e.stats.m1)], ['year to date', ret(e.stats.ytd)], ['1 year', ret(e.stats.y1)]])}` +
-    (f ? card('5-day forecast', [['median', `${px(f.median)} (${pct(f.exp_ret, 1)})`], ['most likely (50%)', `${px(f.lo50)} – ${px(f.hi50)}`], ['80% range', `${px(f.lo80)} – ${px(f.hi80)}`],
+    (f ? card(`${HZL[HZ][1]} forecast`, [['median', `${px(f.median)} (${pct(f.exp_ret, 1)})`], ['most likely (50%)', `${px(f.lo50)} – ${px(f.hi50)}`], ['80% range', `${px(f.lo80)} – ${px(f.hi80)}`],
       ['95% range', `${px(f.lo95)} – ${px(f.hi95)}`], ['P(up)', pup(f.p_up)], ['beta to QQQ', f.beta.toFixed(2)]]) : '') + `</div>` +
     (f ? `<div class="lead">${esc(f.note)}: the long-run drift (shrunk) and the volatility model behind every stock forecast. It has no news or AI input and no forward record of its own yet.</div>` : '');
 }
@@ -569,7 +587,10 @@ async function loadEval(m, sym, tok) {
 // three views of the same 5-day forecast (v8 amendment E): Qwen post-processed by our models, Qwen alone, the model alone
 const VIEWS = [['total', 'Qwen + models', null], ['qwen', 'Qwen only', '#a78bfa'], ['model', 'Model only (v7)', '#8a93a0']];
 let SHOWN = (() => { try { return JSON.parse(localStorage.getItem('tm.views')) || { total: true }; } catch (e) { return { total: true }; } })();
-const viewsOf = r => r.views || { model: r.model, ...(r.advised ? { total: r.advised } : {}) };
+const viewsOf = r => { const h = r.horizons && r.horizons[HZ];
+  if (h) return h.views || { model: h.model };
+  return r.views || { model: r.model, ...(r.advised ? { total: r.advised } : {}) }; };     // older evaluations: 5 days only
+const hzOf = r => (r.horizons && r.horizons[HZ]) ? HZ : '5';
 const SIGNAL = { buy: ['BUY SIGNAL', 'ok'], sell: ['SELL SIGNAL', 'bad'], none: ['NO SIGNAL', ''] };
 const sigChip = s => s ? `<span class="chip ${SIGNAL[s][1]}">${SIGNAL[s][0]}</span>` : '';
 function drawStock(r, m) {
@@ -599,7 +620,8 @@ function drawStock(r, m) {
     ss.forEach(se => se.applyOptions({ visible: on }));
   }
   const n = r.history.length;
-  requestAnimationFrame(() => ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 70), to: n + 7 }));   // ~3 months + the 5-day cone
+  const fut = +hzOf(r) + 2;
+  requestAnimationFrame(() => ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 70), to: n + fut }));   // ~3 months + the cone
   if ($('vtoggles')) $('vtoggles').innerHTML = avail.length > 1 ? avail.map(([k, label, col0]) =>
     `<label style="cursor:pointer;white-space:nowrap"><input type="checkbox" ${SHOWN[k] ? 'checked' : ''} onchange="toggleView('${k}',this.checked)"> ` +
     `<i style="background:${col0 || 'linear-gradient(90deg,#16c784 50%,#f6465d 50%)'}"></i>${label}</label>`).join('')
@@ -611,14 +633,15 @@ function toggleView(k, on) {
 }
 function aiBody(r, m) {
   const a = r.ai, V = viewsOf(r), t = V.total, M = MARKETS[m], L = LEANS[a.lean] || [a.lean, ''];
-  const sig = r.signal || t.signal;
+  const hk = hzOf(r), hh = r.horizons && r.horizons[hk];
+  const sig = hh ? hh.signal : (r.signal || t.signal), pq = hh ? hh.p_qwen : a.p_qwen;
   const head = `<div class="cards" style="margin-bottom:12px">` +
     `<div class="card"><h3>Research signal ${sigChip(sig)}</h3><div class="kv">` +
-      `<div>chance of a rise (5 days)</div><div>${pup(t.p_up)}</div>` +
-      (a.p_qwen != null ? `<div>Qwen alone said</div><div>${pup(a.p_qwen)} rise</div>` : '') +
+      `<div>chance of a rise (${HZL[hk][1]})</div><div>${pup(t.p_up)}</div>` +
+      (pq != null ? `<div>Qwen alone said</div><div>${pup(pq)} rise</div>` : '') +
       `<div>model alone</div><div>${pup(V.model.p_up)}</div></div>` +
       `<div class="dim" style="margin-top:6px;font-size:11.5px">Buy at ≥ 58%, sell at ≤ 42% (fixed in advance). A research indicator in a forward test, not advice.</div></div>` +
-    card('Qwen + models, 5 days', [['median', `${M.ccy}${px(t.median)} (${pct(t.exp_ret, 1)})`], ['most likely (50%)', t.lo50 != null ? `${px(t.lo50)} – ${px(t.hi50)}` : '—'],
+    card(`Qwen + models, ${HZL[hk][1]}`, [['median', `${M.ccy}${px(t.median)} (${pct(t.exp_ret, 1)})`], ['most likely (50%)', t.lo50 != null ? `${px(t.lo50)} – ${px(t.hi50)}` : '—'],
       ['80% range', `${px(t.lo80)} – ${px(t.hi80)}`], ['95% range', `${px(t.lo95)} – ${px(t.hi95)}`]]) +
     card('Qwen\'s read', [['lean', `<b class="${L[1]}">${esc(L[0])}</b>`], ['confidence', esc(a.confidence)],
       ['risk', a.risk === 'elevated' ? '<span style="color:var(--warn)">elevated (wider range)</span>' : 'normal'], ['reply', a.parse_ok ? 'ok' : 'unreadable (neutral)']]) +

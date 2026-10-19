@@ -70,8 +70,8 @@ def _fit_garch(args):
 
 def garch_params(P, refits):
     """{refit day index: params}, fitted on QQQ daily returns up to the refit day; cached by refit date."""
-    os.makedirs(OUT, exist_ok=True)
-    path = os.path.join(OUT, "garch_cache.json")
+    os.makedirs(v6.V7_OUT, exist_ok=True)
+    path = os.path.join(v6.V7_OUT, "garch_cache.json")                 # daily GARCH fits do not depend on the horizon
     cache = json.load(open(path)) if os.path.exists(path) else {}
     r = np.diff(P.market) * 100
     jobs = []
@@ -344,7 +344,7 @@ def forecast(args):
            "market_model": {"mu5": float(E.mu_m[idx[0]]), "v5": float(E.v_m[idx[0]])}}
     # v8 amendment B: news-adjusted variant from the rolling LLM news (fixed prior weights; forward shadow test only)
     news_path = os.path.join("private", "data", "news", "news_today.json")
-    news = json.load(open(news_path)) if os.path.exists(news_path) and v6.MARKET == "nasdaq" else None   # US news only for NASDAQ
+    news = json.load(open(news_path)) if os.path.exists(news_path) and v6.MARKET == "nasdaq" and H == 5 else None   # US news, 5-day only
     if news and news.get("asof") == P.dates[last]:
         S = news["market"]["S"]
         syms = [P.symbols[P.n[E.a + i]] for i in idx]
@@ -413,7 +413,7 @@ def score(args):
     out = {"matured_dates": len(per_day), "needed": 60, "days": per_day}
     if len(per_day) >= 5:
         from .daily_v4 import block_bootstrap_diff
-        out["crps_v7_minus_rw"] = block_bootstrap_diff([d["crps_v7"] for d in per_day], [d["crps_rw"] for d in per_day])
+        out["crps_v7_minus_rw"] = block_bootstrap_diff([d["crps_v7"] for d in per_day], [d["crps_rw"] for d in per_day], block=max(5, H))
         out["cov80"] = float(np.mean([d["cov80"] for d in per_day]))
         out["hit"] = float(np.mean([d["hit"] for d in per_day]))
     if len(per_day) >= 60:
@@ -455,19 +455,52 @@ def score(args):
           flush=True)
 
 
+def _out():
+    return v6.V7_OUT if H == 5 else os.path.join(v6.V7_OUT, f"h{H}")
+
+
 def use_market(market):
     global OUT
     v6.use_market(market)
-    OUT = v6.V7_OUT
+    OUT = _out()
+
+
+HORIZONS = (1, 5, 20)                                                  # amendment A
+
+
+def set_horizon(h):
+    """Amendment A: the same model at horizon h trading days (also sets v6.H, which the panel's targets use; set it
+    back to 5 before ranking)."""
+    global H, OUT
+    H = v6.H = h
+    OUT = _out()
+
+
+def gate(args=None):
+    """Amendment A gate for showing a horizon: development CRPS below RW's, and 80% coverage within 0.75-0.85 on both
+    development and the seen period."""
+    dv, sn = json.load(open(os.path.join(OUT, "dev.json"))), json.load(open(os.path.join(OUT, "seen.json")))
+    name = dv["chosen"]
+    d, s_ = dv["results"][name], sn["results"][name]
+    checks = {"dev_crps_below_rw": d["crps"] < dv["results"]["RW"]["crps"], "dev_cov80_ok": 0.75 <= d["cov80"] <= 0.85,
+              "seen_cov80_ok": 0.75 <= s_["cov80"] <= 0.85}
+    out = {"horizon": H, "model": name, "pass": all(checks.values()), "checks": checks,
+           "dev": {k: d[k] for k in ("crps", "cov80", "cov95", "hit")}, "seen": {k: s_[k] for k in ("crps", "cov80", "cov95", "hit")},
+           "rw_dev_crps": dv["results"]["RW"]["crps"]}
+    json.dump(out, open(os.path.join(OUT, "gate.json"), "w"), indent=1)
+    print(f"gate h={H}: {'PASS' if out['pass'] else 'FAIL'} {checks}", flush=True)
+    return out
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["dev", "report", "forecast", "score"])
+    ap.add_argument("cmd", choices=["dev", "report", "forecast", "score", "gate"])
     ap.add_argument("--market", choices=["nasdaq", "sgx"], default="nasdaq")
+    ap.add_argument("--horizon", type=int, choices=HORIZONS, default=5)
     a = ap.parse_args()
     use_market(a.market)
-    {"dev": dev, "report": report, "forecast": forecast, "score": score}[a.cmd](a)
+    set_horizon(a.horizon)
+    {"dev": dev, "report": report, "forecast": forecast, "score": score, "gate": gate}[a.cmd](a)
 
 
 if __name__ == "__main__":

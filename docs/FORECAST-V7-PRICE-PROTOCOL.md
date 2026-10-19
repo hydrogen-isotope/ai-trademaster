@@ -82,6 +82,18 @@ a small edge.
   with block bootstrap blocks of max(5, h) dates, because 20-day outcomes overlap.
 - **App.** 1 day is the default view; 5 days and 20 days ("1M") are selectable.
 
+**Amendment A results (2026-10-19), against the gate written above:**
+
+| market | horizon | shrink | dev CRPS (RW) | dev 80% cov. | seen 80% cov. | dev / seen hit | gate |
+|---|---|---|---|---|---|---|---|
+| NASDAQ | 1 day | 1.0 | 0.01853 (0.01854) | 79.7% | 79.6% | 50.9% / 51.1% | **pass** |
+| NASDAQ | 20 days | 1.0 | 0.08529 (0.08529, lower by < 1e-5) | 79.5% | 79.8% | 51.5% / 51.4% | **fail** (CRPS not below RW) |
+| SGX | 1 day | 0.5 | 0.01003 (0.01001) | 79.9% | 80.1% | 52.8% / 52.8% | **fail** (CRPS not below RW) |
+| SGX | 20 days | 0.5 | 0.04455 (0.04466) | 79.9% | 79.7% | 52.3% / 52.5% | **pass** |
+
+- The app therefore shows 1 day and 5 days for NASDAQ, and 5 days and 1 month for SGX.
+- Forecasts for the failed horizons are still written to their shadow logs, but are not shown.
+
 ## Results
 
 ### Development, 2021-01-04 → 2024-12-31 (956,649 stock-days with a direction)

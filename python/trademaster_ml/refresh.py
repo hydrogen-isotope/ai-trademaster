@@ -66,11 +66,30 @@ def sgx_step():
         v7.use_market("sgx")
         v7.score(None)
         v7.forecast(None)
+        horizons_step("sgx")
         v6.rank(None)
     except Exception as e:  # noqa: BLE001
         print(f"[refresh] SGX step failed: {type(e).__name__}: {e}", flush=True)
     finally:
         v7.use_market("nasdaq")
+
+
+def horizons_step(market="nasdaq"):
+    """v7 amendment A: score and write the 1-day and 20-day forecasts (CPU); the 5-day ones are done before this.
+    Always returns to the 5-day horizon, which the rankings use."""
+    from . import v7
+    try:
+        for h in (1, 20):
+            if not os.path.exists(os.path.join(v7.v6.V7_OUT, f"h{h}", "dev.json")):
+                continue                                        # not developed for this market yet
+            status("running", f"{h}-day price forecasts" + (" (SGX)" if market == "sgx" else ""))
+            v7.set_horizon(h)
+            v7.score(None)
+            v7.forecast(None)
+    except Exception as e:  # noqa: BLE001
+        print(f"[refresh] {market} horizons step failed: {type(e).__name__}: {e}", flush=True)
+    finally:
+        v7.set_horizon(5)
 
 
 def indexes_step():
@@ -89,7 +108,8 @@ def eval_step(args):
     from . import stock_eval
     for mk in ("nasdaq", "sgx"):
         try:
-            stock_eval.score(argparse.Namespace(market=mk))
+            for h in (1, 5, 20):
+                stock_eval.score(argparse.Namespace(market=mk, horizon=h))
         except Exception as e:  # noqa: BLE001
             print(f"[refresh] advice scoring ({mk}) failed: {type(e).__name__}: {e}", flush=True)
     if args.gpu_news:
@@ -116,6 +136,7 @@ def run(args):
             news_step(args)
             status("running", "price forecasts")
             v7.forecast(None)
+            horizons_step()
             status("running", "rankings")
             v6.rank(None)
             indexes_step()
@@ -134,6 +155,7 @@ def run(args):
         status("running", "price forecasts")
         v7.score(None)
         v7.forecast(None)
+        horizons_step()
         status("running", "rankings")
         v6.rank(None)
         indexes_step()

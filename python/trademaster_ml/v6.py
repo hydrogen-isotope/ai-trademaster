@@ -533,7 +533,16 @@ def rank(args):
                 r["fc"] = f["rows"].get(r["symbol"])
             sp = os.path.join(V7_OUT, "shadow_score.json")
             v7 = {"model": f["model"], "status": f["status"], "shadow": json.load(open(sp)) if os.path.exists(sp) else None,
-                  "news": f.get("news")}
+                  "news": f.get("news"), "horizons": {}}
+            # v7 amendment A: the same model at 1 and 20 trading days, shown only if its pre-registered gate passed
+            for h in (1, 20):
+                fh, gh = os.path.join(V7_OUT, f"h{h}", "forecast.json"), os.path.join(V7_OUT, f"h{h}", "gate.json")
+                if os.path.exists(fh) and os.path.exists(gh):
+                    fj, gj = json.load(open(fh)), json.load(open(gh))
+                    if fj.get("asof") == P.dates[last] and gj.get("pass"):            # a horizon that failed its gate is not shown
+                        for r in table:
+                            r[f"fc{h}"] = fj["rows"].get(r["symbol"])
+                        v7["horizons"][str(h)] = {"model": fj["model"], "gate": gj}
             if v7["shadow"]:
                 v7["shadow"].pop("days", None)
                 if isinstance(v7["shadow"].get("news"), dict):

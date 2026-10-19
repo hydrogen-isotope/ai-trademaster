@@ -49,12 +49,27 @@ def stats(dates, closes):
     return {"d1": back(1), "w1": back(5), "m1": back(21), "m3": back(63), "ytd": ytd, "y1": back(252)}
 
 
-def forecast(close, asof, mu5, v5, beta=1.0, idio=0.0):
-    """5-day Student-t forecast from the market model (uncalibrated): mean beta * drift, var beta^2 V + 5 idio^2."""
-    m, sd = beta * mu5, math.sqrt(beta * beta * v5 + v6.H * idio * idio)
+def forecast(close, asof, mu, var, beta=1.0, idio=0.0, h=5):
+    """h-day Student-t forecast from the market model (uncalibrated): mean beta * drift, var beta^2 V + h idio^2."""
+    m, sd = beta * mu, math.sqrt(beta * beta * var + h * idio * idio)
     R = stock_eval.v7.GRID.copy()
-    return {**stock_eval.dist(close, m, sd, R), "cone": stock_eval.cone(close, asof, m, sd, R), "beta": beta,
+    return {**stock_eval.dist(close, m, sd, R), "cone": stock_eval.cone(close, asof, m, sd, R, days=h), "beta": beta, "h": h,
             "note": "market model (QQQ drift + GJR-GARCH), not recalibrated"}
+
+
+def market_models(asof):
+    """{h: {mu5, v5}} for each horizon whose v7 forecast is for `asof` (keys keep the 5-day names; values are h-day)."""
+    out = {}
+    for h in (1, 5, 20):
+        fp = os.path.join(v6.V7_OUT, "forecast.json") if h == 5 else os.path.join(v6.V7_OUT, f"h{h}", "forecast.json")
+        gp = os.path.join(v6.V7_OUT, f"h{h}", "gate.json")
+        if h != 5 and not (os.path.exists(gp) and json.load(open(gp)).get("pass")):
+            continue                                                     # v7 amendment A: a horizon that failed its gate is not shown
+        if os.path.exists(fp):
+            fc = json.load(open(fp))
+            if fc.get("asof") == asof and fc.get("market_model"):
+                out[h] = fc["market_model"]
+    return out
 
 
 def update(log=print):
@@ -75,23 +90,24 @@ def update(log=print):
         pts = [(dd, c) for dd, c in pts if dd <= asof]
         if len(pts) > 30:
             ser[s] = pts[-DAYS:]
-    fc = json.load(open(os.path.join(v6.V7_OUT, "forecast.json")))
-    mm = fc.get("market_model") if fc.get("asof") == asof else None
+    mms = market_models(asof)
+    mm = mms.get(5)
     q = ser.get("QQQ")
     rq = {dd: c for dd, c in q} if q else {}
     out_etf = {}
     for s, pts in ser.items():
         dd, cc = [p[0] for p in pts], [p[1] for p in pts]
-        f = None
-        if mm and q and pts[-1][0] == asof:
+        f, fh = None, {}
+        if mms and q and pts[-1][0] == asof:
             common = [x for x in dd if x in rq]
             a = np.diff(np.log([dict(pts)[x] for x in common]))
             b = np.diff(np.log([rq[x] for x in common]))
             beta = float(np.dot(a, b) / np.dot(b, b)) if s != "QQQ" and len(b) > 60 else 1.0
             idio = float(np.std(a - beta * b)) if s != "QQQ" else 0.0
-            f = forecast(cc[-1], asof, mm["mu5"], mm["v5"], beta, idio)
+            fh = {str(h): forecast(cc[-1], asof, x["mu5"], x["v5"], beta, idio, h) for h, x in mms.items()}
+            f = fh.get("5")
         out_etf[s] = {"label": INDEX_ETFS.get(s) or next((lab for _, lab, _, e in SECTORS if e == s), s), "close": cc[-1],
-                      "last": dd[-1], "series": [[x, round(y, 4)] for x, y in pts], "stats": stats(dd, cc), "forecast": f}
+                      "last": dd[-1], "series": [[x, round(y, 4)] for x, y in pts], "stats": stats(dd, cc), "forecast": f, "forecasts": fh}
     # ---- sector groups from our universe (equal weight, members = that day's universe)
     lc = np.fromfile(os.path.join(d, "logclose.f32"), np.float32).reshape(T, N)
     mask = np.fromfile(os.path.join(d, "mask.f32"), np.float32).reshape(T, N) > 0.5
@@ -133,7 +149,7 @@ def update(log=print):
                         "bottom": [m["symbol"] for m in sorted(mem, key=lambda m: m["score_pct"])[:3]]})
     out_sec = [x for x in out_sec if x["n"] > 0]
     out = {"asof": asof, "generated": datetime.now().isoformat(timespec="seconds"), "etfs": out_etf, "sectors": out_sec,
-           "members": members, "market_model": mm,
+           "members": members, "market_model": mm, "market_models": {str(h): x for h, x in mms.items()},
            "note": "ONEQ and QQQ are ETFs that track the Nasdaq Composite and Nasdaq-100 (the indexes themselves and Nasdaq "
                    "futures are not in our data sources). Sectors: our NASDAQ universe grouped by SEC industry code, equal weight. "
                    "Sector ETFs cover S&P or broad US stocks, shown for comparison."}
