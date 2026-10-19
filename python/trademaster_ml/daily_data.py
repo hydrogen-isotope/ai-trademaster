@@ -33,6 +33,9 @@ def from_hourly(sym, hist="private/data/hist_1h"):
 
 def from_alpaca(sym, years=6):
     end = int(time.time()) - 16 * 60
+    now_ny = datetime.now(NY)
+    if now_ny.hour * 60 + now_ny.minute < 16 * 60 + 20:              # today's bar is still forming: leave it out (bars are
+        end = min(end, int(now_ny.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()) - 60)   # stamped at midnight NY)
     rows = alpaca.get_bars([sym], "1Day", end - years * 365 * 86400, end, feed="sip").get(sym, [])
     days = [datetime.fromtimestamp(t, NY).date() for t, *_ in rows]
     return {"dates": [str(d) for d in days], "close": [r[4] for r in rows], "source": "Alpaca 1Day bars (SIP, split-adjusted)"}

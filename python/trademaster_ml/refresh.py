@@ -108,6 +108,18 @@ def indexes_step():
         print(f"[refresh] fair value step skipped: {type(e).__name__}: {e}", flush=True)
 
 
+def legacy_forecast_step():
+    """The Watchlist's 5-Day Forecast tab (v2 GARCH-t for MU, NVDA, AMD, AAPL): daily closes, score the earlier
+    forecasts, write the next one (CPU; the futures download in tools/daily-forecast.cmd is left out: it can cost money)."""
+    status("running", "Watchlist 5-day forecasts")
+    for mod, cmd in (("daily_data", []), ("daily_v2", ["refresh"]), ("daily_forecast", ["score"]), ("daily_v2", ["forecast"])):
+        r = subprocess.run([sys.executable, "-W", "ignore", "-m", f"trademaster_ml.{mod}", *cmd], capture_output=True, text=True)
+        if r.returncode:
+            print(f"[refresh] Watchlist forecast: {mod} {' '.join(cmd)} failed: {(r.stderr or r.stdout).strip()[-300:]}", flush=True)
+            return
+    print("[refresh] Watchlist 5-day forecasts updated", flush=True)
+
+
 def eval_step(args):
     """v8 amendment C: score the AI-advised forecasts (CPU), and at app start queue the start-up set for the background
     Qwen evaluator, which runs on the GPU only while the app is open."""
@@ -147,6 +159,7 @@ def run(args):
             status("running", "rankings")
             v6.rank(None)
             indexes_step()
+            legacy_forecast_step()
             sgx_step()
             eval_step(args)
             status("done", f"news refreshed; prices already up to date (close {last})", asof=last, seconds=round(time.time() - t0))
@@ -166,6 +179,7 @@ def run(args):
         status("running", "rankings")
         v6.rank(None)
         indexes_step()
+        legacy_forecast_step()
         sgx_step()
         eval_step(args)
         status("done", f"updated to close {last}", asof=last, seconds=round(time.time() - t0))
