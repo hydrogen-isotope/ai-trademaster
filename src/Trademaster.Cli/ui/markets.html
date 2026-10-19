@@ -465,7 +465,7 @@ async function viewStock(m, sym) {
     `<div class="lead">${fresh(m, d.asof)} Price forecasts are for ${HZL[HZ][2]} and are in a forward test. Horizon: ${sel}` +
     (m === 'nasdaq' ? ` <a href="/?symbol=${encodeURIComponent(sym)}">Open chart in Watchlist →</a>` : '') + `</div>` + liveNote(m, sym, d.asof, r.close) +
     `<div class="panel"><div class="ph">Analysis report summary <span class="chip warn">UNPROVEN · NOT ADVICE</span></div><div class="pad" id="report">${report(m, r, d, fv, null)}</div></div>` +
-    `<div class="panel"><div class="ph"><span>Recent months and ${HZL[HZ][2]}</span><div class="spacer"></div><span class="legend"><span id="vtoggles" style="display:flex;gap:14px;flex-wrap:wrap"></span>` +
+    `<div class="panel"><div class="ph"><span>Recent weeks and ${HZL[HZ][2]} <span class="dim" style="text-transform:none;letter-spacing:0">(drag or scroll the chart for more history)</span></span><div class="spacer"></div><span class="legend"><span id="vtoggles" style="display:flex;gap:14px;flex-wrap:wrap"></span>` +
     `<span class="dim">green = above the last close, red = below · thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div>` +
     `<div style="position:relative"><div class="chart" id="stockchart" style="height:340px"></div><div class="spinwrap" id="spin"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub">asking for the analysis</div></div></div></div></div>` +
     `<div class="panel" id="aipanel" style="position:relative;min-height:120px"><div class="ph">AI analysis (Qwen, local, post-processed by our models) <span class="chip warn">UNPROVEN · FORWARD TEST</span> <span class="chip" id="abchip" style="display:none">WITH PRODUCT KNOWLEDGE · A/B</span><div class="spacer"></div>` +
@@ -505,6 +505,7 @@ function lineChart(id, lines, cone, opts = {}) {
   const n = lines[0].data.length;
   requestAnimationFrame(() => opts.all ? ch.timeScale().fitContent() : ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - (opts.days || 70)), to: n + (cone ? (opts.fut || 7) : 1) }));
 }
+const HIST = { '1': 8, '5': 20, '20': 50 };                      // days of history shown before the forecast (scroll for more)
 const efc = e => (e.forecasts && e.forecasts[HZ]) || (HZ === '5' ? e.forecast : null);
 function fcLine(f, close) {
   if (!f) return '<span class="dim">no forecast</span>';
@@ -573,10 +574,10 @@ async function viewIndex(m, sym) {
   crumbs({ m }, name);
   if (!e) return `<div class="empty">No data for ${esc(sym)}.</div>`;
   const sel = hzSel(Object.keys(e.forecasts || { '5': 1 })), f = efc(e);
-  setTimeout(() => lineChart('idxchart', [{ data: e.series, color: '#e6e9ee' }], f ? { pts: f.cone } : null, { days: 90, fut: +HZ + 2 }), 0);
+  setTimeout(() => lineChart('idxchart', [{ data: e.series, color: '#e6e9ee' }], f ? { pts: f.cone } : null, { days: HIST[HZ], fut: +HZ + 2 }), 0);
   return `<h1>${esc(name)} <span class="chip">via ${etf} ETF</span></h1>` +
     `<div class="lead">${etf} is an exchange-traded fund that tracks the ${esc(name)}; the index itself is not in our data, so its price is the ETF's, not the index level. Close ${esc(e.last)}.</div>` + liveNote('nasdaq', sym, X.asof, e.close) +
-    `<div class="panel"><div class="ph">Recent months and ${HZL[HZ][2]} ${sel} <span class="legend"><span class="dim">green = above the last close, red = below · thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div><div class="chart" id="idxchart" style="height:340px"></div></div>` +
+    `<div class="panel"><div class="ph">Recent weeks and ${HZL[HZ][2]} ${sel} <span class="legend"><span class="dim">green = above the last close, red = below · thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div><div class="chart" id="idxchart" style="height:340px"></div></div>` +
     `<div class="cards">${card('Performance', [['close', px(e.close)], [dayOf(X.asof), ret(e.stats.d1)], ['1 week', ret(e.stats.w1)], ['1 month', ret(e.stats.m1)], ['year to date', ret(e.stats.ytd)], ['1 year', ret(e.stats.y1)]])}` +
     (f ? card(`${HZL[HZ][1]} forecast`, [['median', `${px(f.median)} (${pct(f.exp_ret, 1)})`], ['most likely (50%)', `${px(f.lo50)} – ${px(f.hi50)}`], ['80% range', `${px(f.lo80)} – ${px(f.hi80)}`],
       ['95% range', `${px(f.lo95)} – ${px(f.hi95)}`], ['P(up)', pup(f.p_up)], ['beta to QQQ', f.beta.toFixed(2)]]) : '') + `</div>` +
@@ -696,7 +697,7 @@ function drawStock(r, m) {
   }
   const n = r.history.length;
   const fut = +hzOf(r) + 2;
-  requestAnimationFrame(() => ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 70), to: n + fut }));   // ~3 months + the cone
+  requestAnimationFrame(() => ch.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - HIST[hzOf(r)]), to: n + fut }));   // short history, wide cone
   if ($('vtoggles')) $('vtoggles').innerHTML = avail.length > 1 ? avail.map(([k, label, col0]) =>
     `<label style="cursor:pointer;white-space:nowrap"><input type="checkbox" ${SHOWN[k] ? 'checked' : ''} onchange="toggleView('${k}',this.checked)"> ` +
     `<i style="background:${col0 || 'linear-gradient(90deg,#16c784 50%,#f6465d 50%)'}"></i>${label}</label>`).join('')
