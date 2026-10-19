@@ -314,6 +314,18 @@ Claude Haiku.**
     PSC, InnoTek, Multi-Chem). The Haiku profiles follow the company's own filings and press instead.
   - Pilot profiles outside the coverage (LMAT, ODD, OLED, SMPL, WAY) are kept aside and are not used.
 
+### Data incident, 2026-10-19: an unfinished US day was stored as a close (records excluded before any outcome)
+
+- The refresh started at 22:39 Singapore time (10:39 New York time, during Monday's session) stored Monday's partial
+  daily bars as the 2026-10-19 close. The unfinished-day guard ended the price request at midnight New York time, but
+  Alpaca stamps daily bars at exactly that time and the end is inclusive.
+- Every NASDAQ record with asof 2026-10-19 was built on those partial prices: the v7 price-forecast shadow lines
+  (1, 5 and 20 days, and the news variant), 115 A and 112 B advised-forecast lines per horizon, and 119 evaluation
+  files. They are moved, unchanged, to `private/reports/partial_day_2026-10-19/` and are not part of any forward test.
+  No outcome for that date existed when they were moved. SGX records for 2026-10-19 are valid (SGX had closed).
+- Fix: the request now ends one minute before midnight New York time, and a stored day that is still unfinished is
+  dropped on the next update. Everything was rebuilt from the 2026-10-16 close.
+
 ## Results
 
 ### Test A: staging vs one ridge (no news), run 2026-10-18

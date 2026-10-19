@@ -47,6 +47,10 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 .sigdot.b{background:#0f2a20;color:var(--up)}.sigdot.s{background:#2c1217;color:var(--down)}
 /* center */
 #center{grid-row:2/3;display:flex;flex-direction:column;min-width:0;min-height:0;overflow-y:auto;overflow-x:hidden;scroll-behavior:smooth;scrollbar-gutter:stable}
+#qai{display:flex;align-items:center;gap:8px;font-size:12px;align-self:center}
+#qai .rt{border:1.5px solid;border-radius:6px;padding:2px 10px;font-weight:800;letter-spacing:.5px;cursor:pointer}
+#qai button{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:3px 10px;font:inherit;cursor:pointer}
+#qai button:hover{border-color:var(--accent);color:var(--accent)}#qai button:disabled{opacity:.6;cursor:default}
 #qhead{display:flex;align-items:baseline;gap:12px;padding:10px 14px 6px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;min-width:0}#qname{overflow:hidden;text-overflow:ellipsis;min-width:0}
 #qsym{font-size:16px;font-weight:700}#qname{color:var(--muted)}#qpx{font-size:22px;font-weight:700}#qchg{font-weight:600}
 .ctabs{display:flex;gap:18px;padding:0 14px;border-bottom:1px solid var(--line);height:36px;align-items:flex-end}
@@ -176,7 +180,7 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
   </section>
 
   <section id="center">
-    <div id="qhead"><span id="qsym">—</span><span id="qname"></span><span id="qpx" class="num"></span><span id="qchg" class="num"></span></div>
+    <div id="qhead"><span id="qsym">—</span><span id="qname"></span><span id="qpx" class="num"></span><span id="qchg" class="num"></span><span style="flex:1"></span><span id="qai"></span></div>
     <div class="ctabs"><button class="on" data-c="chart">Chart</button><button data-c="forecast">5-Day Forecast</button><button data-c="ai">AI Signals</button></div>
     <div id="toolbar">
       <button data-tf="1m">1m</button><button data-tf="5m" class="on">5m</button><button data-tf="15m">15m</button><button data-tf="1h">1h</button>
@@ -454,6 +458,41 @@ async function loadTicks() {
     return `<div class="tick num"><div class="dim">${nyFmt.format(new Date(x.t * 1000))}</div><div class="${c}">${fmt(x.p)}</div><div>${big(x.s)}</div></div>`;
   }).join('') || '<div class="note" style="padding:10px 14px">No recent trades.</div>';
 }
+// Qwen + models analysis of the selected stock (the Markets stock page has the full report)
+let QW = { sym: null, html: '' }, qwTok = 0;
+const QRT = { buy: ['BUY', 'var(--up)'], sell: ['SELL', 'var(--down)'], none: ['HOLD', 'var(--warn)'] };
+async function loadQwen(sym, tok = ++qwTok) {
+  let res = null;
+  try { const r = await fetch(`/api/stock/eval?market=nasdaq&symbol=${encodeURIComponent(sym)}`); res = r.ok ? await r.json() : { state: 'error', result: { error: (await r.json().catch(() => ({}))).error || 'not available' } }; }
+  catch (e) { res = { state: 'error', result: { error: 'app not reachable' } }; }
+  if (tok !== qwTok || sym !== sel) return;
+  const open = `location.href='/markets#/nasdaq/stock/${encodeURIComponent(sym)}'`;
+  const btn = (busy) => `<button id="qwbtn" ${busy ? 'disabled' : ''} onclick="reevalQwen()" title="Ask Qwen again with the latest headlines">${busy ? 'Evaluating…' : '↻ Re-evaluate'}</button>`;
+  if (res.state === 'done') {
+    const r = res.result, h = (r.horizons && (r.horizons['1'] || r.horizons['5'])) || null, hk = r.horizons && r.horizons['1'] ? '1-day' : '5-day';
+    const t = h ? h.views.total : r.advised, sig = h ? h.signal : r.signal, [lab, col] = QRT[sig] || QRT.none;
+    $('qai').innerHTML = `<span class="rt" style="color:${col};border-color:${col}" onclick="${open}" title="Qwen + models, ${hk}; open the full analysis">${lab}</span>` +
+      `<span class="dim">${hk} · ${(t.p_up * 100).toFixed(0)}% rise · ${(r.generated || '').slice(11, 16)}</span>${btn(false)}`;
+    const ai = r.ai || {};
+    QW = { sym, html: `<div class="note" style="margin-bottom:10px;padding:10px;border:1px solid var(--line);border-radius:8px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><b style="color:${col};font-size:16px">${lab}</b>
+      <span>Qwen + models, ${hk}: ${(t.p_up * 100).toFixed(0)}% chance of a rise · median ${fmt(t.median)} (80%: ${fmt(t.lo80)}–${fmt(t.hi80)})</span></div>
+      <div class="dim">Qwen's read: ${ai.lean || '—'}, ${ai.confidence || '—'} confidence · evaluated ${(r.generated || '').replace('T', ' ').slice(0, 16)} from the ${r.asof} close.
+      <a href="/markets#/nasdaq/stock/${encodeURIComponent(sym)}">Full report →</a></div></div>` };
+  } else if (res.state === 'error') {
+    $('qai').innerHTML = `<span class="dim" title="${String(res.result && res.result.error || '').replace(/"/g, '&quot;')}">no AI analysis for this symbol</span>`;
+    QW = { sym, html: '' };
+  } else {
+    $('qai').innerHTML = `<span class="dim">AI: ${res.position > 1 ? `queued (${res.position - 1} ahead)` : 'evaluating'}…</span>${btn(true)}`;
+    setTimeout(() => loadQwen(sym, tok), 3000);
+  }
+  renderAiSide();
+}
+async function reevalQwen() {
+  const sym = sel; if ($('qwbtn')) { $('qwbtn').disabled = true; $('qwbtn').textContent = 'Evaluating…'; }
+  try { await fetch(`/api/stock/reeval?market=nasdaq&symbol=${encodeURIComponent(sym)}`, { method: 'POST' }); } catch (e) { }
+  loadQwen(sym);
+}
 function renderAiSide() {
   const mine = signals.filter(s => s.symbol === sel).sort((a, b) => b.ts - a.ts);
   const SIGC = { 'STRONG BUY': 'sb', 'BUY': 'b', 'SELL': 's', 'STRONG SELL': 'ss' };
@@ -462,7 +501,8 @@ function renderAiSide() {
   const html = `<div class="note" style="margin-bottom:8px">30-minute cross-stock model: BUY = expected to beat the other stocks over the next 30 min by more than the cost. Research indicator, not advice.
     ${window._sigRun ? `Session ${window._sigRun.session_date} (${window._sigRun.mode}).` : ''}</div>
     <table><thead><tr><th>Time ET</th><th>Signal</th><th>Pred bps</th><th>Actual bps</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="dim">No signals for this stock in the latest session.</td></tr>'}</tbody></table>`;
-  $('aiside').innerHTML = html; $('aiview').innerHTML = html;
+  const q = QW.sym === sel ? QW.html : '';
+  $('aiside').innerHTML = q + html; $('aiview').innerHTML = q + html;
 }
 document.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
   document.querySelectorAll('[data-r]').forEach(x => x.classList.toggle('on', x === b));
@@ -706,7 +746,7 @@ document.querySelectorAll('[data-ind]').forEach(b => b.onclick = () => { ind[b.d
 
 // ---------------------------------------------------------------- data loops
 async function select(s) {
-  sel = s; store.set('tm.sel', s); renderRows(); renderQuote();
+  sel = s; store.set('tm.sel', s); $('qai').innerHTML = ''; renderRows(); renderQuote(); loadQwen(s);
   const d = await fetch(`/api/md/bars?symbol=${s}&tf=1D`); window._daily = d.ok ? await d.json() : [];
   await Promise.all([loadBars(true), loadTicks(), loadForecast()]); renderQuote();
 }

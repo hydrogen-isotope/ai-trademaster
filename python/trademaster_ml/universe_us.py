@@ -94,6 +94,13 @@ def update():
     newly listed ones, and a full re-fetch of any stock whose recent closes no longer match (a split since last run)."""
     path = os.path.join(DIR, "panel.npz")
     p = dict(np.load(path))
+    now_ny = datetime.now(NY)
+    if now_ny.hour * 60 + now_ny.minute < 16 * 60 + 20:              # an unfinished day stored by an earlier run: drop it
+        keep = np.array([str(d) < now_ny.strftime("%Y-%m-%d") for d in p["dates"]])
+        if not keep.all():
+            print(f"[universe] dropping unfinished day(s) {[str(d) for d in p['dates'][~keep]]}", flush=True)
+            for k in ("dates", "open", "high", "low", "close", "volume"):
+                p[k] = p[k][keep]
     dates, syms = [str(d) for d in p["dates"]], [str(s) for s in p["symbols"]]
     assets()                                                        # refresh listings / delistings
     meta = {a["symbol"]: a for a in json.load(open(os.path.join(DIR, "assets.json")))}
@@ -102,9 +109,9 @@ def update():
     known = [s for s in active if s in set(syms)]
     creds = alpaca.credentials()
     end = int(time.time()) - 16 * 60
-    now_ny = datetime.now(NY)
     if now_ny.hour * 60 + now_ny.minute < 16 * 60 + 20:              # today's daily bar is still forming: leave it out
-        end = min(end, int(now_ny.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()))
+        # Alpaca stamps a daily bar at midnight New York time and `end` is inclusive, so stop one minute before it
+        end = min(end, int(now_ny.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()) - 60)
     look = int(datetime.fromisoformat(dates[-1] + "T00:00:00+00:00").timestamp()) - 10 * 86400
     recent = alpaca.get_bars(known, "1Day", look, end, feed="sip", creds=creds, pause=0.31)
     si, di = {s: i for i, s in enumerate(syms)}, {d: i for i, d in enumerate(dates)}
