@@ -188,7 +188,7 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
     </div>
     <div id="legend" class="num"></div>
     <div id="chartwrap"><div id="chart"></div></div>
-    <div id="fchint" onclick="setCenterTab('forecast')">&#128302; Open the 5-trading-day forecast for this stock &rarr;</div>
+    <div id="fchint" onclick="location.href='/markets#/nasdaq/stock/' + encodeURIComponent(sel)">&#128302; Open the AI forecast for this stock (next close by default) &rarr;</div>
     <section id="fcview">
       <div class="top"><h2 id="fctitle">5-day forecast</h2><span class="chip" id="fcchip"></span></div>
       <div class="sub" id="fcsub"></div>
@@ -648,13 +648,13 @@ async function loadForecast() {
     $('fcchip').textContent = 'NO FORECAST'; $('fcchip').className = 'chip'; $('fcsub').textContent = '';
     $('fcnone').style.display = 'block'; $('fcbody').style.display = 'none';
     $('fcnone').innerHTML = `No forecast for ${sel} yet. Forecasts currently cover MU, NVDA, AMD and AAPL; gold and silver follow once a Databento key is added. Run <span class="num">tools\\daily-forecast.cmd</span> after the US close to refresh.`;
-    $('fchint').innerHTML = `No 5-day forecast for ${sel} yet`;
+    $('fchint').innerHTML = `&#128302; Open the AI forecast for ${sel} (next close by default; 5 days and 1 month on the page) &rarr;`;
     return;
   }
   const f = await r.json(), fc = f.forecast, v = f.validation, ok = fc.validated;
   fcState = f;
   $('fcnone').style.display = 'none'; $('fcbody').style.display = '';
-  $('fchint').innerHTML = `&#128302; Open the 5-trading-day forecast for ${sel} &rarr;`;
+  $('fchint').innerHTML = `&#128302; Open the AI forecast for ${sel} (next close by default; 5 days and 1 month on the page) &rarr;`;
   const calOnly = v && v.calibrated && !v.beats_baseline;
   $('fcchip').textContent = ok ? 'VALIDATED' : calOnly ? 'RANGES CALIBRATED · NO EDGE' : 'NOT VALIDATED'; $('fcchip').className = 'chip ' + (ok ? 'live' : 'demo');
   $('fcsub').innerHTML = `Made at the close of ${DLONG(fc.asof)} · last close <b class="num">${fmt(fc.last_close)}</b> · ${fc.model === 'v2' ? 'volatility model with self-correcting ranges' : 'volatility model'} · 20,000 simulated paths
