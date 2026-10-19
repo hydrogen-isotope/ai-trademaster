@@ -49,6 +49,24 @@ public static partial class StockEval
         File.WriteAllText(Path.Combine(QueueDir, $"0-{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}-{market}-{sym}.req"), "");
     }
 
+    /// <summary>Re-evaluate on request: the current result for the latest close is moved aside (to replaced/, never
+    /// deleted) and the stock is queued first. The forward-test log keeps the first evaluation of each stock and close.</summary>
+    public static bool Reevaluate(string market, string sym, string asof)
+    {
+        var dir = Path.Combine(Root, market);
+        if (Requests().Any(f => f.StartsWith("0-", StringComparison.Ordinal) && f.EndsWith($"-{market}-{sym}.req", StringComparison.Ordinal))) return false;
+        var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        foreach (var kind in new[] { "json", "error.json" })
+        {
+            var f = Path.Combine(dir, $"{sym}_{asof}.{kind}");
+            if (!File.Exists(f)) continue;
+            Directory.CreateDirectory(Path.Combine(dir, "replaced"));
+            File.Move(f, Path.Combine(dir, "replaced", $"{sym}_{asof}.{stamp}.{kind}"));
+        }
+        Enqueue(market, sym);
+        return true;
+    }
+
     /// <summary>1-based place in the queue (0 if not queued).</summary>
     public static int Position(string market, string sym)
     {

@@ -54,6 +54,7 @@ td.name{text-align:left;color:var(--muted);max-width:190px;overflow:hidden;text-
 .tools input{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:5px 9px;font:inherit;width:200px}
 .seg button{background:var(--panel2);color:var(--muted);border:1px solid var(--line);padding:4px 10px;font:inherit;cursor:pointer;margin-right:-1px}
 .seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0}.seg button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:4px 12px;font:inherit;font-size:12px;text-transform:none;letter-spacing:0;cursor:pointer}.btn:hover{border-color:var(--accent);color:var(--accent)}.btn:disabled{opacity:.6;cursor:default}
 .rng{position:relative;display:inline-block;width:130px;height:12px;vertical-align:middle}
 .rng .r95{position:absolute;top:5px;height:2px;background:#3a4452;border-radius:1px}
 .rng .r80{position:absolute;top:3px;height:6px;background:#2f5f9f;border-radius:2px}
@@ -467,7 +468,8 @@ async function viewStock(m, sym) {
     `<div class="panel"><div class="ph"><span>Recent months and ${HZL[HZ][2]}</span><div class="spacer"></div><span class="legend"><span id="vtoggles" style="display:flex;gap:14px;flex-wrap:wrap"></span>` +
     `<span class="dim">green = above the last close, red = below · thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div>` +
     `<div style="position:relative"><div class="chart" id="stockchart" style="height:340px"></div><div class="spinwrap" id="spin"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub">asking for the analysis</div></div></div></div></div>` +
-    `<div class="panel" id="aipanel" style="position:relative;min-height:120px"><div class="ph">AI analysis (Qwen, local, post-processed by our models) <span class="chip warn">UNPROVEN · FORWARD TEST</span> <span class="chip" id="abchip" style="display:none">WITH PRODUCT KNOWLEDGE · A/B</span></div>` +
+    `<div class="panel" id="aipanel" style="position:relative;min-height:120px"><div class="ph">AI analysis (Qwen, local, post-processed by our models) <span class="chip warn">UNPROVEN · FORWARD TEST</span> <span class="chip" id="abchip" style="display:none">WITH PRODUCT KNOWLEDGE · A/B</span><div class="spacer"></div>` +
+    `<button class="btn" id="reevalbtn" title="Ask Qwen again with the latest headlines; the forward test keeps the first evaluation of each close" onclick="reeval('${m}', '${esc(sym)}')">↻ Re-evaluate</button></div>` +
     `<div class="spinwrap" id="spin2"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub2">Qwen is reading ${m === 'nasdaq' ? 'its news, ' : ''}the numbers and its peers</div></div></div><div class="pad" id="aibody"></div></div>` +
     (f ? `<div class="panel pad big"><div class="muted" style="margin-bottom:6px">${HZL[HZ][1]} range: thin = 95%, thick = 80%, white line = last close, dot = median</div>${rangeBar(r)}` +
       `<div style="display:flex;justify-content:space-between" class="num dim"><span>${px(f.lo95)}</span><span>${px(f.hi95)}</span></div></div>` : '') +
@@ -627,6 +629,12 @@ function aiTotal(r) {
   return tv ? { ...tv, variant: r.variant } : null;
 }
 
+async function reeval(m, sym) {
+  const b = $('reevalbtn'); if (b) { b.disabled = true; b.textContent = 'Re-evaluating…'; }
+  try { await fetch(`/api/stock/reeval?market=${m}&symbol=${encodeURIComponent(sym)}`, { method: 'POST' }); } catch (e) { }
+  $('spin2').style.display = ''; $('aibody').innerHTML = ''; EVX[m] = null;
+  loadEval(m, sym, (viewStock.tok = (viewStock.tok || 0) + 1));
+}
 async function loadEval(m, sym, tok) {
   if (tok !== viewStock.tok) return;
   let res;
@@ -637,7 +645,8 @@ async function loadEval(m, sym, tok) {
   if (r && r.history && (!loadEval.drawn || loadEval.drawn.tok !== tok || loadEval.drawn.status !== r.status)) { drawStock(r, m); loadEval.drawn = { tok, status: r.status }; }
   if (res.state === 'done') { $('spin').style.display = 'none'; $('spin2').style.display = 'none'; $('aibody').innerHTML = aiBody(r, m); EVX[m] = null;
     if ($('report') && aiTotal(r)) { const d = await data(m), row = d.rankings.find(x => x.symbol === sym); if (row) $('report').innerHTML = report(m, row, d, await fairData(), aiTotal(r)); }
-    if ($('abchip')) $('abchip').style.display = r.variant === 'B' ? '' : 'none'; return; }
+    if ($('abchip')) $('abchip').style.display = r.variant === 'B' ? '' : 'none';
+    if ($('reevalbtn')) { $('reevalbtn').disabled = false; $('reevalbtn').textContent = '↻ Re-evaluate'; } return; }
   if (res.state === 'error') {
     $('spin').style.display = 'none'; $('spin2').style.display = 'none';
     $('aibody').innerHTML = `<div class="empty">Could not evaluate: ${esc(r && r.error)}</div>`; return;

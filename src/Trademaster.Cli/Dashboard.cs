@@ -229,6 +229,17 @@ public static class Dashboard
                        $"\"result\":{(File.Exists(partial) ? File.ReadAllText(partial) : "null")}}}";
             return Results.Text(body, "application/json");
         });
+        app.MapPost("/api/stock/reeval", (string? market, string symbol) =>
+        {
+            var mk = market == "sgx" ? "sgx" : "nasdaq";
+            var sym = (symbol ?? "").Trim().ToUpperInvariant();
+            if (!StockEval.OkSymbol(sym)) return Results.BadRequest(new { error = "bad symbol" });
+            var asof = StockEval.Asof(mk);
+            if (asof is null) return Results.NotFound(new { error = "no price forecasts yet" });
+            var queued = StockEval.Reevaluate(mk, sym, asof);
+            StockEval.EnsureDaemon(port);
+            return Results.Json(new { queued });
+        });
         app.MapGet("/api/stock/evals", (string? market) =>
         {
             var mk = market == "sgx" ? "sgx" : "nasdaq";

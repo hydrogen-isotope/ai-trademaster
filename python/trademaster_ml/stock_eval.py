@@ -741,20 +741,30 @@ def serve(a):
 
 
 def batch(a=None):
-    """App-start set (NASDAQ): top/bottom 25 by rank score and top/bottom 10 by model P(up), not yet cached."""
-    _market_dirs("nasdaq")
-    rk = json.load(open(os.path.join(v6.OUT, "rankings.json")))
-    asof = latest_asof("nasdaq")
-    rows = rk["rankings"]
-    pick = [r["symbol"] for r in rows[:25] + rows[-25:]]
-    fc = sorted([r for r in rows if r.get("fc")], key=lambda r: r["fc"]["p_up"])
-    pick += [r["symbol"] for r in fc[:10] + fc[-10:]]
+    """App-start queue: first the NASDAQ start-up set (top/bottom 25 by rank score, top/bottom 10 by model P(up)) at
+    priority 1, then every other ranked NASDAQ and SGX stock at priority 2; only stocks not yet evaluated for the
+    latest close. Clicked stocks (priority 0) always go first. Runs only while the app is open (see serve)."""
     n = 0
-    for s in dict.fromkeys(pick):
-        if not os.path.exists(cache_path("nasdaq", s, asof)):
-            enqueue("nasdaq", s, 1)
-            n += 1
-    print(f"[eval] app-start batch: {n} stocks queued for {asof}", flush=True)
+    for market in ("nasdaq", "sgx"):
+        d = _market_dirs(market)
+        rk = json.load(open(os.path.join(d["v6"], "rankings.json")))
+        asof = latest_asof(market)
+        rows = rk["rankings"]
+        first = []
+        if market == "nasdaq":
+            first = [r["symbol"] for r in rows[:25] + rows[-25:]]
+            fc = sorted([r for r in rows if r.get("fc")], key=lambda r: r["fc"]["p_up"])
+            first += [r["symbol"] for r in fc[:10] + fc[-10:]]
+        first = list(dict.fromkeys(first))
+        rest = [r["symbol"] for r in rows if r["symbol"] not in set(first)]
+        for prio, syms in ((1, first), (2, rest)):
+            for s in syms:
+                if not os.path.exists(cache_path(market, s, asof)) and not os.path.exists(cache_path(market, s, asof, "error.json")):
+                    enqueue(market, s, prio)
+                    n += 1
+        print(f"[eval] app-start queue: {market} {asof}", flush=True)
+    _market_dirs("nasdaq")
+    print(f"[eval] app-start queue: {n} stocks queued", flush=True)
     return n
 
 
