@@ -229,6 +229,7 @@ public static class Dashboard
                        $"\"result\":{(File.Exists(partial) ? File.ReadAllText(partial) : "null")}}}";
             return Results.Text(body, "application/json");
         });
+        app.MapPost("/api/stock/queue-all", () => Results.Json(new { started = StockEval.EnsureQueue(port) }));
         app.MapPost("/api/stock/reeval", (string? market, string symbol) =>
         {
             var mk = market == "sgx" ? "sgx" : "nasdaq";

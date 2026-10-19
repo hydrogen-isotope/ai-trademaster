@@ -1,6 +1,7 @@
 // Shared left sidebar (the same four sections as the Watchlist page's rail), so every page has a way back.
 // On a phone-width window it becomes a bar along the bottom. Also the shared search matcher (window.tmSearch).
 (() => {
+  fetch('/api/stock/queue-all', { method: 'POST' }).catch(() => { });   // evaluate every stock in the background while the app is open
   if (document.getElementById('rail')) return;                  // the Watchlist page has its own rail
   const icon = {
     watch: '<path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>',

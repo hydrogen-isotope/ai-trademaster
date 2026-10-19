@@ -171,6 +171,37 @@ public static partial class StockEval
         }
     }
 
+    private static string? queuedFor;
+
+    /// <summary>Opening a page queues every ranked NASDAQ and SGX stock not yet evaluated for the latest close
+    /// (python -m trademaster_ml.stock_eval batch), once per close while the app runs, then starts the evaluator.
+    /// A clicked stock is still evaluated first.</summary>
+    public static bool EnsureQueue(int port)
+    {
+        var key = $"{Asof("nasdaq")}|{Asof("sgx")}";
+        lock (StartLock)
+        {
+            if (queuedFor == key) return false;
+            queuedFor = key;
+        }
+        var py = Path.Combine("python", ".venv", "Scripts", "python.exe");
+        if (!File.Exists(py)) return false;
+        Task.Run(() =>
+        {
+            try
+            {
+                var psi = new ProcessStartInfo(Path.GetFullPath(py)) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Directory.GetCurrentDirectory() };
+                foreach (var a in new[] { "-W", "ignore", "-m", "trademaster_ml.stock_eval", "batch" }) psi.ArgumentList.Add(a);
+                psi.Environment["PYTHONPATH"] = "python";
+                using var p = Process.Start(psi);
+                p?.WaitForExit(120_000);
+            }
+            catch (Exception) { lock (StartLock) queuedFor = null; return; }
+            EnsureDaemon(port);
+        });
+        return true;
+    }
+
     private static DateTime lastRefreshStart = DateTime.MinValue;
 
     /// <summary>Start the background update (new closes, news, forecasts, rankings, SGX, indexes) unless one is running or
