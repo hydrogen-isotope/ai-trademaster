@@ -210,6 +210,32 @@ the cache and the logging rule are unchanged.
   `advice_shadow_h20.jsonl`).
 - The same promotion rule applies per horizon. A horizon whose v7 model failed its gate is not shown.
 
+**G (2026-10-19, at the user's request, before any result). Product knowledge, tested A/B against the current
+analysis.**
+- **Company profile**, built once per company and rebuilt when it is more than 120 days old.
+  - Source text:
+    - NASDAQ: the "Business" section (Item 1) of the latest 10-K filed on SEC EDGAR, or Item 4 of a 20-F;
+    - otherwise, and for SGX: Eulerpool's company description.
+  - Qwen turns the text into schema JSON: up to 6 products with an approximate revenue share; up to 6 customers,
+    suppliers and competitors (with a US ticker where Qwen gives one); up to 5 sales drivers; a summary of at most
+    300 characters.
+  - The source and the filing date are stored with the profile. The text is only ever older than the forecast, so
+    there is no look-ahead.
+- **Variant B (product knowledge).** The amendment C–F prompt, plus the profile, plus related-company news.
+  Related-company news means the last 5 sessions' headlines (at most 3 each, recap templates removed, up to 6
+  companies) for the profile's customers, suppliers and competitors that map to a ticker. Everything after the prompt
+  is unchanged: the verdict, the chance per horizon, w = 0.5, and the signals.
+- **Variant A.** The current analysis, unchanged.
+- **Both run on every evaluation.** Both are logged before outcomes exist: A to the existing files, B to
+  `advice_shadow_prof*.jsonl`.
+- **The page shows B**, labelled "with product knowledge (A/B test)", and A in the comparison table.
+- **Decision** after ≥ 60 matured dates and ≥ 300 forecasts per horizon:
+  - B replaces A only if its mean CRPS is lower than A's, with a 95% block-bootstrap CI excluding 0, and its up/down
+    hit rate is ≥ A's;
+  - otherwise the page goes back to A.
+
+  Each variant also keeps its own amendment E test against model-only.
+
 ## Results
 
 ### Test A: staging vs one ridge (no news), run 2026-10-18
