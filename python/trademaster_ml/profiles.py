@@ -12,7 +12,7 @@ The SEC User-Agent (private/config/sec.json) is only ever sent to sec.gov.
 
 Usage: python -m trademaster_ml.profiles build MU AMD --cpu | show MU
 """
-import argparse, gzip, html, json, os, re, sys, time, urllib.request
+import argparse, gzip, html, json, math, os, re, sys, time, urllib.request
 from datetime import datetime, timedelta, timezone
 
 from . import alpaca, eulerpool, fundamentals, llm_news
@@ -20,7 +20,7 @@ from . import alpaca, eulerpool, fundamentals, llm_news
 DIR = os.path.join("private", "data", "profiles")
 SEC_TICKERS = os.path.join("private", "data", "us", "edgar", "company_tickers.json")
 MAX_AGE_DAYS = 120
-MAX_TEXT = 12000                      # characters of source text given to Qwen (about 3k tokens)
+MAX_TEXT = 17000                      # characters of source text given to Qwen (about 4.3k tokens; fits the 6k context with the answer)
 ANNUAL = ("10-K", "10-K405", "10-KT", "20-F", "40-F")
 _rate = fundamentals._Rate(4)
 
@@ -93,6 +93,39 @@ def _section(t, form):
     return t[best[0]:best[0] + best[1]] if best and best[1] > 1500 else None
 
 
+REL = re.compile(r"(?i)\b(customers?|suppliers?|vendors?|foundr(y|ies)|wafers?|manufactur\w*|assembl\w*|partners?|partnership|compet\w*|"
+                 r"rely|relies|depend\w*|sole source|single source|power(s|ed)? the|acquir\w*|largest|principal|"
+                 r"accounted for|segments?)\b")
+REV = re.compile(r"(?i)(\d{1,2}(\.\d)?\s?%|\d{1,2}(\.\d)? percent).{0,80}\b(revenue|sales)\b|\b(revenue|sales)\b.{0,80}(\d{1,2}(\.\d)?\s?%|percent)")
+NAME = re.compile(r"(?<![.!?]\s)\b[A-Z][a-zA-Z&]+(?:\s[A-Z][a-zA-Z&]+)*(?:\s(?:Inc|Corp|Corporation|Ltd|Limited|Co|Company|AG|N\.V|plc))?")
+
+
+def select_text(section, full, overview=3000, budget=MAX_TEXT):
+    """The business overview, then the sentences (from the Business section first, then the whole filing) that name
+    customers, suppliers, competitors or partners, or give revenue shares: a 50k-character section is otherwise cut
+    before its supplier and customer paragraphs (AMD's TSMC and Sony mentions came after 12k characters)."""
+    cands, seen = [], set()
+    for rank, src in enumerate((section[overview:], full)):
+        for k, snt in enumerate(re.split(r"(?<=[.!?])\s+(?=[A-Z])", src)):
+            if not 40 <= len(snt) <= 500 or snt in seen or re.search(r"(?i)forward-looking|could adversely|may not be able", snt):
+                continue
+            seen.add(snt)
+            rev = bool(REV.search(snt))
+            rel = bool(REL.search(snt))
+            names = len(NAME.findall(snt))
+            firms = len(re.findall(r"\b(Inc|Corp|Corporation|Limited|Ltd|Company|plc|AG|N\.V)\b|\([A-Z]{2,6}\)", snt))   # named companies
+            if rev or (rel and names >= 2):
+                score = 3 * rev + 2 * min(firms, 3) + min(names, 4) + (4 if rank == 0 else 0)   # the Business section first
+                cands.append((-score, rank, k, snt))
+    used, keep, rest = overview, [], 0
+    for c in sorted(cands):                                                 # most specific sentences first
+        if used + len(c[3]) < budget and (c[1] == 0 or rest + len(c[3]) < 0.35 * budget):   # rest of the filing: at most 35%
+            keep.append(c)
+            used += len(c[3]) + 1
+            rest += len(c[3]) + 1 if c[1] else 0
+    return "\n".join([section[:overview]] + [c[3] for c in sorted(keep, key=lambda c: (c[1], c[2]))])   # back in document order
+
+
 def sec_business(sym, asof):
     """(text, source dict) from the latest annual report filed on or before `asof`, or (None, None)."""
     cmap = os.path.join(fundamentals.EDGAR, "cik_map.json")
@@ -107,7 +140,7 @@ def sec_business(sym, asof):
             t = _sec_text(url)
             sec = _section(t, f) if t else None
             if sec:
-                return sec[:MAX_TEXT], {"kind": f"SEC {f}", "filed": r["filingDate"][i], "url": url}
+                return select_text(sec, t), {"kind": f"SEC {f}", "filed": r["filingDate"][i], "url": url}
             return None, None                                                   # latest annual report only
     return None, None
 
@@ -128,9 +161,28 @@ def eulerpool_description(market, sym):
 
 # ---------------------------------------------------------------- related companies -> tickers
 
+STOP = {"inc", "incorporated", "corp", "corporation", "co", "ltd", "limited", "plc", "the", "group", "holdings", "company", "sa", "ag", "nv",
+        "de", "llc", "lp"}
+# words of a category, not a company ("Hyperscale cloud providers", "PC OEMs", "Game console manufacturers")
+GENERIC = {"customers", "customer", "providers", "provider", "oems", "oem", "odms", "odm", "manufacturers", "manufacturer", "makers",
+           "companies", "suppliers", "supplier", "vendors", "vendor", "data", "center", "centers", "datacenters", "markets", "market",
+           "hyperscale", "hyperscalers", "hyperscaler", "cloud", "neocloud", "industrial", "automotive", "smartphone", "smartphones", "mobile",
+           "game", "gaming", "console", "consoles", "pc", "pcs", "enterprise", "enterprises", "government", "governments", "distributors",
+           "retailers", "partners", "others", "other", "various", "banks", "fintech", "fintechs", "foundries", "service", "services", "telecom",
+           "operators", "carriers", "consumers", "consumer", "businesses", "chip", "chips", "memory", "semiconductor", "electronics", "end", "users",
+           "and", "of", "major", "large", "leading", "global", "local", "regional", "asian", "us", "chinese", "japanese", "korean", "european"}
+FUNDS = re.compile(r"(?i)\b(etn|etns|x-links|trust|fund|etf|notes|index|warrants?|units?)\b")
+
+
 def _norm(s):
-    s = re.sub(r"[^a-z0-9 ]", " ", (s or "").lower())
-    return [w for w in s.split() if w not in ("inc", "corp", "corporation", "co", "ltd", "limited", "plc", "the", "group", "holdings", "company", "sa", "ag", "nv")]
+    s = re.sub(r"\([^)]*\)", " ", (s or "").lower())                      # "GLOBALFOUNDRIES Inc. (GF)" -> globalfoundries
+    s = re.sub(r"[^a-z0-9 ]", " ", s)
+    return [w for w in s.split() if w not in STOP]
+
+
+def is_category(name):
+    w = _norm(name)
+    return not w or all(x in GENERIC for x in w)
 
 
 def sec_tickers():
@@ -146,21 +198,37 @@ PARENTS = {"amazon": "AMZN", "aws": "AMZN", "google": "GOOGL", "alphabet": "GOOG
            "instagram": "META", "ibm": "IBM", "hp": "HPQ", "dell": "DELL", "tsmc": "TSM", "azure": "MSFT", "xbox": "MSFT"}
 
 
+def note_issuers(tickers, _cache={}):
+    """Tickers of issuers listed only through several unrelated notes/ETNs (e.g. CREDIT SUISSE AG: GLDI, USOI, SLVO):
+    a title with 3+ tickers that share no 2-letter prefix is not a company's shares (GOOG/GOOGL share one)."""
+    if "x" not in _cache:
+        by = {}
+        for t, title in tickers.items():
+            by.setdefault(title, []).append(t)
+        fin = re.compile(r"(?i)\b(ag|trust|l\.?p\.?|fund|bank|securities|capital)\b")   # issuers of notes, not operating firms
+        _cache["x"] = {t for title, ts in by.items() if len(ts) >= 3 and len({x[:2] for x in ts}) == len(ts) and fin.search(title) for t in ts}
+    return _cache["x"]
+
+
 def find_ticker(name, tickers, _index={}):
     """Ticker by company name: the title must start with the name's first word, contain its first two words, and be a
     plain share class; the shortest such title wins ("Apple" -> Apple Inc, not Apple Hospitality REIT)."""
     nw = _norm(name)[:2]
-    if not nw:
+    if not nw or is_category(name):
         return None
     if nw[0] in PARENTS:                                                    # brands and units of big listed parents
         return PARENTS[nw[0]]
+    bare = (name or "").strip()
+    if re.fullmatch(r"[A-Z]{2,5}", bare) and bare in tickers and bare not in note_issuers(tickers):
+        return bare                                                         # the name is itself a ticker ("AMD")
     if not _index:
+        notes = note_issuers(tickers)
         for t, title in tickers.items():
             w = _norm(title)
-            if w and re.fullmatch(r"[A-Z]{1,5}", t):
-                _index.setdefault(w[0], []).append((len(w), t, set(w)))
-    cands = sorted(c for c in _index.get(nw[0], []) if set(nw) <= c[2])
-    return cands[0][1] if cands else None
+            if w and re.fullmatch(r"[A-Z]{1,5}", t) and not FUNDS.search(title) and t not in notes:   # shares only, not notes/ETNs
+                _index.setdefault(w[0], []).append((len(w), len(t), t, set(w)))   # shortest name, then the main (shortest) ticker
+    cands = sorted(c for c in _index.get(nw[0], []) if set(nw) <= c[3])
+    return cands[0][2] if cands else None
 
 
 def map_ticker(ent, tickers):
@@ -168,7 +236,8 @@ def map_ticker(ent, tickers):
     ("SK Hynix" must not map to SK Telecom)."""
     t = (ent.get("ticker") or "").upper().strip().replace("-", ".")
     nw = _norm(ent.get("name"))
-    if t in tickers and nw and set(nw[:2]) <= set(_norm(tickers[t])):
+    if (t in tickers and nw and not is_category(ent.get("name")) and not FUNDS.search(tickers[t]) and t not in note_issuers(tickers)
+            and set(nw[:2]) <= set(_norm(tickers[t]))):
         return t
     return find_ticker(ent.get("name"), tickers)
 
@@ -186,15 +255,114 @@ def load(market, sym):
     pr = json.load(open(p, encoding="utf-8"))
     if datetime.now() - datetime.fromisoformat(pr["built"]) > timedelta(days=MAX_AGE_DAYS):
         return None
-    if market == "nasdaq" and not pr.get("mapped_v2"):
-        tickers = sec_tickers()
-        for k in ("customers", "suppliers", "competitors"):
-            for e in pr.get(k, []):
-                e["ticker"] = e.get("ticker") or find_ticker(e["name"], tickers)
-                if e["ticker"] == sym:
-                    e["ticker"] = None
-        pr["mapped_v2"] = True
+    if not pr.get("mapped_v3"):                                            # older profiles: same clean-up, without a model call
+        tidy(pr, sym, "", "", sec_tickers())
+        pr["mapped_v3"] = True
     return pr
+
+
+def _complete(prompt, schema, port, n_predict=700, slot=1):
+    body = {"prompt": prompt, "n_predict": n_predict, "temperature": 0, "cache_prompt": False, "id_slot": slot, "json_schema": schema}
+    r = json.load(urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{port}/completion", json.dumps(body).encode(),
+                                                                {"Content-Type": "application/json"}), timeout=900))
+    return r.get("content", "")
+
+
+def gone(names, port):
+    """Second pass: which of these companies no longer exist on their own (bankrupt, dissolved, fully acquired)?
+    Qwen can only pick from the given names, so it cannot add anything."""
+    out = set()
+    for n in names:                                                         # one yes/no per company, read from token probabilities
+        user = (f"Does {n} still exist today as an independent company, i.e. it has not gone bankrupt, been dissolved, or been "
+                "taken over or merged into another company? Answer yes or no.")
+        prompt = f"<|im_start|>system\nYou answer questions about companies with one word.<|im_end|>\n<|im_start|>user\n{user}<|im_end|>\n<|im_start|>assistant\n"
+        body = {"prompt": prompt, "n_predict": 1, "temperature": 0, "n_probs": 20, "cache_prompt": False, "id_slot": 1}
+        try:
+            r = json.load(urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{port}/completion", json.dumps(body).encode(),
+                                                                        {"Content-Type": "application/json"}), timeout=300))
+        except Exception:  # noqa: BLE001
+            continue
+        p = {"yes": 0.0, "no": 0.0}
+        for x in r["completion_probabilities"][0]["top_logprobs"]:
+            w = x["token"].strip().lower()
+            if w in p:
+                p[w] += math.exp(x["logprob"])
+        if p["yes"] + p["no"] > 0 and p["no"] / (p["yes"] + p["no"]) >= 0.6:
+            out.add(n)
+    return out
+
+
+def tidy(pr, sym, name, text, tickers, port=None):
+    """Clean the related companies:
+    1. drop categories ("Hyperscale cloud providers") and the company itself;
+    2. map tickers (strict name match; shares only, never notes or ETNs);
+    3. drop duplicates (same ticker or name);
+    4. companies that are neither named in the filing nor have a current US ticker came from Qwen's own (2024) memory:
+       only these go through the "no longer exists" check (port given), so a re-listed company such as Sandisk or a
+       supplier named in this year's filing can never be removed by out-of-date knowledge."""
+    me = (_norm(name) or _norm(sym))[:1]
+    words = set(_norm(text or ""))
+    pr.setdefault("removed", {"category": [], "itself": [], "duplicate": [], "no_longer_exist": []})
+    unverified = []
+    for k in ("customers", "suppliers", "competitors"):
+        keep, seen = [], set()
+        for e in pr.get(k, []):
+            nw = _norm(e["name"])
+            if is_category(e["name"]):
+                pr["removed"]["category"].append(e["name"])
+                continue
+            if nw[:1] == me:
+                pr["removed"]["itself"].append(e["name"])
+                continue
+            e["ticker"] = map_ticker(e, tickers)
+            if e["ticker"] == sym:
+                pr["removed"]["itself"].append(e["name"])
+                continue
+            key = e["ticker"] or " ".join(nw[:2])
+            if key in seen:
+                pr["removed"]["duplicate"].append(e["name"])
+                continue
+            seen.add(key)
+            e["in_filing"] = bool(nw) and nw[0] in words
+            if not e["in_filing"] and not e["ticker"]:
+                unverified.append(e["name"])
+            keep.append(e)
+        pr[k] = keep
+    if port and unverified:
+        dead, ask = set(), []
+        for n in sorted(set(unverified)):                                   # market data first, Qwen's memory only if unknown
+            s_ = market_status(n)
+            if s_ == "delisted":
+                dead.add(n)
+            elif s_ is None:
+                ask.append(n)
+        dead |= gone(ask, port)
+        for k in ("customers", "suppliers", "competitors"):
+            pr["removed"]["no_longer_exist"] += [e["name"] for e in pr[k] if e["name"] in dead]
+            pr[k] = [e for e in pr[k] if e["name"] not in dead]
+    return pr
+
+
+def market_status(name):
+    """'trading' if Eulerpool finds this company's shares and they traded in the last 30 days, 'delisted' if it finds
+    the shares but no trades, None if it does not know the company (then Qwen's yes/no decides)."""
+    nw = _norm(name)[:2]
+    if not nw:
+        return None
+    try:
+        st, d = eulerpool.call("GET", "equity/search", {"q": " ".join(nw)})
+    except Exception:  # noqa: BLE001
+        return None
+    hits = [r for r in (d.get("results", []) if st == 200 and isinstance(d, dict) else [])
+            if r.get("type") == "stock" and r.get("isin") and set(nw) <= set(_norm(r.get("name")))][:2]
+    if not hits:
+        return None
+    now = int(time.time())
+    for r in hits:
+        st2, c = eulerpool.call("GET", f"charting/ohlcv/{r['isin']}", {"resolution": "D", "from": now - 30 * 86400, "to": now})
+        if st2 == 200 and isinstance(c, dict) and c.get("t"):
+            return "trading"
+    return "delisted"
 
 
 def build(market, sym, asof, name="", port=None):
@@ -224,15 +392,8 @@ def build(market, sym, asof, name="", port=None):
         pr = clean(json.loads(r.get("content", "")))
     except (ValueError, TypeError, AttributeError):
         return None
-    tickers = sec_tickers()
-    me = (_norm(name) or _norm(sym))[:1]
-    for k in ("customers", "suppliers", "competitors"):
-        pr[k] = [e for e in pr.get(k, []) if _norm(e["name"])[:1] != me]            # never the company itself
-        for e in pr.get(k, []):
-            e["ticker"] = map_ticker(e, tickers)
-            if e["ticker"] == sym:
-                e["ticker"] = None
-    pr.update({"mapped_v2": True, "symbol": sym, "market": market, "source": src, "built": datetime.now().isoformat(timespec="seconds"),
+    tidy(pr, sym, name, text, sec_tickers(), port)
+    pr.update({"mapped_v3": True, "symbol": sym, "market": market, "source": src, "built": datetime.now().isoformat(timespec="seconds"),
                "seconds": round(time.time() - t0, 1)})
     os.makedirs(os.path.dirname(path(market, sym)), exist_ok=True)
     json.dump(pr, open(path(market, sym), "w", encoding="utf-8"), ensure_ascii=False, indent=1)

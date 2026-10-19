@@ -235,6 +235,26 @@ analysis.**
   - otherwise the page goes back to A.
 
   Each variant also keeps its own amendment E test against model-only.
+- **Addendum (same day, after looking at profile quality only, before any outcome).**
+  - *Source text.* Qwen gets the first 3,000 characters of the Business section, then the most specific sentences
+    (named companies, relationship words, revenue shares), up to 17,000 characters in total. These come from the
+    Business section first; the rest of the filing may fill at most 35%. Taking the first 12,000 characters missed AMD's
+    foundries (TSMC, GlobalFoundries) and its console customers (Sony, Microsoft).
+  - *Profile instructions.* Name only real companies, never categories. Give revenue shares only where stated or well
+    known.
+  - *Clean-up (no model).* Categories ("PC OEMs", "Hyperscale cloud providers"), the company itself, and duplicates are
+    dropped.
+  - *Tickers.* A strict name match against SEC's ticker list (shares only, never notes or ETNs, e.g. Credit Suisse
+    AG's GLDI). A name that is itself a ticker ("AMD") is used as is. A short list maps brand and unit names to their
+    listed parents (AWS → AMZN, Google Cloud → GOOGL).
+  - *Existence check.* Only for companies that are neither named in the filing nor have a current US ticker, i.e.
+    ones that came from Qwen's (2024) memory.
+    - The check uses market data: Eulerpool's search finds the company's shares and their trades in the last 30 days.
+      Shares with no trades mean delisted, and the company is removed (Credit Suisse).
+    - Only if Eulerpool does not know the company at all, Qwen is asked yes/no and the company is removed at
+      P(no) ≥ 0.6 (Qimonda).
+    - An earlier one-shot "which no longer exist?" question removed real companies (Sandisk, re-listed in 2025;
+      Powerchip) and missed Credit Suisse, so it was replaced before any outcome.
 
 ## Results
 
