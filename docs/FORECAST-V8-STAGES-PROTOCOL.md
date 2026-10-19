@@ -281,6 +281,27 @@ Qwen's up-lean, and profile data.**
   - **Rebuild** when a newer annual report than the profile's source exists (checked at most weekly), instead of after
     120 days.
 
+**I (2026-10-19, 07:36 New York, before any advised forecast matured). Variant B's profiles are researched by
+Claude Haiku.**
+- **Why.** In a 20-company pilot, Haiku research found named relationships with evidence that the local 7B model
+  missed: NVDA's foundries and assemblers, PACCAR's engine and transmission suppliers, ASML's lens supplier, Roku's
+  named competitors. Some of its evidence was stale (e.g. Singapore Airlines aircraft retired years ago), so recency
+  rules are added.
+- **Coverage.** The 300 NASDAQ stocks with the highest 20-day traded value (as of the 2026-10-16 close) and all 119
+  ranked SGX stocks.
+- **Research rules.** Haiku subagents, about 10 companies each, start from the inputs (filing excerpt, Eulerpool
+  description, segment data, peers) and use web search (at most 6 searches per company). Every relationship needs a
+  named company, ≤ 25 words of evidence, a source URL and a source date. Sources must be dated 2023 or later, except
+  the company's latest annual report. No prices, recent news, ratings or opinions.
+- **Checks** (unchanged from G/H): size limits, categories, the company itself, duplicates, strict ticker matching,
+  delisting by market data; the revenue split comes from Eulerpool segment data; reverse links come from all stored
+  profiles.
+- **Variant B** uses the checked Haiku profile where one exists, otherwise the amendment G/H Qwen profile; the page
+  says which. The B shadow logs written with Qwen profiles before this amendment (a few test stocks) are moved to
+  `evals/<market>/b_qwen_profiles/` and are not part of the forward test. B's forward test starts from this
+  amendment.
+- **Refresh.** Haiku profiles are re-researched when a newer annual report exists (as in H), or after 180 days.
+
 ## Results
 
 ### Test A: staging vs one ridge (no news), run 2026-10-18
