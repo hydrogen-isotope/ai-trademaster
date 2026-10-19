@@ -25,7 +25,7 @@ from datetime import datetime, timedelta, timezone
 
 import numpy as np
 
-from . import alpaca, llm_news, v6, v7
+from . import alpaca, llm_news, profiles, v6, v7
 
 EVALS = os.path.join("private", "reports", "evals")
 QUEUE = os.path.join(EVALS, "queue")
@@ -299,7 +299,7 @@ def cone(close, asof, m, sd, R, days=5):
 
 # ---------------------------------------------------------------- the prompt and Qwen's verdict
 
-def build_prompt(ctx, news):
+def build_prompt(ctx, news, extra=""):
     sym, mk = ctx["symbol"], ctx["market"]
     base = dist(ctx["close"], ctx["m"], ctx["sd"], ctx["R"])
     L = [f"Stock: {sym} ({ctx['name'] or 'name unknown'}), listed on {'NASDAQ' if mk == 'nasdaq' else 'SGX (Singapore)'}. "
@@ -320,6 +320,8 @@ def build_prompt(ctx, news):
         for p in ctx["peers"]:
             L.append(f"- {p['symbol']} ({p['name'][:40]}): news score {p['news_dir']:+.2f} from {p['n']} headlines"
                      + (f"; strongest: \"{p['headline']}\" (read as {p['read']})" if p["headline"] else ""))
+    if extra:
+        L += ["", extra]
     L.append("")
     if news is None:
         L.append("No news source is available for this market: judge from the facts only.")
@@ -431,47 +433,71 @@ def evaluate(market, sym, device="GPU", log=print):
     ctx = context(market, sym)
     _dump(partial(ctx), cache_path(market, sym, ctx["asof"], "partial.json"))
     news = own_headlines(sym, ctx["asof"]) if market == "nasdaq" else None
-    prompt, user = build_prompt(ctx, news)
-    text, timing = generate(prompt)
-    verdict, ok = parse_verdict(text)
-    pq = {h: ask_probability(prompt, text, sym, h) for h in sorted(ctx["hz"])}       # v8 amendment F
-    vws = {h: views(ctx, pq[h][0], verdict["risk"], h) for h in pq}
-    p_q, mass = pq[5]
-    vw = vws[5]
+    news_cut = min(datetime.now(timezone.utc), next_open_utc(ctx["asof"]))
+
+    def run(prompt):
+        text, timing = generate(prompt)
+        verdict, ok = parse_verdict(text)
+        pq = {h: ask_probability(prompt, text, sym, h) for h in sorted(ctx["hz"])}   # v8 amendment F
+        return {"verdict": verdict, "ok": ok, "pq": pq, "vws": {h: views(ctx, pq[h][0], verdict["risk"], h) for h in pq}, "timing": timing}
+
+    def pack(r):
+        return {"ai": {**r["verdict"], "parse_ok": r["ok"], "p_qwen": r["pq"][5][0], "p_mass": round(r["pq"][5][1], 3),
+                       "p_qwen_h": {str(h): v[0] for h, v in r["pq"].items()}, **r["timing"]},
+                "horizons": {str(h): {"views": v, "signal": v["total"]["signal"], "p_qwen": r["pq"][h][0], "p_mass": round(r["pq"][h][1], 3)}
+                             for h, v in r["vws"].items()},
+                "signal": r["vws"][5]["total"]["signal"]}
+
+    A = run(build_prompt(ctx, news)[0])
+    # v8 amendment G, variant B: the same analysis with the company's product profile and its related companies' news
+    prof, rel, B = None, [], None
+    try:
+        prof = profiles.load(market, sym) or profiles.build(market, sym, ctx["asof"], name=ctx["name"], port=PORT)
+        if prof:
+            try:
+                rel = profiles.related_news(prof, news_cut)
+            except Exception as e:  # noqa: BLE001 - related news is optional
+                log(f"[eval] related news for {sym} skipped: {type(e).__name__}: {e}", flush=True)
+            B = run(build_prompt(ctx, news, extra=profiles.prompt_block(prof, rel))[0])
+    except Exception as e:  # noqa: BLE001 - the profile variant must never block the main analysis
+        log(f"[eval] product-profile variant for {sym} skipped: {type(e).__name__}: {e}", flush=True)
+    main = B or A
+    pm, pa = pack(main), pack(A)
+    vw = main["vws"][5]
     out = partial(ctx)
-    out.update({"status": "done", "version": 2, "generated": datetime.now().isoformat(timespec="seconds"),
-                "views": vw, "advised": vw["total"], "model": vw["model"], "signal": vw["total"]["signal"],
-                "ai": {**verdict, "parse_ok": ok, "p_qwen": p_q, "p_mass": round(mass, 3), "model": MODEL_NAME, "device": device,
-                       "seconds": round(time.time() - t0, 1), **timing},
-                "news": news, "status_note": "Qwen + models: unproven (forward shadow test, v8 amendments E-F)",
-                "horizons": {str(h): {"views": vws[h], "signal": vws[h]["total"]["signal"], "p_qwen": pq[h][0], "p_mass": round(pq[h][1], 3)}
-                             for h in vws}})
-    out["ai"]["p_qwen_h"] = {str(h): pq[h][0] for h in pq}
-    m2, sd2 = vw["total"]["m"], vw["total"]["sd"]
+    out.update({"status": "done", "version": 3, "generated": datetime.now().isoformat(timespec="seconds"),
+                "views": vw, "advised": vw["total"], "model": vw["model"], "signal": pm["signal"], "horizons": pm["horizons"],
+                "ai": {**pm["ai"], "model": MODEL_NAME, "device": device, "seconds": round(time.time() - t0, 1)},
+                "variant": "B" if B else "A", "variant_a": pa if B else None,
+                "profile": prof, "related": rel,
+                "news": news, "status_note": "Qwen + models: unproven (forward shadow test, v8 amendments E-G)"})
     _dump(out, cache_path(market, sym, ctx["asof"]))
     try:
         os.remove(cache_path(market, sym, ctx["asof"], "partial.json"))
     except OSError:
         pass
-    for h, v in vws.items():
-        cth = {"asof": ctx["asof"], "symbol": sym, "close": ctx["close"], "m": ctx["hz"][h]["m"], "sd": ctx["hz"][h]["sd"]}
-        _shadow(market, cth, v["total"]["m"], v["total"]["sd"], verdict, ok, h=h,
-                extra={"p_qwen": pq[h][0], "p_total": v["total"]["p_up"], "m_qwen": v["qwen"]["m"], "signal": v["total"]["signal"], "w": W_QWEN})
+    for variant, r in (("A", A), ("B", B)):
+        if not r:
+            continue
+        for h, v in r["vws"].items():
+            cth = {"asof": ctx["asof"], "symbol": sym, "close": ctx["close"], "m": ctx["hz"][h]["m"], "sd": ctx["hz"][h]["sd"]}
+            _shadow(market, cth, v["total"]["m"], v["total"]["sd"], r["verdict"], r["ok"], h=h, variant=variant,
+                    extra={"p_qwen": r["pq"][h][0], "p_total": v["total"]["p_up"], "m_qwen": v["qwen"]["m"], "signal": v["total"]["signal"], "w": W_QWEN})
     _index_add(market, ctx["asof"], sym, out)
-    log(f"[eval] {market} {sym} {ctx['asof']}: {verdict['lean']} / {verdict['confidence']} / {verdict['risk']}"
-        f"{'' if ok else ' (unparsable -> neutral)'}; Qwen chance of rise {p_q:.0%} (digit mass {mass:.2f}); P(up) model {out['model']['p_up']:.0%} "
-        f"-> total {out['advised']['p_up']:.0%} [{out['signal']}]; "
-        + "".join(f"{h}d: Qwen {pq[h][0]:.0%} total {vws[h]['total']['p_up']:.0%} [{vws[h]['total']['signal']}]; " for h in vws if h != 5)
-        + f"{len(news['headlines']) if news else 0} headlines; {time.time() - t0:.1f}s", flush=True)
+    desc = lambda r: (f"{r['verdict']['lean']}/{r['verdict']['confidence']}/{r['verdict']['risk']}"
+                      + "".join(f" {h}d Qwen {r['pq'][h][0]:.0%} total {r['vws'][h]['total']['p_up']:.0%} [{r['vws'][h]['total']['signal']}]" for h in sorted(r["vws"])))
+    log(f"[eval] {market} {sym} {ctx['asof']}: A {desc(A)}" + (f" | B (profile, {len(rel)} related) {desc(B)}" if B else " | no profile")
+        + f"; {len(news['headlines']) if news else 0} headlines; {time.time() - t0:.1f}s", flush=True)
     return out
 
 
-def shadow_path(market, h=5):
-    return os.path.join(EVALS, market, "advice_shadow.jsonl" if h == 5 else f"advice_shadow_h{h}.jsonl")
+def shadow_path(market, h=5, variant="A"):
+    v = "" if variant == "A" else "_prof"                                  # amendment G: B (product profile) has its own logs
+    return os.path.join(EVALS, market, f"advice_shadow{v}.jsonl" if h == 5 else f"advice_shadow{v}_h{h}.jsonl")
 
 
-def _shadow(market, ctx, m2, sd2, verdict, ok, extra=None, h=5):
-    path = shadow_path(market, h)
+def _shadow(market, ctx, m2, sd2, verdict, ok, extra=None, h=5, variant="A"):
+    path = shadow_path(market, h, variant)
     key = f'"asof": "{ctx["asof"]}", "symbol": "{ctx["symbol"]}"'
     if os.path.exists(path) and key in open(path, encoding="utf-8").read():
         return                                                             # one advised forecast per stock and close
@@ -697,8 +723,9 @@ def start_daemon(app_url="http://127.0.0.1:5080"):
 def score(a):
     market = getattr(a, "market", "nasdaq") if a else "nasdaq"
     H = getattr(a, "horizon", 5) if a else 5
+    variant = getattr(a, "variant", "A") if a else "A"
     d = _market_dirs(market)
-    path = shadow_path(market, H)
+    path = shadow_path(market, H, variant)
     v7dir = d["v7"] if H == 5 else os.path.join(d["v7"], f"h{H}")
     if not os.path.exists(path):
         print(f"[eval] {market}: no advised forecasts yet", flush=True)
@@ -712,6 +739,12 @@ def score(a):
     for line in open(path, encoding="utf-8"):
         r = json.loads(line)
         by_date.setdefault(r["asof"], []).append(r)
+    if variant == "B" and os.path.exists(shadow_path(market, H)):           # amendment G: pair B with A on the same stock and close
+        pa = {(x["asof"], x["symbol"]): x for x in map(json.loads, open(shadow_path(market, H), encoding="utf-8"))}
+        for rows in by_date.values():
+            for r in rows:
+                x = pa.get((r["asof"], r["symbol"]))
+                r["m_a"], r["sd_a"] = (x["m_adv"], x["sd_adv"]) if x else (np.nan, np.nan)
     days = []
     for asof, rows in sorted(by_date.items()):
         t = di.get(asof)
@@ -742,6 +775,15 @@ def score(a):
                      "hit_qwen": hit(mq) if np.isfinite(mq).all() else None,
                      "buy_n": int((sig == "buy").sum()), "buy_right": int(((sig == "buy") & (y > 0)).sum()),
                      "sell_n": int((sig == "sell").sum()), "sell_right": int(((sig == "sell") & (y < 0)).sum())})
+        if variant == "B":
+            m_a, s_a = g("m_a"), g("sd_a")
+            pr = np.isfinite(m_a)
+            if pr.any():
+                yy = y[pr]
+                hp = lambda mm: float(np.mean(np.sign(mm[(mm != 0) & (yy != 0)]) == np.sign(yy[(mm != 0) & (yy != 0)]))) if ((mm != 0) & (yy != 0)).any() else float("nan")
+                days[-1].update({"n_pair": int(pr.sum()), "crps_b_pair": float(v7.crps_rows(v7.quantiles(ma[pr], sa[pr], R), yy).mean()),
+                                 "crps_a_pair": float(v7.crps_rows(v7.quantiles(m_a[pr], s_a[pr], R), yy).mean()),
+                                 "hit_b_pair": hp(ma[pr]), "hit_a_pair": hp(m_a[pr])})
     n_rows = sum(x["n"] for x in days)
     out = {"market": market, "horizon": H, "matured_dates": len(days), "matured_forecasts": n_rows, "needed_dates": 60, "needed_forecasts": 300,
            "logged": sum(len(v) for v in by_date.values()), "days": days, "status": "collecting"}
@@ -761,7 +803,22 @@ def score(a):
     if len(days) >= 60 and n_rows >= 300:
         promoted = out["crps_adv_minus_model"][2] < 0 and out["hit_adv"] >= out["hit_model"] and 0.75 <= out["cov80_adv"] <= 0.85
         out["status"] = "promoted" if promoted else "not promoted: advice weights set to 0"
-    _dump(out, os.path.join(EVALS, market, "advice_score.json" if H == 5 else f"advice_score_h{H}.json"))
+    if variant == "B":                                                     # amendment G decision: B vs A on paired forecasts
+        pdays = [x for x in days if "n_pair" in x]
+        ab = {"paired_dates": len(pdays), "paired_forecasts": sum(x["n_pair"] for x in pdays), "status": "collecting"}
+        if len(pdays) >= 5:
+            from .daily_v4 import block_bootstrap_diff
+            ab["crps_b_minus_a"] = block_bootstrap_diff([x["crps_b_pair"] for x in pdays], [x["crps_a_pair"] for x in pdays], block=max(5, H))
+            w = np.array([x["n_pair"] for x in pdays], float)
+            for k in ("hit_b_pair", "hit_a_pair"):
+                v = np.array([x[k] for x in pdays])
+                ab[k] = float(np.nansum(v * w) / w[np.isfinite(v)].sum())
+        if len(pdays) >= 60 and ab["paired_forecasts"] >= 300:
+            keep_b = ab["crps_b_minus_a"][2] < 0 and ab["hit_b_pair"] >= ab["hit_a_pair"]
+            ab["status"] = "B kept: replaces A" if keep_b else "B dropped: the page goes back to A"
+        out["b_vs_a"] = ab
+    suffix = ("" if variant == "A" else "_prof") + ("" if H == 5 else f"_h{H}")
+    _dump(out, os.path.join(EVALS, market, f"advice_score{suffix}.json"))
     print(f"[eval] {market} advice forward test: {len(days)} of 60 dates, {n_rows} of 300 forecasts matured ({out['status']})", flush=True)
     return out
 
@@ -772,6 +829,7 @@ def main():
     ap.add_argument("symbols", nargs="*")
     ap.add_argument("--market", choices=["nasdaq", "sgx"], default="nasdaq")
     ap.add_argument("--horizon", type=int, choices=[1, 5, 20], default=5)
+    ap.add_argument("--variant", choices=["A", "B"], default="A")
     ap.add_argument("--allow-gpu", action="store_true")
     ap.add_argument("--cpu", action="store_true")
     ap.add_argument("--app-url", default="http://127.0.0.1:5080")

@@ -109,7 +109,8 @@ def eval_step(args):
     for mk in ("nasdaq", "sgx"):
         try:
             for h in (1, 5, 20):
-                stock_eval.score(argparse.Namespace(market=mk, horizon=h))
+                for variant in ("A", "B"):                      # B = with product profiles (v8 amendment G)
+                    stock_eval.score(argparse.Namespace(market=mk, horizon=h, variant=variant))
         except Exception as e:  # noqa: BLE001
             print(f"[refresh] advice scoring ({mk}) failed: {type(e).__name__}: {e}", flush=True)
     if args.gpu_news:

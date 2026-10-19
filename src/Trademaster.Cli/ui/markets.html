@@ -447,7 +447,7 @@ async function viewStock(m, sym) {
     `<div class="panel"><div class="ph"><span>Recent months and ${HZL[HZ][2]}</span><div class="spacer"></div><span class="legend"><span id="vtoggles" style="display:flex;gap:14px;flex-wrap:wrap"></span>` +
     `<span class="dim">green = above today's close, red = below · thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div>` +
     `<div style="position:relative"><div class="chart" id="stockchart" style="height:340px"></div><div class="spinwrap" id="spin"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub">asking for the analysis</div></div></div></div></div>` +
-    `<div class="panel" id="aipanel" style="position:relative;min-height:120px"><div class="ph">AI analysis (Qwen, local, post-processed by our models) <span class="chip warn">UNPROVEN · FORWARD TEST</span></div>` +
+    `<div class="panel" id="aipanel" style="position:relative;min-height:120px"><div class="ph">AI analysis (Qwen, local, post-processed by our models) <span class="chip warn">UNPROVEN · FORWARD TEST</span> <span class="chip" id="abchip" style="display:none">WITH PRODUCT KNOWLEDGE · A/B</span></div>` +
     `<div class="spinwrap" id="spin2"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub2">Qwen is reading ${m === 'nasdaq' ? 'its news, ' : ''}the numbers and its peers</div></div></div><div class="pad" id="aibody"></div></div>` +
     (f ? `<div class="panel pad big"><div class="muted" style="margin-bottom:6px">${HZL[HZ][1]} range: thin = 95%, thick = 80%, white line = today's close, dot = median</div>${rangeBar(r)}` +
       `<div style="display:flex;justify-content:space-between" class="num dim"><span>${px(f.lo95)}</span><span>${px(f.hi95)}</span></div></div>` : '') +
@@ -571,7 +571,8 @@ async function loadEval(m, sym, tok) {
   if (tok !== viewStock.tok || !$('stockchart')) return;
   const r = res.result;
   if (r && r.history && (!loadEval.drawn || loadEval.drawn.tok !== tok || loadEval.drawn.status !== r.status)) { drawStock(r, m); loadEval.drawn = { tok, status: r.status }; }
-  if (res.state === 'done') { $('spin').style.display = 'none'; $('spin2').style.display = 'none'; $('aibody').innerHTML = aiBody(r, m); EVX[m] = null; return; }
+  if (res.state === 'done') { $('spin').style.display = 'none'; $('spin2').style.display = 'none'; $('aibody').innerHTML = aiBody(r, m); EVX[m] = null;
+    if ($('abchip')) $('abchip').style.display = r.variant === 'B' ? '' : 'none'; return; }
   if (res.state === 'error') {
     $('spin').style.display = 'none'; $('spin2').style.display = 'none';
     $('aibody').innerHTML = `<div class="empty">Could not evaluate: ${esc(r && r.error)}</div>`; return;
@@ -631,6 +632,23 @@ function toggleView(k, on) {
   SHOWN[k] = on; try { localStorage.setItem('tm.views', JSON.stringify(SHOWN)); } catch (e) { }
   (drawStock.series && drawStock.series[k] || []).forEach(se => se.applyOptions({ visible: on }));
 }
+function profileCard(r, m) {                                  // v8 amendment G: what the company sells and who it deals with
+  const p = r.profile; if (!p) return '';
+  const link = e => e.ticker ? `<a href="#/nasdaq/stock/${encodeURIComponent(e.ticker)}" title="${esc(e.ticker)}">${esc(e.name)}</a>` : esc(e.name);
+  const list = (label, xs) => xs && xs.length ? `<div><span class="muted">${label}:</span> ${xs.map(link).join(', ')}</div>` : '';
+  const src = p.source || {};
+  const rel = (r.related || []).flatMap(x => x.headlines.map(h => `<tr><td style="text-align:left;width:60px"><b>${esc(x.ticker)}</b></td><td class="dim" style="text-align:left;width:80px">${esc(x.role)}</td>` +
+    `<td class="dim" style="width:80px;text-align:left">${esc(h.t.slice(0, 10))}</td><td style="text-align:left;white-space:normal">${esc(h.headline)}</td></tr>`));
+  return `<div class="card" style="margin-top:12px"><h3>Company profile <span class="dim" style="font-weight:400">— what Qwen knows about the business (B)</span></h3>` +
+    `<div style="margin-bottom:6px">${esc(p.summary)}</div>` +
+    (p.products && p.products.length ? `<div><span class="muted">Products:</span> ${p.products.map(x => esc(x.name) + (x.revenue_share_pct ? ` <span class="dim">~${x.revenue_share_pct}%</span>` : '')).join(', ')}</div>` : '') +
+    list('Customers', p.customers) + list('Suppliers', p.suppliers) + list('Competitors', p.competitors) +
+    (p.drivers && p.drivers.length ? `<div><span class="muted">What drives sales:</span> ${p.drivers.map(esc).join('; ')}</div>` : '') +
+    `<div class="dim" style="margin-top:6px;font-size:11.5px">From ${src.url ? `<a href="${esc(src.url)}" target="_blank" rel="noopener">${esc(src.kind)}</a>` : esc(src.kind || '')}` +
+    `${src.filed ? ' filed ' + esc(src.filed) : ''}, summarised by Qwen; it can be incomplete.</div>` +
+    (rel.length ? `<details style="margin-top:8px"><summary class="muted" style="cursor:pointer">News about its customers, suppliers and competitors (${rel.length})</summary><table><tbody>${rel.join('')}</tbody></table></details>` : '') +
+    `</div>`;
+}
 function aiBody(r, m) {
   const a = r.ai, V = viewsOf(r), t = V.total, M = MARKETS[m], L = LEANS[a.lean] || [a.lean, ''];
   const hk = hzOf(r), hh = r.horizons && r.horizons[hk];
@@ -646,11 +664,15 @@ function aiBody(r, m) {
     card('Qwen\'s read', [['lean', `<b class="${L[1]}">${esc(L[0])}</b>`], ['confidence', esc(a.confidence)],
       ['risk', a.risk === 'elevated' ? '<span style="color:var(--warn)">elevated (wider range)</span>' : 'normal'], ['reply', a.parse_ok ? 'ok' : 'unreadable (neutral)']]) +
     `</div>`;
-  const row = (k, label) => { const v = V[k]; if (!v) return '';
+  const row = (k, label, VV = V) => { const v = VV[k]; if (!v) return '';
     return `<tr><td style="text-align:left">${label}</td><td class="num">${pup(v.p_up)}</td><td class="num ${cls(v.median - r.close)}">${px(v.median)} <span class="dim">${pct(v.exp_ret, 1)}</span></td>` +
       `<td class="num">${v.lo50 != null ? px(v.lo50) + ' – ' + px(v.hi50) : '—'}</td><td class="num dim">${px(v.lo80)} – ${px(v.hi80)}</td><td>${sigChip(v.signal)}</td></tr>`; };
   const cmp = `<table style="margin-bottom:12px"><thead><tr><th style="text-align:left">View</th><th>P(up)</th><th>Median</th><th>50% range</th><th>80% range</th><th>Signal</th></tr></thead><tbody>` +
-    row('total', 'Qwen + models') + row('qwen', 'Qwen only') + row('model', 'Model only (v7)') + '</tbody></table>';
+    row('total', r.variant === 'B' ? 'Qwen + models, with product knowledge (B)' : 'Qwen + models') +
+    (r.variant_a && r.variant_a.horizons && r.variant_a.horizons[hk] ? row('total', 'Qwen + models, without it (A)', r.variant_a.horizons[hk].views) : '') +
+    row('qwen', 'Qwen only') + row('model', 'Model only (v7)') + '</tbody></table>' +
+    (r.variant === 'B' ? '<div class="dim" style="margin:-6px 0 12px;font-size:11.5px">A/B test: both versions are logged before the outcome; after 60 trading days the forward test keeps B only if it is more accurate than A.</div>' : '');
+  const prof = profileCard(r, m);
   const li = xs => xs.length ? xs.map(x => `<li>${esc(x)}</li>`).join('') : '<li class="dim">none given</li>';
   const reasons = `<div class="reasons"><div><b class="up">Positives</b><ul>${li(a.positives)}</ul></div><div><b class="down">Negatives</b><ul>${li(a.negatives)}</ul></div></div>`;
   const nw = r.news;
@@ -659,7 +681,7 @@ function aiBody(r, m) {
       : '<div class="dim" style="margin-top:10px">No headlines about this stock in the last 30 days.</div>')
     : '<div class="dim" style="margin-top:10px">No news available for this market: Qwen judged from the numbers only.</div>';
   const peers = r.peers && r.peers.length ? `<div class="muted" style="margin-top:10px">Same-industry peers it considered: ${r.peers.map(p => `<a href="#/${m}/stock/${encodeURIComponent(p.symbol)}">${esc(p.symbol)}</a> <span class="${cls(p.news_dir)}">${p.news_dir > 0 ? '+' : ''}${p.news_dir.toFixed(1)}</span>`).join(' · ')}</div>` : '';
-  return head + cmp + reasons + hl + peers +
+  return head + cmp + reasons + prof + hl + peers +
     `<div class="dim" style="margin-top:10px">${esc(a.model)} on ${esc(a.device)} · ${a.seconds}s · ${esc((r.generated || '').replace('T', ' '))}. ` +
     `Qwen's chance of a rise is shrunk by a fixed weight (${t.w ?? '—'}) and added to the model's; the model sets the width of the range. ` +
     `All three views are logged before the outcome, and a forward test decides which is kept.</div>`;
