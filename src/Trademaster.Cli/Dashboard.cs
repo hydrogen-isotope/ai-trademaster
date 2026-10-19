@@ -189,6 +189,12 @@ public static class Dashboard
             return File.Exists(path) ? Results.Text(File.ReadAllText(path), "application/json")
                 : Results.NotFound(new { error = "no index data yet: run python -m trademaster_ml.indexes" });
         });
+        app.MapGet("/api/fairvalue", () =>
+        {
+            var path = Path.Combine("private", "reports", "v6", "fairvalue.json");
+            return File.Exists(path) ? Results.Text(File.ReadAllText(path), "application/json")
+                : Results.NotFound(new { error = "no fair values yet: run python -m trademaster_ml.fairvalue" });
+        });
         app.MapGet("/api/sgx/momentum", () =>
         {
             var path = Path.Combine("private", "reports", "sgx", "momentum.json");

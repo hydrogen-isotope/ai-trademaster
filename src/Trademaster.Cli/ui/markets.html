@@ -458,11 +458,12 @@ async function viewStock(m, sym) {
       `<td style="text-align:left;white-space:normal">${esc(x.headline)}</td></tr>`).join('') + '</tbody></table></div>' : '';
   const whyList = Object.entries(r.why || {}).filter(([, v]) => isFinite(v)).sort((a, b) => Math.abs(b[1] - 0.5) - Math.abs(a[1] - 0.5))
     .map(([k, v]) => `<tr><td>${esc(WHY[k] || k)}</td><td class="num ${v > 0.5 ? 'up' : 'down'}">${(v * 100).toFixed(0)}</td><td style="text-align:left"><span class="bar" style="width:${v * 150}px;background:${v > 0.5 ? 'var(--up)' : 'var(--down)'}"></span></td></tr>`).join('');
-  const tok = (viewStock.tok = (viewStock.tok || 0) + 1);
+  const tok = (viewStock.tok = (viewStock.tok || 0) + 1), fv = m === 'nasdaq' ? await fairData() : null;
   setTimeout(() => loadEval(m, sym, tok), 0);
   return `<h1>${esc(sym)} <span class="muted" style="font-weight:400">${esc(r.name)}</span> <span class="chip">${M.name}</span>${inMom ? ' <span class="chip warn">IN MOMENTUM PICKS</span>' : ''}</h1>` +
     `<div class="lead">${fresh(m, d.asof)} Price forecasts are for ${HZL[HZ][2]} and are in a forward test. Horizon: ${sel}` +
     (m === 'nasdaq' ? ` <a href="/?symbol=${encodeURIComponent(sym)}">Open chart in Watchlist →</a>` : '') + `</div>` + liveNote(m, sym, d.asof, r.close) +
+    `<div class="panel"><div class="ph">Analysis report summary <span class="chip warn">UNPROVEN · NOT ADVICE</span></div><div class="pad" id="report">${report(m, r, d, fv, null)}</div></div>` +
     `<div class="panel"><div class="ph"><span>Recent months and ${HZL[HZ][2]}</span><div class="spacer"></div><span class="legend"><span id="vtoggles" style="display:flex;gap:14px;flex-wrap:wrap"></span>` +
     `<span class="dim">green = above the last close, red = below · thick = median · thin = 50% · dashed = 80% · dotted = 95%</span></span></div>` +
     `<div style="position:relative"><div class="chart" id="stockchart" style="height:340px"></div><div class="spinwrap" id="spin"><div class="ring"></div><div>Evaluating…<div class="sub" id="spinsub">asking for the analysis</div></div></div></div></div>` +
@@ -582,6 +583,50 @@ async function viewIndex(m, sym) {
 
 // ---------------------------------------------------------------- per-stock AI evaluation (v8 amendment C)
 const LEANS = { strong_down: ['strongly down', 'down'], down: ['down', 'down'], neutral: ['neutral', ''], up: ['up', 'up'], strong_up: ['strongly up', 'up'] };
+// ---------------------------------------------------------------- analysis-report summary (rating, target, fair value, risk)
+let FV = null;
+async function fairData() {
+  if (FV) return FV;
+  try { const r = await fetch('/api/fairvalue'); FV = r.ok ? await r.json() : { stocks: {} }; } catch (e) { FV = { stocks: {} }; }
+  return FV;
+}
+const RATING = { buy: ['BUY', 'var(--up)'], hold: ['HOLD', 'var(--warn)'], sell: ['SELL', 'var(--down)'] };
+const VERDICT = { undervalued: ['UNDERVALUED vs peers', 'ok'], fair: ['FAIRLY VALUED vs peers', ''], overvalued: ['OVERVALUED vs peers', 'bad'] };
+function report(m, row, d, fv, ai) {
+  const M = MARKETS[m], f = fcOf(row), c = row.close;
+  const t = ai || (f ? { ...f } : null);                              // Qwen + models when evaluated, else the model alone
+  if (!t) return '<div class="empty">No forecast at this horizon.</div>';
+  const p = t.p_up;
+  const rating = ai ? ({ buy: 'buy', sell: 'sell' }[ai.signal] || 'hold') : p >= 0.58 ? 'buy' : p <= 0.42 ? 'sell' : 'hold';
+  const widths = d.rankings.map(x => fcOf(x)).filter(Boolean).map(x => (x.hi80 - x.lo80) / x.median).sort((a, b) => a - b);
+  const w = (t.hi80 - t.lo80) / t.median, wp = widths.length ? widths.filter(x => x <= w).length / widths.length : null;
+  const risk = wp == null ? '—' : wp < 1 / 3 ? 'Low' : wp < 2 / 3 ? 'Medium' : 'High';
+  const conf = Math.abs(p - 0.5) < 0.05 ? 'Low' : Math.abs(p - 0.5) < 0.1 ? 'Medium' : 'High';
+  const up = v => `<span class="${cls(v - c)}">${pct(v / c - 1, 1)}</span>`;
+  const v = fv && fv.stocks && fv.stocks[row.symbol];
+  const fvCard = m !== 'nasdaq' ? card('Fair value (peer multiples)', [['', '<span class="dim">No company financials for SGX stocks yet.</span>']])
+    : !v || v.fair == null ? card('Fair value (peer multiples)', [['', '<span class="dim">Not enough financial data (e.g. losses on every measure, or no SEC filings).</span>']])
+    : card('Fair value (peer multiples)', [['fair value', `<b>${M.ccy}${px(v.fair)}</b> ${up(v.fair)}`], ['range (peer 25th–75th pct)', `${px(v.low)} – ${px(v.high)}`],
+        ['verdict', `<span class="chip ${VERDICT[v.verdict][1]}">${VERDICT[v.verdict][0]}</span>`], ['sector', esc(v.sector_label)]]);
+  const multRows = v && v.methods ? Object.values(v.methods).map(x => `<tr><td style="text-align:left">${x.label}</td><td class="num">${x.own == null ? '<span class="dim">n/a</span>' : x.own.toFixed(1) + '×'}</td>` +
+    `<td class="num">${x.peer_median == null ? '—' : x.peer_median.toFixed(1) + '×'}</td><td class="num">${x.fair == null ? '—' : px(x.fair)}</td><td class="num dim">${x.peers ? x.peers + (x.scope === 'universe' ? ' (all)' : '') : ''}</td></tr>`).join('') : '';
+  return `<div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px">` +
+    `<div style="border:2px solid ${RATING[rating][1]};color:${RATING[rating][1]};border-radius:8px;padding:6px 18px;font-size:22px;font-weight:800;letter-spacing:1px">${RATING[rating][0]}</div>` +
+    `<div><div><b>Rating for ${HZL[HZ][2]}</b> · from ${ai ? 'Qwen + our models' + (ai.variant === 'B' ? ' with product knowledge' : '') : 'our price model alone (no AI evaluation at this horizon yet)'}</div>` +
+    `<div class="dim" style="font-size:12px">Buy when the chance of a rise is ≥ 58%, sell when ≤ 42%, hold in between (fixed in advance). Research readings from unproven models in a forward test, not investment advice.</div></div></div>` +
+    `<div class="cards">` +
+    card('Price target', [['target (median)', `<b>${M.ccy}${px(t.median)}</b> ${up(t.median)}`], ['bull case (80% high)', `${px(t.hi80)} ${up(t.hi80)}`], ['bear case (80% low)', `${px(t.lo80)} ${up(t.lo80)}`], ['horizon', HZL[HZ][1]]]) +
+    card('Outlook', [['chance of a rise', pup(p)], ['confidence', `${conf} <span class="dim">(${(Math.abs(p - 0.5) * 100).toFixed(0)} pts from 50%)</span>`],
+      ['risk (range width)', `${risk}${wp == null ? '' : ` <span class="dim">(wider than ${(wp * 100).toFixed(0)}% of stocks)</span>`}`], ['rank score', `${row.score_pct.toFixed(0)} of 100 (decile ${row.decile})`]]) +
+    fvCard + `</div>` +
+    (multRows ? `<table style="margin-top:4px"><thead><tr><th style="text-align:left">Multiple</th><th>${esc(row.symbol)}</th><th>Sector median</th><th>Implied price</th><th>Peers</th></tr></thead><tbody>${multRows}</tbody></table>` +
+      `<div class="dim" style="font-size:11.5px;margin-top:6px">Fair value = the median of the implied prices: the sector's median multiple applied to ${esc(row.symbol)}'s own earnings, sales and book value (SEC filings, ${esc(fv.fundamentals_date || '')}). Peer multiples ignore growth and quality differences, so fast growers often look overvalued; not validated against later prices.</div>` : '');
+}
+function aiTotal(r) {
+  const h = r && r.horizons && r.horizons[HZ], tv = h && h.views && h.views.total;
+  return tv ? { ...tv, variant: r.variant } : null;
+}
+
 async function loadEval(m, sym, tok) {
   if (tok !== viewStock.tok) return;
   let res;
@@ -591,6 +636,7 @@ async function loadEval(m, sym, tok) {
   const r = res.result;
   if (r && r.history && (!loadEval.drawn || loadEval.drawn.tok !== tok || loadEval.drawn.status !== r.status)) { drawStock(r, m); loadEval.drawn = { tok, status: r.status }; }
   if (res.state === 'done') { $('spin').style.display = 'none'; $('spin2').style.display = 'none'; $('aibody').innerHTML = aiBody(r, m); EVX[m] = null;
+    if ($('report') && aiTotal(r)) { const d = await data(m), row = d.rankings.find(x => x.symbol === sym); if (row) $('report').innerHTML = report(m, row, d, await fairData(), aiTotal(r)); }
     if ($('abchip')) $('abchip').style.display = r.variant === 'B' ? '' : 'none'; return; }
   if (res.state === 'error') {
     $('spin').style.display = 'none'; $('spin2').style.display = 'none';

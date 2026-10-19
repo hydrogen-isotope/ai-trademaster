@@ -100,6 +100,12 @@ def indexes_step():
         indexes.update()
     except Exception as e:  # noqa: BLE001
         print(f"[refresh] indexes step skipped: {type(e).__name__}: {e}", flush=True)
+    try:
+        from . import fairvalue
+        status("running", "fair values (peer multiples)")
+        fairvalue.update()
+    except Exception as e:  # noqa: BLE001
+        print(f"[refresh] fair value step skipped: {type(e).__name__}: {e}", flush=True)
 
 
 def eval_step(args):
