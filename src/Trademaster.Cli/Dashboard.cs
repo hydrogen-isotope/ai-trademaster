@@ -274,6 +274,19 @@ public static class Dashboard
         });
         app.MapPost("/api/paper/run", async () => Results.Json(new { output = await PaperTrade.Python("run") }));
         app.MapPost("/api/paper/refresh", async () => Results.Json(new { output = await PaperTrade.Python("status") }));
+        // manual paper orders from the Auto-trade page (python refuses non-paper keys, shorting and bad input)
+        app.MapPost("/api/paper/order", async (HttpRequest req) =>
+        {
+            var body = await System.Text.Json.Nodes.JsonNode.ParseAsync(req.Body) as System.Text.Json.Nodes.JsonObject;
+            if (body is null) return Results.BadRequest();
+            var spec = new System.Text.Json.Nodes.JsonObject();
+            foreach (var k in new[] { "symbol", "side", "qty", "notional", "limit" })
+                if (body[k] is not null) spec[k] = body[k]!.DeepClone();
+            return Results.Json(new { output = await PaperTrade.PythonWait("order", "--json", spec.ToJsonString()) });
+        });
+        app.MapPost("/api/paper/cancel", async (string id) =>
+            System.Text.RegularExpressions.Regex.IsMatch(id ?? "", "^[0-9a-fA-F-]{8,64}$")
+                ? Results.Json(new { output = await PaperTrade.PythonWait("cancel", "--id", id!) }) : Results.BadRequest());
         app.MapPost("/api/paper/close", async (string? book) =>
         {
             var b = book is "ai" or "rank" or "night" ? book : "all";

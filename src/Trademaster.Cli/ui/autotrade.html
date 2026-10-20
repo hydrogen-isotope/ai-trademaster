@@ -44,6 +44,18 @@ td:first-child,th:first-child{text-align:left}tr+tr td{border-top:1px solid #1b1
 .chart{height:260px}
 .note{color:var(--muted);font-size:12px;line-height:1.5}
 .msg{color:var(--muted);font-size:12px}
+.trade{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;padding:14px 16px}
+.trade label{display:flex;flex-direction:column;gap:4px;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.trade input,.trade select{background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px 10px;font:inherit;font-size:14px;width:130px}
+.trade input#tsym{width:110px;text-transform:uppercase}
+.side{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.side button{background:var(--panel2);color:var(--muted);border:0;padding:9px 18px;font:inherit;font-weight:700;cursor:pointer}
+.side button.on.buy{background:#0f2a20;color:var(--up)}.side button.on.sell{background:#2c1217;color:var(--down)}
+button.go{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:9px 20px;font:inherit;font-weight:700;cursor:pointer}
+button.go:disabled{opacity:.5}
+.tmsg{padding:0 16px 12px;font-size:12.5px;color:var(--muted)}
+.ctx{padding:0 16px 12px;font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 14px}
+.ctx b{color:var(--text)}
 @media (max-width:640px){.books{grid-template-columns:1fr}main{padding:10px}}
 </style>
 </head>
@@ -61,8 +73,27 @@ td:first-child,th:first-child{text-align:left}tr+tr td{border-top:1px solid #1b1
       <div class="spacer"></div>
       <button class="btn" id="runbtn" onclick="act('run')">Run now</button>
       <button class="btn" onclick="act('refresh')">Refresh</button>
-      <button class="btn danger" onclick="closeBook('all')">Sell everything</button>
+      <button class="btn danger" onclick="closeBook('all')" title="Sells every position of the automatic slices; your manual trades are kept">Sell all automatic slices</button>
     </div>
+  </div>
+  <div class="panel" id="tradepanel">
+    <div class="ph">Trade yourself (paper account) <span class="dim" style="text-transform:none;letter-spacing:0">buy-only positions; sell what you hold. Every order is saved with what the models said, so we can learn from your trades.</span></div>
+    <div class="trade">
+      <label>Stock<input id="tsym" placeholder="MU" oninput="ctxLater()" autocomplete="off"></label>
+      <div class="side"><button class="buy on" id="tbuy" onclick="setSide('buy')">BUY</button><button class="sell" id="tsell" onclick="setSide('sell')">SELL</button></div>
+      <label>Amount<select id="tunit" onchange="unitChange()"><option value="usd">dollars ($)</option><option value="qty">shares</option></select></label>
+      <label><span id="tamtlab">Dollars</span><input id="tamt" type="number" min="0" step="any" placeholder="1000"></label>
+      <label>Order<select id="ttype" onchange="typeChange()"><option value="market">market</option><option value="limit">limit</option></select></label>
+      <label id="tlimwrap" style="display:none">Limit price<input id="tlim" type="number" min="0" step="0.01"></label>
+      <button class="go" id="tgo" onclick="submitTrade()">Place paper order</button>
+    </div>
+    <div class="ctx" id="tctx"></div>
+    <div class="tmsg" id="tmsg">Market orders fill right away while the US market is open (9:30 AM - 4 PM New York); outside those hours they wait for the next open.</div>
+  </div>
+  <div class="panel" id="mypanel">
+    <div class="ph">Your trades <span class="dim" style="text-transform:none;letter-spacing:0" id="mystats"></span></div>
+    <div class="scroll"><table><thead><tr><th>Stock</th><th>Shares</th><th>Avg cost</th><th>Price</th><th>Value</th><th>Profit / loss</th><th></th></tr></thead><tbody id="mypos"></tbody></table></div>
+    <div class="scroll" id="myorders" style="display:none"><table><thead><tr><th>Open order</th><th>Side</th><th>Amount</th><th>Type</th><th>Status</th><th></th></tr></thead><tbody id="myorderrows"></tbody></table></div>
   </div>
   <div class="kpis" id="kpis"></div>
   <div class="panel"><div class="ph">Value of each slice vs simply holding QQQ (start = 100)</div><div class="pad"><div class="chart" id="chart"></div><div class="note" id="chartnote"></div></div></div>
@@ -121,7 +152,62 @@ function render() {
     <td class="${r.side === 'buy' ? 'up' : 'down'}">${esc(r.side)}</td><td><b>${esc(r.symbol)}</b></td><td class="num">${r.notional != null ? money(r.notional) : (+r.qty).toFixed(3) + ' sh'}${r.tif === 'cls' ? ' <span class="dim">at close</span>' : r.tif === 'opg' ? ' <span class="dim">at open</span>' : ''}</td><td class="muted">${esc(r.status)}</td></tr>`).join('')
     || '<tr><td colspan="6" class="muted">No orders yet.</td></tr>';
   drawChart(hist);
+  renderManual(st);
 }
+function renderManual(st) {
+  const m = (st.books || {}).manual || { positions: [] }, ms = st.manual || {};
+  const rows = (m.positions || []).map(p => `<tr><td><b>${esc(p.symbol)}</b></td><td class="num">${(+p.qty).toFixed(4)}</td><td class="num">${money(p.avg_entry)}</td>
+    <td class="num">${money(p.price)}</td><td class="num">${money(p.value)}</td><td class="num ${p.pnl > 0 ? 'up' : p.pnl < 0 ? 'down' : ''}">${p.pnl == null ? '—' : (p.pnl > 0 ? '+' : '') + money(p.pnl)}
+    ${p.avg_entry ? ` <span class="dim">(${((p.price / p.avg_entry - 1) * 100).toFixed(2)}%)</span>` : ''}</td>
+    <td><button class="btn" onclick="sellAll('${esc(p.symbol)}', ${p.qty})">Sell</button></td></tr>`).join('');
+  $('mypos').innerHTML = rows || '<tr><td colspan="7" class="muted">No positions yet. Place a paper order above.</td></tr>';
+  const wr = ms.closed ? ` · win rate ${Math.round(100 * ms.wins / ms.closed)}%` : '';
+  $('mystats').textContent = ms.closed != null ? `${ms.closed} closed trade${ms.closed === 1 ? '' : 's'}${wr} · realised ${ms.realized_pnl >= 0 ? '+' : ''}${money(ms.realized_pnl)}` : '';
+  const oo = ms.open_orders || [];
+  $('myorders').style.display = oo.length ? '' : 'none';
+  $('myorderrows').innerHTML = oo.map(o => `<tr><td><b>${esc(o.symbol)}</b></td><td class="${o.side === 'buy' ? 'up' : 'down'}">${esc(o.side)}</td>
+    <td class="num">${o.notional ? money(o.notional) : esc(o.qty) + ' sh'}</td><td>${esc(o.type)}${o.limit_price ? ' @ ' + money(o.limit_price) : ''}</td><td class="muted">${esc(o.status)}</td>
+    <td><button class="btn danger" onclick="cancelOrder('${esc(o.id)}')">Cancel</button></td></tr>`).join('');
+}
+let side = 'buy';
+function setSide(s_) { side = s_; $('tbuy').classList.toggle('on', s_ === 'buy'); $('tsell').classList.toggle('on', s_ === 'sell'); }
+function unitChange() { $('tamtlab').textContent = $('tunit').value === 'usd' ? 'Dollars' : 'Shares'; if ($('ttype').value === 'limit' && $('tunit').value === 'usd') { $('tunit').value = 'qty'; unitChange(); } }
+function typeChange() { const lim = $('ttype').value === 'limit'; $('tlimwrap').style.display = lim ? '' : 'none'; if (lim) { $('tunit').value = 'qty'; unitChange(); } }
+let ctxT;
+function ctxLater() { clearTimeout(ctxT); ctxT = setTimeout(loadCtx, 400); }
+async function loadCtx() {
+  const sym = $('tsym').value.trim().toUpperCase(); if (!sym) { $('tctx').innerHTML = ''; return; }
+  try {
+    const [q, e] = await Promise.all([fetch('/api/md/snapshots?symbols=' + encodeURIComponent(sym)).then(r => r.ok ? r.json() : {}),
+      fetch('/api/stock/eval?market=nasdaq&symbol=' + encodeURIComponent(sym)).then(r => r.ok ? r.json() : null)]);
+    const px = q[sym] && q[sym].last, parts = [];
+    if (px) parts.push(`Last <b>${money(px)}</b>`);
+    const h = e && e.result && e.result.horizons;
+    if (h && h['1']) parts.push(`AI 1-day: <b>${Math.round(h['1'].views.total.p_up * 100)}% rise</b> (${esc(h['1'].signal === 'none' ? 'hold' : h['1'].signal)})`);
+    if (h && h['5']) parts.push(`5-day: <b>${Math.round(h['5'].views.total.p_up * 100)}%</b>`);
+    if (e && e.state === 'pending') parts.push('AI analysis: queued');
+    $('tctx').innerHTML = parts.join('<span class="dim">·</span>');
+  } catch (err) { $('tctx').innerHTML = ''; }
+}
+async function submitTrade() {
+  const sym = $('tsym').value.trim().toUpperCase(), amt = parseFloat($('tamt').value), lim = $('ttype').value === 'limit' ? parseFloat($('tlim').value) : null;
+  if (!sym || !(amt > 0)) { $('tmsg').textContent = 'Enter a stock and an amount.'; return; }
+  if (lim !== null && !(lim > 0)) { $('tmsg').textContent = 'Enter a limit price.'; return; }
+  const what = $('tunit').value === 'usd' ? money(amt) + ' of' : amt + ' shares of';
+  if (!confirm(`Place a PAPER ${side.toUpperCase()} order: ${what} ${sym}${lim ? ' at a limit of ' + money(lim) : ' at market'}?
+
+Simulated money only.`)) return;
+  $('tgo').disabled = true; $('tmsg').textContent = 'Sending...';
+  const spec = { symbol: sym, side, ...( $('tunit').value === 'usd' ? { notional: amt } : { qty: amt }), ...(lim ? { limit: lim } : {}) };
+  const r = await post('/api/paper/order', spec);
+  $('tgo').disabled = false;
+  const out = (r && r.output || '').trim(), line = out.split('\n').filter(Boolean).pop() || '';
+  $('tmsg').textContent = /refused|Error|HTTP/.test(out) ? 'Not placed: ' + line.replace(/^.*refused: /, '').slice(0, 200) : 'Order sent: ' + line.slice(0, 200);
+  load();
+}
+function sellAll(sym, qty) { $('tsym').value = sym; setSide('sell'); $('tunit').value = 'qty'; unitChange(); $('ttype').value = 'market'; typeChange(); $('tamt').value = qty; window.scrollTo(0, 0); loadCtx(); }
+async function cancelOrder(id) { if (!confirm('Cancel this paper order?')) return; await post('/api/paper/cancel?id=' + encodeURIComponent(id)); load(); }
+(() => { const m = location.hash.match(/symbol=([A-Za-z.]+)/); if (m) { $('tsym').value = m[1].toUpperCase(); loadCtx(); } })();
 function drawChart(hist) {
   if (!window.LightweightCharts) return;
   if (!chart) chart = LightweightCharts.createChart($('chart'), { layout: { background: { color: '#14181d' }, textColor: '#8a93a0' }, autoSize: true,

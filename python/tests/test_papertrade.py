@@ -62,6 +62,31 @@ def test_night_sells_at_the_open_or_right_away_if_missed():
     assert _night(14.0, "2026-10-22T10:15:00-04:00", True)[0] == [("sell", 14.0, "day")]
 
 
+def test_manual_orders_refuse_shorts_and_bad_input():
+    st = {"books": {"manual": {"cash": 0.0, "start": 0.0, "holdings": {"MU": 2.0}, "cost": {"MU": 1800.0}}}}
+    T._state = lambda c, log=print: st
+    T._settle = lambda s, log=print: None
+    T._save = lambda path, obj: None
+    T._latest_prices = lambda syms: {s: 900.0 for s in syms}
+    T.status = lambda *a, **k: None
+    T._append = lambda path, rec: None
+    T.context = lambda sym: {}
+    sent = []
+    T._order = lambda book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None: sent.append((book, sym, side, qty, notional, limit)) or {"id": "x"}
+    T.time.sleep = lambda s: None
+    for spec in ({"symbol": "MU", "side": "sell", "qty": 3}, {"symbol": "NVDA", "side": "sell", "qty": 1}, {"symbol": "MU", "side": "buy"},
+                 {"symbol": "MU", "side": "buy", "notional": 100, "limit": 850}, {"symbol": "MU X", "side": "buy", "qty": 1}):
+        try:
+            T.manual_order(spec)
+            raise AssertionError(f"accepted {spec}")
+        except SystemExit:
+            pass
+    assert sent == []
+    T.manual_order({"symbol": "mu", "side": "sell", "notional": 900})            # $900 of a $900 stock = 1 share of the 2 held
+    T.manual_order({"symbol": "MU", "side": "buy", "qty": 1, "limit": 850})
+    assert sent == [("manual", "MU", "sell", 1.0, None, None), ("manual", "MU", "buy", 1.0, None, 850.0)]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

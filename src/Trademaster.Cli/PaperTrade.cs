@@ -43,9 +43,14 @@ public static class PaperTrade
     }
 
     /// <summary>Runs `python -m trademaster_ml.papertrade args` unless another call is running; returns its output.</summary>
-    public static async Task<string> Python(params string[] args)
+    public static Task<string> Python(params string[] args) => Call(false, args);
+
+    /// <summary>Like Python, but waits up to a minute for a running call (a click on Buy/Sell should not just fail).</summary>
+    public static Task<string> PythonWait(params string[] args) => Call(true, args);
+
+    static async Task<string> Call(bool wait, string[] args)
     {
-        if (!await Busy.WaitAsync(0)) return "busy";
+        if (!await Busy.WaitAsync(wait ? 60_000 : 0)) return "busy";
         try
         {
             var py = Path.Combine("python", ".venv", "Scripts", "python.exe");

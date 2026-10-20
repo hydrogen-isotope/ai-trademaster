@@ -479,7 +479,8 @@ async function loadQwen(sym, tok = ++qwTok) {
     const r = res.result, h = (r.horizons && (r.horizons['1'] || r.horizons['5'])) || null, hk = r.horizons && r.horizons['1'] ? '1-day' : '5-day';
     const t = h ? h.views.total : r.advised, sig = h ? h.signal : r.signal, [lab, col] = QRT[sig] || QRT.none;
     $('qai').innerHTML = `<span class="rt" style="color:${col};border-color:${col}" onclick="${open}" title="Qwen + models, ${hk}; open the full analysis">${lab}</span>` +
-      `<span class="dim">${hk} · ${(t.p_up * 100).toFixed(0)}% rise · ${(r.generated || '').slice(11, 16)}</span>${btn(false)}`;
+      `<span class="dim">${hk} · ${(t.p_up * 100).toFixed(0)}% rise · ${(r.generated || '').slice(11, 16)}</span>${btn(false)}` +
+      `<button onclick="location.href='/autotrade#symbol=${encodeURIComponent(sym)}'" title="Buy or sell on the paper account">Trade</button>`;
     const ai = r.ai || {};
     QW = { sym, html: `<div class="note" style="margin-bottom:10px;padding:10px;border:1px solid var(--line);border-radius:8px">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px"><b style="color:${col};font-size:16px">${lab}</b>

@@ -16,7 +16,14 @@ Two books, each with its own share of the paper account, tracked in our own ledg
 Files (private/reports/paper/): control.json (switches, set by the app), book.json (holdings and cash per book),
 ledger.jsonl (every order and fill), equity.jsonl (daily value per book and QQQ), status.json (what the page shows).
 
-Usage: python -m trademaster_ml.papertrade run | status | close --book ai|rank|all
+Manual trades (the "manual" book): orders the user places from the Auto-trade page, long only, sized against the
+paper account's buying power (no fixed share). Each order is saved with what the models said at that moment
+(manual.jsonl), and each closed position with its result (manual_closed.jsonl), so the user's habits can later be
+compared with, and learned next to, the models.
+
+Usage: python -m trademaster_ml.papertrade run | status | close --book ai|rank|night|all
+       python -m trademaster_ml.papertrade order --json '{"symbol": "MU", "side": "buy", "notional": 1000}'
+       python -m trademaster_ml.papertrade cancel --id <order id>
 """
 import argparse, json, os, time, urllib.error, urllib.request
 from datetime import datetime, timezone
@@ -29,6 +36,8 @@ CONTROL, BOOK, LEDGER, EQUITY, STATUS = (os.path.join(DIR, f) for f in ("control
 BOOKS = {"ai": "AI signals (Qwen + models, 5-day BUY)", "rank": "Top-ranked stocks (v6 top 10%)",
          "night": "Overnight QQQ (buy at the close, sell at the next open)"}
 SPLIT = {"ai": 0.45, "rank": 0.45, "night": 0.10}
+LABELS = {**BOOKS, "manual": "Your manual trades"}
+MANUAL, MANUAL_CLOSED = os.path.join(DIR, "manual.jsonl"), os.path.join(DIR, "manual_closed.jsonl")
 MAX_AI = 20
 MIN_TRADE = 25.0                 # dollars: smaller differences from the target are left alone
 DRIFT = 0.20                     # rebalance a holding only when it is more than 20% away from its target value
@@ -124,9 +133,11 @@ def targets_rank():
 
 # ---------------------------------------------------------------- orders
 
-def _order(book, sym, side, qty=None, notional=None, log=print, tif="day"):
-    body = {"symbol": sym, "side": side, "type": "market", "time_in_force": tif,
+def _order(book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None):
+    body = {"symbol": sym, "side": side, "type": "limit" if limit else "market", "time_in_force": tif,
             "client_order_id": f"tm-{book}-{int(time.time() * 1000)}-{sym}"[:48]}
+    if limit:
+        body["limit_price"] = f"{limit:.2f}"
     if notional is not None:
         body["notional"] = f"{notional:.2f}"
     else:
@@ -150,11 +161,23 @@ def _settle(book_state, log=print):
         if o.get("status") not in ("filled", "canceled", "expired", "rejected", "done_for_day"):
             continue
         q, px = float(o.get("filled_qty") or 0), float(o.get("filled_avg_price") or 0)
-        b = book_state["books"][rec["book"]]
+        b = book_state["books"].setdefault(rec["book"], {"cash": 0.0, "start": 0.0, "holdings": {}})
         sign = 1 if rec["side"] == "buy" else -1
+        if rec["book"] == "manual" and q > 0:
+            cost = b.setdefault("cost", {})
+            held = b["holdings"].get(rec["symbol"], 0.0)
+            if sign > 0:
+                cost[rec["symbol"]] = cost.get(rec["symbol"], 0.0) + q * px
+            elif held > 0:
+                avg = cost.get(rec["symbol"], 0.0) / held
+                cost[rec["symbol"]] = cost.get(rec["symbol"], 0.0) - avg * q
+                _append(MANUAL_CLOSED, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "symbol": rec["symbol"], "qty": q,
+                                        "avg_entry": avg, "exit": px, "pnl": (px - avg) * q, "ret": px / avg - 1 if avg else None,
+                                        "order_id": oid})
         b["holdings"][rec["symbol"]] = round(b["holdings"].get(rec["symbol"], 0.0) + sign * q, 9)
         if abs(b["holdings"][rec["symbol"]]) < 1e-9:
             b["holdings"].pop(rec["symbol"])
+            b.get("cost", {}).pop(rec["symbol"], None)
         b["cash"] -= sign * q * px
         seen.add(oid)
     book_state["settled"] = sorted(seen)
@@ -221,19 +244,29 @@ def night_step(st, clock, log=print):
     return 0
 
 
-def run(a=None, log=print):
-    c = control()
-    if not c["enabled"]:
-        return {"done": "auto-trade is off"}
-    clock = _req("GET", "/v2/clock")
+def _state(c, log=print):
+    """The books; created on first use by splitting the paper account between the automatic books (manual has none)."""
     st = _load(BOOK, None)
-    acct = _req("GET", "/v2/account")
-    if st is None:                                                 # first run: split the paper account between the books
-        eq = float(acct["equity"])
+    if st is None:
+        eq = float(_req("GET", "/v2/account")["equity"])
         st = {"started": datetime.now(timezone.utc).isoformat(timespec="seconds"), "start_equity": eq, "settled": [],
               "books": {k: {"cash": eq * c["split"][k], "start": eq * c["split"][k], "holdings": {}, "last_rebalance": None} for k in BOOKS}}
         _save(BOOK, st)
         log(f"[paper] started: ${eq:,.2f} paper equity split {c['split']}")
+    st["books"].setdefault("manual", {"cash": 0.0, "start": 0.0, "holdings": {}, "cost": {}})
+    return st
+
+
+def run(a=None, log=print):
+    c = control()
+    st = _load(BOOK, None)
+    if st:
+        _settle(st, log)                                           # manual fills are settled even while auto-trade is off
+        _save(BOOK, st)
+    if not c["enabled"]:
+        return {"done": "auto-trade is off"}
+    clock = _req("GET", "/v2/clock")
+    st = _state(c, log)
     _settle(st, log)
     night = night_step(st, clock, log) if c["books"].get("night") and "night" in st["books"] else 0
     if not clock.get("is_open"):
@@ -281,7 +314,11 @@ def close(book, log=print):
 
 def status(st=None, note=None, log=print):
     """Account, books and positions for the Auto-trade page; one equity line per day."""
-    st = st or _load(BOOK, None)
+    if st is None:
+        st = _load(BOOK, None)
+        if st:                                                     # record fills (manual limit orders too) on every refresh
+            _settle(st, log)
+            _save(BOOK, st)
     c = control()
     acct = _req("GET", "/v2/account")
     out = {"time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "control": c, "note": note, "paper": True,
@@ -292,7 +329,12 @@ def status(st=None, note=None, log=print):
         for name, b in st["books"].items():
             pos = [{"symbol": s, "qty": q, "price": prices.get(s), "value": q * prices.get(s, 0)} for s, q in sorted(b["holdings"].items())]
             val = b["cash"] + sum(p["value"] for p in pos)
-            out["books"][name] = {"label": BOOKS[name], "enabled": c["books"].get(name, False), "value": val, "start": b["start"],
+            if name == "manual":
+                for p_ in pos:
+                    cst = b.get("cost", {}).get(p_["symbol"])
+                    p_["avg_entry"] = cst / p_["qty"] if cst and p_["qty"] else None
+                    p_["pnl"] = p_["value"] - cst if cst is not None else None
+            out["books"][name] = {"label": LABELS.get(name, name), "enabled": c["books"].get(name, name == "manual"), "value": val, "start": b["start"],
                                   "return": val / b["start"] - 1 if b["start"] else None, "cash": b["cash"], "positions": pos,
                                   "last_rebalance": b.get("last_rebalance"), "signals_asof": b.get("signals_asof")}
         out["started"], out["qqq"] = st["started"], prices.get("QQQ")
@@ -305,16 +347,108 @@ def status(st=None, note=None, log=print):
             open(EQUITY, "w").write("".join(json.dumps(h) + "\n" for h in hist))
         out["equity_history"] = [json.loads(l) for l in open(EQUITY)] if os.path.exists(EQUITY) else []
         out["ledger"] = ([json.loads(l) for l in open(LEDGER)] if os.path.exists(LEDGER) else [])[-60:]
+        closed = [json.loads(l) for l in open(MANUAL_CLOSED)] if os.path.exists(MANUAL_CLOSED) else []
+        wins = [x for x in closed if (x.get("pnl") or 0) > 0]
+        out["manual"] = {"closed": len(closed), "wins": len(wins), "realized_pnl": sum(x.get("pnl") or 0 for x in closed),
+                         "recent_closed": closed[-20:], "open_orders": [{k: o.get(k) for k in ("id", "symbol", "side", "qty", "notional", "type",
+                                                                                                   "limit_price", "status", "submitted_at")}
+                                                                          for o in _open_orders("manual")]}
     _save(STATUS, out)
     return out
 
 
+def context(sym):
+    """What the models said about `sym` right now (saved with each manual order, for learning from the user's habits)."""
+    out = {}
+    for h, path in (("1", os.path.join("private", "reports", "v7", "h1", "forecast.json")), ("5", os.path.join("private", "reports", "v7", "forecast.json"))):
+        f = _load(path, {})
+        r = (f.get("rows") or {}).get(sym)
+        if r:
+            out[f"v7_{h}d"] = {"asof": f.get("asof"), "p_up": r.get("p_up"), "median": r.get("median"), "lo80": r.get("lo80"),
+                              "hi80": r.get("hi80"), "p_beat_qqq": r.get("p_beat_qqq"), "ranges": f.get("ranges")}
+    rk = _load(os.path.join("private", "reports", "v6", "rankings.json"), {})
+    r = next((x for x in rk.get("rankings", []) if x["symbol"] == sym), None)
+    if r:
+        out["rank"] = {"asof": rk.get("asof"), "score_pct": r.get("score_pct"), "decile": r.get("decile")}
+    try:
+        from . import stock_eval
+        asof = stock_eval.latest_asof("nasdaq")
+        e = _load(os.path.join(stock_eval.EVALS, "nasdaq", f"index_{asof}.json"), {}).get(sym)
+        if e:
+            out["ai"] = {"asof": asof, "h": e.get("h"), "lean": e.get("lean")}
+    except Exception:  # noqa: BLE001 - context is best effort
+        pass
+    fv = (_load(os.path.join("private", "reports", "v6", "fairvalue.json"), {}).get("stocks") or {}).get(sym)
+    if fv:
+        out["fair_value"] = {k: fv.get(k) for k in ("fair", "low", "high", "verdict")}
+    try:
+        from . import earnings
+        up = (_load(earnings.UPCOMING, {}) or {}).get("rows", [])
+        today = datetime.now(alpaca.NY).date().isoformat()
+        nxt = [d for d, _ in earnings.report_dates(sym, up) if d >= today]
+        out["next_earnings"] = nxt[0] if nxt else None
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
+def manual_order(spec, log=print):
+    """One order from the Auto-trade page: {symbol, side: buy|sell, qty | notional, limit?}. Long only."""
+    sym = str(spec.get("symbol", "")).strip().upper()
+    side = spec.get("side")
+    if not sym.replace(".", "").isalnum() or len(sym) > 10 or side not in ("buy", "sell"):
+        raise SystemExit("refused: bad symbol or side")
+    qty = float(spec["qty"]) if spec.get("qty") not in (None, "") else None
+    notional = float(spec["notional"]) if spec.get("notional") not in (None, "") else None
+    limit = float(spec["limit"]) if spec.get("limit") not in (None, "") else None
+    if (qty is None) == (notional is None) or (qty or notional or 0) <= 0:
+        raise SystemExit("refused: give either a share quantity or a dollar amount")
+    if notional is not None and limit:
+        raise SystemExit("refused: a limit order needs a share quantity")
+    c = control()
+    st = _state(c, log)
+    _settle(st, log)
+    px = _latest_prices([sym]).get(sym)
+    if not px:
+        raise SystemExit(f"refused: no price for {sym}")
+    if side == "sell":
+        held = st["books"]["manual"]["holdings"].get(sym, 0.0)
+        want = qty if qty is not None else notional / px
+        if held <= 0 or want > held * 1.0001:
+            raise SystemExit(f"refused: you hold {held:g} {sym} in manual trades (long only; nothing to short)")
+        qty, notional = min(want, held), None
+    o = _order("manual", sym, side, qty=qty, notional=notional, log=log, limit=limit)
+    _append(MANUAL, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "order_id": o.get("id"), "symbol": sym, "side": side,
+                     "qty": qty, "notional": notional, "limit": limit, "price_at_order": px, "context": context(sym)})
+    _save(BOOK, st)
+    time.sleep(2)
+    _settle(st, log)
+    _save(BOOK, st)
+    status(st)
+    return {"order_id": o.get("id"), "status": o.get("status"), "symbol": sym, "side": side}
+
+
+def cancel(order_id, log=print):
+    mine = {json.loads(l).get("order_id") for l in open(MANUAL)} if os.path.exists(MANUAL) else set()
+    if order_id not in mine:
+        raise SystemExit("refused: not one of your manual orders")
+    _req("DELETE", f"/v2/orders/{order_id}")
+    log(f"[paper] canceled {order_id}")
+    status()
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["run", "status", "close"])
-    ap.add_argument("--book", choices=["ai", "rank", "all"], default="all")
+    ap.add_argument("cmd", choices=["run", "status", "close", "order", "cancel"])
+    ap.add_argument("--book", choices=["ai", "rank", "night", "manual", "all"], default="all")
+    ap.add_argument("--json", default="{}")
+    ap.add_argument("--id", default="")
     a = ap.parse_args()
-    if a.cmd == "run":
+    if a.cmd == "order":
+        print(json.dumps(manual_order(json.loads(a.json))))
+    elif a.cmd == "cancel":
+        cancel(a.id)
+    elif a.cmd == "run":
         print(json.dumps(run(a)))
     elif a.cmd == "close":
         close(a.book)
