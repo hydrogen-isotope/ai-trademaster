@@ -53,6 +53,7 @@ button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
 #qai button:hover{border-color:var(--accent);color:var(--accent)}#qai button:disabled{opacity:.6;cursor:default}
 #qhead{display:flex;align-items:baseline;gap:12px;padding:10px 14px 6px;border-bottom:1px solid var(--line);white-space:nowrap;overflow:hidden;min-width:0}#qname{overflow:hidden;text-overflow:ellipsis;min-width:0}
 #qsym{font-size:16px;font-weight:700}#qname{color:var(--muted)}#qpx{font-size:22px;font-weight:700}#qchg{font-weight:600}
+#qhead,.ctabs,#toolbar{flex:none}
 .ctabs{display:flex;gap:18px;padding:0 14px;border-bottom:1px solid var(--line);height:36px;align-items:flex-end}
 .ctabs button{padding:0 0 8px;color:var(--muted);font-weight:600;border-bottom:2px solid transparent}.ctabs button.on{color:var(--text);border-color:var(--accent)}
 #toolbar{display:flex;gap:2px;align-items:center;padding:6px 10px;border-bottom:1px solid var(--line);flex-wrap:nowrap;overflow-x:auto;white-space:nowrap;flex:none}
@@ -112,23 +113,28 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
 #fcview{display:none;padding:16px 20px 30px;flex:none}
 #fcview .top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 #fcview .top h2{margin:0;font-size:20px}
-#fcview .sub{color:var(--muted);font-size:13px;margin-top:4px}
-.daypick{display:flex;gap:6px;margin:14px 0 10px;flex-wrap:wrap}
-.daypick button{padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--muted);font-size:12.5px}
+#fcview .sub{color:var(--muted);font-size:12.5px;margin-top:8px;display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center}
+#fcview .sub .fp{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px 10px}
+#fcview .sub .fp b{color:var(--text)}
+#fcview .sub .fp.warn{border-color:#5a4a12;color:var(--warn);background:#1f1a0a}
+.daypick{display:inline-flex;margin:16px 0 12px;flex-wrap:wrap;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.daypick button{padding:7px 14px;border:0;border-right:1px solid var(--line);background:var(--panel);color:var(--muted);font-size:12.5px;cursor:pointer}.daypick button:last-child{border-right:0}.daypick button:hover{color:var(--text)}
 .daypick button.on{border-color:var(--accent);color:var(--text);background:#2a1a0d}
 .answers{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
-.ans{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px;min-width:0}
-.ans .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.4px}
-.ans .v{font-size:clamp(17px,1.55vw,26px);font-weight:700;margin-top:6px;white-space:nowrap}
-.ans .d{color:var(--muted);font-size:12.5px;margin-top:4px;line-height:1.4}
+.ans{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-width:0;display:flex;flex-direction:column;gap:6px}
+.ans .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:600}
+.ans .v{font-size:clamp(18px,1.5vw,26px);white-space:nowrap;font-weight:700;line-height:1.15;font-variant-numeric:tabular-nums}
+.ans .v .to{display:block;font-size:.6em;color:var(--muted);font-weight:500;margin-top:3px}
+.ans .pc{display:inline-block;font-size:12px;font-weight:600;padding:2px 7px;border-radius:999px;background:var(--panel2);margin-left:8px;vertical-align:4px}
+.ans .d{color:var(--muted);font-size:12px;line-height:1.45;margin-top:auto}
 .ans.main{border-color:#5a3a1a;background:linear-gradient(180deg,#1f160e,#15161a)}
-.bigchart{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px 12px 6px;margin-top:14px}
+.bigchart{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 14px 8px;margin-top:14px}
 #fcbig{width:100%;height:auto;display:block}
 .legend2{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:12px;padding:4px 6px 6px}
 .legend2 i{display:inline-block;width:18px;height:10px;border-radius:2px;margin-right:6px;vertical-align:-1px}
-.rows2{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin-top:14px}
+.rows2{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 18px;margin-top:14px}
 .rows2 h3,.read h3{margin:0 0 10px;font-size:13px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
-.rbar{display:grid;grid-template-columns:110px 150px minmax(0,1fr) 120px;align-items:center;gap:12px;padding:9px 6px 21px;cursor:pointer;border-top:1px solid #1d2026;font-size:13px}
+.rbar{display:grid;grid-template-columns:120px 150px minmax(0,1fr) 110px;align-items:center;gap:12px;padding:9px 6px 21px;cursor:pointer;border-top:1px solid #1d2026;font-size:13px}
 .rbar:first-of-type{border-top:0}
 .rbar .track{position:relative;height:22px}
 .rbar .b95{position:absolute;top:5px;height:12px;background:rgba(255,107,0,.18);border-radius:6px}
@@ -201,8 +207,8 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
         <div class="daypick" id="daypick"></div>
         <div class="answers">
           <div class="ans main"><div class="k">Middle forecast</div><div class="v num" id="aMid"></div><div class="d" id="aMidD"></div></div>
-          <div class="ans"><div class="k">80% likely range</div><div class="v num" id="a80"></div><div class="d" id="a80D"></div></div>
-          <div class="ans"><div class="k">95% likely range</div><div class="v num" id="a95"></div><div class="d" id="a95D"></div></div>
+          <div class="ans"><div class="k">80% likely range</div><div class="v num" id="a80" style="font-size:clamp(15px,1.15vw,21px)"></div><div class="d" id="a80D"></div></div>
+          <div class="ans"><div class="k">95% likely range</div><div class="v num" id="a95" style="font-size:clamp(15px,1.15vw,21px)"></div><div class="d" id="a95D"></div></div>
           <div class="ans"><div class="k">Chance of closing higher</div><div class="v num" id="aUp"></div><div class="d" id="aUpD"></div></div>
         </div>
         <div class="bigchart">
@@ -528,49 +534,49 @@ function chanceAbove(day, price) {
 }
 let fcState = null, fcDay = 4;
 
-function bigFan(hist, days, focus) {
-  const W = 1400, H = 520, L = 84, R = 190, T = 26, B = 46, n = hist.length, m = days.length;
-  const split = L + 0.55 * (W - L - R);
+function bigFan(hist, days, focus, W = 1000, H = 380) {
+  const L = 64, R = 150, T = 24, B = 34, n = hist.length, m = days.length;   // drawn at the real pixel size
+  const split = L + 0.45 * (W - L - R);
   const xs = i => i < n ? L + i / (n - 1) * (split - L) : split + (i - n + 1) / m * (W - R - split);
   const vals = hist.map(h => h.close).concat(days.flatMap(d => [d.p2_5, d.p97_5]));
   let lo = Math.min(...vals), hi = Math.max(...vals); const pad = (hi - lo) * 0.07; lo -= pad; hi += pad;
   const ys = v => T + (hi - v) / (hi - lo) * (H - T - B);
   const last = hist[n - 1].close, x0 = xs(n - 1);
   let g = '';
-  for (let k = 0; k <= 5; k++) { const v = lo + (hi - lo) * k / 5; g += `<line x1="${L}" x2="${W - R}" y1="${ys(v)}" y2="${ys(v)}" stroke="#1d2027"/><text x="${L - 10}" y="${ys(v) + 5}" fill="#8a8f99" font-size="15" text-anchor="end">${fmt(v)}</text>`; }
+  for (let k = 0; k <= 5; k++) { const v = lo + (hi - lo) * k / 5; g += `<line x1="${L}" x2="${W - R}" y1="${ys(v)}" y2="${ys(v)}" stroke="#1d2027"/><text x="${L - 10}" y="${ys(v) + 5}" fill="#8a8f99" font-size="11.5" text-anchor="end">${fmt(v)}</text>`; }
   // shaded forecast region and the focused day
   g += `<rect x="${x0}" y="${T}" width="${W - R - x0}" height="${H - T - B}" fill="#ffffff" fill-opacity="0.015"/>`;
-  g += `<rect x="${xs(n + focus) - 26}" y="${T}" width="52" height="${H - T - B}" fill="#ff9f1c" fill-opacity="0.07" rx="6"/>`;
+  g += `<rect x="${xs(n + focus) - 18}" y="${T}" width="36" height="${H - T - B}" fill="#ff9f1c" fill-opacity="0.08" rx="6"/>`;
   const band = (a, b, op) => {
     const top = [[x0, ys(last)], ...days.map((d, k) => [xs(n + k), ys(d[a])])], bot = [[x0, ys(last)], ...days.map((d, k) => [xs(n + k), ys(d[b])])];
     return `<polygon points="${top.concat(bot.reverse()).map(p => p.join(',')).join(' ')}" fill="#ff6b00" fill-opacity="${op}"/>`;
   };
   g += band('p97_5', 'p2_5', 0.16) + band('p90', 'p10', 0.38);
   g += `<line x1="${L}" x2="${W - R}" y1="${ys(last)}" y2="${ys(last)}" stroke="#e9eaee" stroke-opacity=".55" stroke-dasharray="6 6"/>`;
-  const lt = `last close ${fmt(last)} (${DLONG(hist[n - 1].date)})`, ltw = lt.length * 7.4 + 14;
-  g += `<rect x="${x0 - ltw - 12}" y="${ys(last) + 8}" width="${ltw}" height="24" rx="5" fill="#0d0e11" fill-opacity=".85" stroke="#3a4050"/>`;
-  g += `<text x="${x0 - 19}" y="${ys(last) + 25}" fill="#e9eaee" font-size="14" text-anchor="end">${lt}</text>`;
-  g += `<polyline points="${hist.map((h, i) => xs(i) + ',' + ys(h.close)).join(' ')}" fill="none" stroke="#e9eaee" stroke-width="2.2"/>`;
-  g += `<polyline points="${[[x0, ys(last)], ...days.map((d, k) => [xs(n + k), ys(d.p50)])].map(p => p.join(',')).join(' ')}" fill="none" stroke="#ff9f1c" stroke-width="3" stroke-dasharray="8 5"/>`;
+  const lt = `last close ${fmt(last)}`, ltw = lt.length * 6.2 + 14;
+  g += `<rect x="${x0 - ltw - 10}" y="${ys(last) + 8}" width="${ltw}" height="20" rx="5" fill="#0d0e11" fill-opacity=".85" stroke="#3a4050"/>`;
+  g += `<text x="${x0 - 17}" y="${ys(last) + 22}" fill="#e9eaee" font-size="11.5" text-anchor="end">${lt}</text>`;
+  g += `<polyline points="${hist.map((h, i) => xs(i) + ',' + ys(h.close)).join(' ')}" fill="none" stroke="#e9eaee" stroke-width="1.8" stroke-linejoin="round"/>`;
+  g += `<polyline points="${[[x0, ys(last)], ...days.map((d, k) => [xs(n + k), ys(d.p50)])].map(p => p.join(',')).join(' ')}" fill="none" stroke="#ff9f1c" stroke-width="2.4" stroke-dasharray="6 4"/>`;
   days.forEach((d, k) => {
     const x = xs(n + k), on = k === focus;
-    g += `<circle cx="${x}" cy="${ys(d.p50)}" r="${on ? 7 : 5}" fill="#ff9f1c" stroke="#0d0e11" stroke-width="2"/>`;
-    g += `<text x="${x}" y="${H - 18}" fill="${on ? '#ffffff' : '#b6bcc6'}" font-size="15" font-weight="${on ? 700 : 400}" text-anchor="middle">${DOW(d.date)} ${d.date.slice(8)}</text>`;
-    g += `<rect x="${x - 26}" y="${T}" width="52" height="${H - T}" fill="transparent" style="cursor:pointer" onclick="pickDay(${k})"><title>${DLONG(d.date)}: middle ${fmt(d.p50)}, 80% range ${fmt(d.p10)}–${fmt(d.p90)}</title></rect>`;
+    g += `<circle cx="${x}" cy="${ys(d.p50)}" r="${on ? 5.5 : 3.5}" fill="#ff9f1c" stroke="#0d0e11" stroke-width="2"/>`;
+    g += `<text x="${x}" y="${H - 12}" fill="${on ? '#ffffff' : '#b6bcc6'}" font-size="12" font-weight="${on ? 700 : 400}" text-anchor="middle">${DOW(d.date)} ${d.date.slice(8)}</text>`;
+    g += `<rect x="${x - 18}" y="${T}" width="36" height="${H - T}" fill="transparent" style="cursor:pointer" onclick="pickDay(${k})"><title>${DLONG(d.date)}: middle ${fmt(d.p50)}, 80% range ${fmt(d.p10)}–${fmt(d.p90)}</title></rect>`;
   });
   // labels for the focused day, with simple collision avoidance
   const fd = days[focus], fx = xs(n + focus);
   const labs = [['p97_5', '95% top', '#c9ced6'], ['p90', '80% top', '#ffd2a6'], ['p50', 'middle', '#ff9f1c'], ['p10', '80% bottom', '#ffd2a6'], ['p2_5', '95% bottom', '#c9ced6']]
     .map(([k, t, c]) => ({ y: ys(fd[k]), v: fd[k], t, c, k }));
-  for (let i = 1; i < labs.length; i++) if (labs[i].y - labs[i - 1].y < 20) labs[i].y = labs[i - 1].y + 20;
-  const lx = W - R + 18;
+  for (let i = 1; i < labs.length; i++) if (labs[i].y - labs[i - 1].y < 16) labs[i].y = labs[i - 1].y + 16;
+  const lx = W - R + 14;
   labs.forEach(l => {
     g += `<line x1="${fx + 8}" x2="${lx - 4}" y1="${ys(l.v)}" y2="${l.y}" stroke="${l.c}" stroke-opacity=".35"/>`;
-    g += `<text x="${lx}" y="${l.y + 5}" fill="${l.c}" font-size="${l.k === 'p50' ? 17 : 14}" font-weight="${l.k === 'p50' ? 700 : 400}">${fmt(l.v)} <tspan fill="#8a8f99" font-size="12">${l.t}</tspan></text>`;
+    g += `<text x="${lx}" y="${l.y + 5}" fill="${l.c}" font-size="${l.k === 'p50' ? 13.5 : 11.5}" font-weight="${l.k === 'p50' ? 700 : 400}">${fmt(l.v)} <tspan fill="#8a8f99" font-size="10.5">${l.t}</tspan></text>`;
   });
   g += `<line x1="${x0}" x2="${x0}" y1="${T}" y2="${H - B}" stroke="#3a4050" stroke-dasharray="3 4"/>`;
-  g += `<text x="${x0 + 8}" y="${T + 16}" fill="#8a8f99" font-size="13">forecast &rarr;</text><text x="${x0 - 8}" y="${T + 16}" fill="#8a8f99" font-size="13" text-anchor="end">&larr; what happened</text>`;
-  g += `<text x="${xs(0)}" y="${H - 18}" fill="#8a8f99" font-size="14">${DLONG(hist[0].date)}</text>`;
+  g += `<text x="${x0 + 8}" y="${T + 12}" fill="#8a8f99" font-size="11.5">forecast &rarr;</text><text x="${x0 - 8}" y="${T + 12}" fill="#8a8f99" font-size="11.5" text-anchor="end">&larr; last 30 sessions</text>`;
+  g += `<text x="${xs(0)}" y="${H - 12}" fill="#8a8f99" font-size="11.5">${DLONG(hist[0].date)}</text>`;
   return g;
 }
 
@@ -581,15 +587,17 @@ function renderForecastView() {
   const ucls = u => u > 0.52 ? 'up' : u < 0.48 ? 'down' : '';
   $('daypick').innerHTML = fc.days.map((x, k) => `<button class="${k === fcDay ? 'on' : ''}" onclick="pickDay(${k})">${DOW(x.date)} ${x.date.slice(5)}${k === 4 ? ' · end of week' : ''}</button>`).join('');
   const up = chanceAbove(d, last);
-  $('aMid').innerHTML = `${fmt(d.p50)} <span class="${pcls(d.p50)}" style="font-size:16px">${pct(d.p50)}</span>`;
-  $('aMidD').textContent = `${DLONG(d.date)} close. Half the simulated outcomes end above this, half below. It is not a prediction that the price sits still.`;
-  $('a80').textContent = `${fmt(d.p10)} – ${fmt(d.p90)}`;
-  $('a80D').textContent = `${pct(d.p10)} to ${pct(d.p90)}. About 4 times in 5 the close should land in here.`;
-  $('a95').textContent = `${fmt(d.p2_5)} – ${fmt(d.p97_5)}`;
-  $('a95D').textContent = `${pct(d.p2_5)} to ${pct(d.p97_5)}. Outside this happens about 1 time in 20.`;
+  $('aMid').innerHTML = `${fmt(d.p50)}<span class="pc ${pcls(d.p50)}">${pct(d.p50)}</span>`;
+  $('aMidD').textContent = `Centre of the outcomes for the ${DLONG(d.date)} close: half end above, half below.`;
+  $('a80').innerHTML = `${fmt(d.p10)} – ${fmt(d.p90)}<span class="to">${pct(d.p10)} to ${pct(d.p90)}</span>`;
+  $('a80D').textContent = 'The close should land here about 4 times in 5.';
+  $('a95').innerHTML = `${fmt(d.p2_5)} – ${fmt(d.p97_5)}<span class="to">${pct(d.p2_5)} to ${pct(d.p97_5)}</span>`;
+  $('a95D').textContent = 'Outside this about 1 time in 20.';
   $('aUp').innerHTML = up == null ? '—' : `<span class="${ucls(up)}">${Math.round(up * 100)}%</span>`;
-  $('aUpD').textContent = `Chance the ${DLONG(d.date)} close is above the last close of ${fmt(last)}. 50% would be a coin flip.`;
-  $('fcbig').innerHTML = bigFan(f.history.slice(-60), fc.days, fcDay);
+  $('aUpD').textContent = `That it closes above ${fmt(last)}. 50% is a coin flip.`;
+  const svg = $('fcbig'), W = Math.max(600, Math.round(svg.parentNode.clientWidth - 28) || 1000), H = Math.round(Math.min(440, Math.max(300, W * 0.38)));
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  svg.innerHTML = bigFan(f.history.slice(-30), fc.days, fcDay, W, H);
   const lo = Math.min(...fc.days.map(x => x.p2_5)), hi = Math.max(...fc.days.map(x => x.p97_5)), sp = hi - lo;
   const X = v => ((v - lo) / sp * 100).toFixed(2) + '%';
   $('fcrows').innerHTML = fc.days.map((x, k) => {
@@ -611,6 +619,7 @@ function renderForecastView() {
     <li><b>Use it for "how far could it go", not "which way".</b> Research only, not trading advice.</li>`;
 }
 function pickDay(k) { fcDay = k; renderForecastView(); }
+let fcRz; addEventListener('resize', () => { clearTimeout(fcRz); fcRz = setTimeout(() => { if ($('fcview').style.display === 'block') renderForecastView(); }, 150); });
 
 // ---------------------------------------------------------------- my calls
 let mcD = null;
@@ -697,8 +706,9 @@ async function loadForecast() {
   $('fchint').innerHTML = `&#128302; Open the AI forecast for ${sel} (next close by default; 5 days and 1 month on the page) &rarr;`;
   const calOnly = v && v.calibrated && !v.beats_baseline;
   $('fcchip').textContent = ok ? 'VALIDATED' : calOnly ? 'RANGES CALIBRATED · NO EDGE' : 'NOT VALIDATED'; $('fcchip').className = 'chip ' + (ok ? 'live' : 'demo');
-  $('fcsub').innerHTML = `Made at the close of ${DLONG(fc.asof)} · last close <b class="num">${fmt(fc.last_close)}</b> · ${fc.model === 'v2' ? 'volatility model with self-correcting ranges' : 'volatility model'} · 20,000 simulated paths
-    ${ok ? '' : calOnly ? ' · <span style="color:var(--warn)">ranges passed the 250-day check, but the forecast is not more accurate than "no change"</span>' : ' · <span class="bad">failed the 250-day check: treat the ranges as too narrow</span>'}`;
+  $('fcsub').innerHTML = `<span class="fp">From the close of <b>${DLONG(fc.asof)}</b></span><span class="fp">Last close <b class="num">${fmt(fc.last_close)}</b></span>` +
+    `<span class="fp">${fc.model === 'v2' ? 'Volatility model, self-correcting ranges' : 'Volatility model'} · 20,000 simulated paths</span>` +
+    (ok ? '' : calOnly ? '<span class="fp warn">Ranges pass the 250-day check; not more accurate than "no change"</span>' : '<span class="fp warn">Failed the 250-day check: treat the ranges as too narrow</span>');
   renderForecastView(); renderWhy(); loadCalls();
   if (v) {
     const cell = (x, t, tol) => `<td class="num ${Math.abs(x - t) <= tol ? 'ok' : 'bad'}">${(x * 100).toFixed(0)}%</td>`;
