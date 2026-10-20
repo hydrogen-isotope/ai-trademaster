@@ -324,13 +324,22 @@ def forecast(args):
     idx = E.rows(last, last)
     r = E.refits[-1]
     name = f"v7 s={s}"
+    from . import v7r                                                         # amendment B: event-aware ranges
+    adopted, w = v7r.adopted(H)
+    E_v7 = E
+    if adopted and P.dates[last] >= v7r.FIRST_LIVE:
+        parts = v7r.EventParts(E, log=None)
+        E = v7r.with_sd(E, name, v7r.blend(v7r.sd_event(E, parts), v7r.iv_rows(E), w))
+        ranges = "v7r"
+    else:
+        ranges = "v7"
     m, sd = E.means[name][idx], E.sd[idx]
     R, Rrw = E.R[(name, r)], E.R[("RW", r)]
     q = quantiles(m, sd, R)
     close = np.exp(P.lc[last, P.n[E.a + idx]])
     pup = 1 - p_le(0.0, m, sd, R)
     # P(stock beats QQQ over 5 days): difference has mean m - mu_m and variance (beta-1)^2 V_m + 5 idio^2
-    rel_sd = np.sqrt((E.beta[idx] - 1) ** 2 * E.v_m[idx] + H * E.idio[idx] ** 2)
+    rel_sd = np.sqrt(np.maximum((E.beta[idx] - 1) ** 2 * E.v_m[idx] + sd ** 2 - E.beta[idx] ** 2 * E.v_m[idx], 1e-12))
     pbeat = 1 - t_cdf((0 - (m - E.mu_m[idx])) / rel_sd)
     rows = {}
     for k, i in enumerate(idx):
@@ -339,7 +348,7 @@ def forecast(args):
         rows[sym] = {"close": float(close[k]), "median": px(I50), "lo80": px(I10), "hi80": px(I90), "lo95": px(I025), "hi95": px(I975),
                      "p_up": float(pup[k]), "p_beat_qqq": float(pbeat[k]), "exp_ret": float(math.expm1(q[k, I50]))}
     os.makedirs(OUT, exist_ok=True)
-    out = {"asof": P.dates[last], "model": name, "status": "shadow", "horizon_days": H, "rows": rows,
+    out = {"asof": P.dates[last], "model": name, "status": "shadow", "horizon_days": H, "rows": rows, "ranges": ranges,
            # the market model itself (benchmark ETF): 5-day drift and GJR-GARCH variance, for the Indexes view
            "market_model": {"mu5": float(E.mu_m[idx[0]]), "v5": float(E.v_m[idx[0]])}}
     # v8 amendment B: news-adjusted variant from the rolling LLM news (fixed prior weights; forward shadow test only)
@@ -368,15 +377,21 @@ def forecast(args):
                 f.write(json.dumps({"asof": P.dates[last], "news_generated": news["generated"], "S": S, "R_v7": R.tolist(),
                                     "rows": [[sy, float(m_news[k]), float(m[k]), float(sd[k])] for k, sy in enumerate(syms)]}) + "\n")
     json.dump(out, open(os.path.join(OUT, "forecast.json"), "w"))
-    # forward shadow log: written before the outcome exists, once per date
+    # forward shadow logs: written before the outcome exists, once per date. v7 keeps its own; v7r (amendment B) has its own
+    def shadow(path, EE):
+        done = {json.loads(l)["asof"] for l in open(path)} if os.path.exists(path) else set()
+        if P.dates[last] in done:
+            return False
+        with open(path, "a") as f:
+            f.write(json.dumps({"asof": P.dates[last], "model": name, "ranges": "v7r" if EE is not E_v7 else "v7",
+                                "R_v7": EE.R[(name, r)].tolist(), "R_rw": EE.R[("RW", r)].tolist(),
+                                "rows": [[P.symbols[P.n[EE.a + i]], float(EE.means[name][i]), float(EE.sd[i]), float(close[k])]
+                                         for k, i in enumerate(idx)]}) + "\n")
+        return True
     log = os.path.join(OUT, "shadow.jsonl")
-    done = set()
-    if os.path.exists(log):
-        done = {json.loads(l)["asof"] for l in open(log)}
-    if P.dates[last] not in done:
-        with open(log, "a") as f:
-            f.write(json.dumps({"asof": P.dates[last], "model": name, "R_v7": R.tolist(), "R_rw": Rrw.tolist(),
-                                "rows": [[P.symbols[P.n[E.a + i]], float(m[k]), float(sd[k]), float(close[k])] for k, i in enumerate(idx)]}) + "\n")
+    done = {P.dates[last]} if not shadow(log, E_v7) else set()
+    if ranges == "v7r":
+        shadow(os.path.join(OUT, "shadow_r.jsonl"), E)
     print(f"v7 forecast {P.dates[last]}: {len(rows)} stocks, {name}; mean P(up) {np.mean(pup):.1%}; "
           f"shadow log {'appended' if P.dates[last] not in done else 'already has this date'}", flush=True)
 

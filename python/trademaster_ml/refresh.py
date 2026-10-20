@@ -108,6 +108,21 @@ def indexes_step():
         print(f"[refresh] fair value step skipped: {type(e).__name__}: {e}", flush=True)
 
 
+def events_step():
+    """v7 amendment B inputs (CPU, read-only data): the coming weeks' earnings calendar, report history for ranked
+    stocks older than 30 days, and the implied volatility at the latest close."""
+    from . import earnings, options
+    try:
+        status("running", "earnings calendar and implied volatility")
+        earnings.upcoming()
+        rk = os.path.join("private", "reports", "v6", "rankings.json")
+        if os.path.exists(rk):
+            earnings.fetch(30, symbols=[r["symbol"] for r in json.load(open(rk))["rankings"]])
+        options.live_iv()
+    except Exception as e:  # noqa: BLE001 - the ranges fall back to v7's without them
+        print(f"[refresh] events step skipped: {type(e).__name__}: {e}", flush=True)
+
+
 def legacy_forecast_step():
     """The Watchlist's 5-Day Forecast tab (v2 GARCH-t for MU, NVDA, AMD, AAPL): daily closes, score the earlier
     forecasts, write the next one (CPU; the futures download in tools/daily-forecast.cmd is left out: it can cost money)."""
@@ -153,7 +168,8 @@ def run(args):
         if not args.force and rankings_asof() == last:
             # no new close: only the rolling news can have changed (e.g. weekend or pre-market headlines)
             news_step(args)
-            status("running", "price forecasts")
+            events_step()
+        status("running", "price forecasts")
             v7.forecast(None)
             horizons_step()
             status("running", "rankings")
@@ -172,6 +188,7 @@ def run(args):
         status("running", "features")
         subprocess.run([EXE, "gpu-features", "--cpu"], check=True)
         news_step(args)
+        events_step()
         status("running", "price forecasts")
         v7.score(None)
         v7.forecast(None)

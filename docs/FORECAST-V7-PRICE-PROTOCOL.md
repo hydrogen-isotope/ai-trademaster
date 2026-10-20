@@ -123,6 +123,22 @@ a small edge.
   - US market holidays (NYSE rules) are skipped in forecast dates. Display only; the model's trading-day count is
     unchanged.
 
+**Amendment B results (2026-10-20), against the rules written above:**
+- Earnings: 70,199 past reports. The pooled earnings-day variance multiple k̄ was about 3 (2.7–4.2 across refits). An
+  earnings report falls in 3% of 1-day and 9% of 5-day forecast windows.
+- Implied-volatility weight, chosen on 13,973 development rows with an IV: w = 0 0.027710, 0.25
+  0.027572, **0.5 0.027513**, 0.75 0.027520. **w = 0.5.**
+
+| horizon | development CRPS v7 → v7r (diff, 95% CI) | dev 80% cov. | seen CRPS v7 → v7r (diff, 95% CI) | seen 80% cov. | rule |
+|---|---|---|---|---|---|
+| 1 day | 0.01854 → 0.01849 (-4.4e-05, CI -5.3e-05 to -3.6e-05) | 79.8% | 0.02054 → 0.02049 (-4.8e-05, CI -6.5e-05 to -3.2e-05) | 79.6% | **adopted** |
+| 5 days | 0.04246 → 0.04227 (-1.9e-04, CI -2.3e-04 to -1.6e-04) | 79.5% | 0.04736 → 0.04711 (-2.5e-04, CI -3.1e-04 to -2.0e-04) | 80.1% | **adopted** |
+| 20 days | 0.08531 → 0.08512 (-1.9e-04, CI -2.5e-04 to -1.4e-04) | 79.6% | 0.09771 → 0.09744 (-2.7e-04, CI -3.6e-04 to -1.6e-04) | 79.8% | **adopted** |
+
+- v7r replaces v7's ranges at all three horizons. The gain is small (about 0.2–0.5% of CRPS) but clear on both periods.
+- Live from the 2026-10-20 close (the 2026-10-19 forecasts were already made with v7's ranges). Live IV comes from
+  Alpaca options bars after each close (85 stocks). v7 keeps its shadow logs; v7r writes `shadow_r.jsonl`.
+
 **Amendment A results (2026-10-19), against the gate written above:**
 
 | market | horizon | shrink | dev CRPS (RW) | dev 80% cov. | seen 80% cov. | dev / seen hit | gate |

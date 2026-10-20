@@ -108,15 +108,17 @@ def latest_asof(market):
 
 
 def _shadow_record(v7_dir, asof):
-    """The v7 shadow-log record (model-only m, sd, close per stock + recalibration levels) for close `asof`."""
-    path = os.path.join(v7_dir, "shadow.jsonl")
-    if not os.path.exists(path):
-        return None
-    with open(path) as f:
-        lines = f.read().splitlines()
-    for line in reversed(lines):
-        if f'"asof": "{asof}"' in line[:40]:
-            return json.loads(line)
+    """The shadow-log record (model-only m, sd, close per stock + recalibration levels) for close `asof`: the v7r one
+    (v7 amendment B, the ranges the app shows) when it exists for that close, else v7's."""
+    for name in ("shadow_r.jsonl", "shadow.jsonl"):
+        path = os.path.join(v7_dir, name)
+        if not os.path.exists(path):
+            continue
+        with open(path) as f:
+            lines = f.read().splitlines()
+        for line in reversed(lines):
+            if f'"asof": "{asof}"' in line[:40]:
+                return json.loads(line)
     return None
 
 

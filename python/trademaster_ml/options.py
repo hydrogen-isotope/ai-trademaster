@@ -124,6 +124,67 @@ def fetch():
     print("options fetch complete", flush=True)
 
 
+# ---------------------------------------------------------------- live implied volatility (v7 amendment B)
+LIVE = os.path.join(DIR, "iv_live.json")
+
+
+def live_iv(log=print):
+    """ATM implied volatility at the latest close for every stock with an options file (the v5 iv_atm method: monthly
+    expiry nearest 30 days, at least 7; mean of the call and put nearest the close, strike within 6%)
+    -> private/data/options/iv_live.json. Read-only market data."""
+    p = np.load(os.path.join("private", "data", "us", "panel.npz"))
+    dates, syms = [str(d) for d in p["dates"]], [str(s) for s in p["symbols"]]
+    asof, col = dates[-1], {s: j for j, s in enumerate(syms)}
+    today = date.fromisoformat(asof)
+    try:
+        y = json.load(open(os.path.join("private", "data", "daily_extra", "yields.json")))
+        r = float([v for v in y["dgs2"] if v is not None][-1]) / 100
+    except Exception:  # noqa: BLE001 - the rate barely moves a 30-day IV
+        r = 0.04
+    creds = alpaca.credentials()
+    names = sorted(f[:-5] for f in os.listdir(DIR) if f.endswith(".json") and f[:-5] in col)
+    out = {}
+    for s in names:
+        S = float(p["close"][-1, col[s]])
+        if not np.isfinite(S):
+            continue
+        try:
+            d = _trading_get("/v2/options/contracts", {"underlying_symbols": s, "status": "active",
+                                                       "expiration_date_gte": str(today + timedelta(days=7)),
+                                                       "expiration_date_lte": str(today + timedelta(days=60)),
+                                                       "strike_price_gte": f"{0.94 * S:.2f}", "strike_price_lte": f"{1.06 * S:.2f}",
+                                                       "limit": 1000}, creds)
+            cons = [c for c in d.get("option_contracts", [])
+                    if is_monthly(date.fromisoformat(c["expiration_date"])) and STANDARD.match(c["symbol"])]
+            if not cons:
+                continue
+            e = min({c["expiration_date"] for c in cons}, key=lambda x: abs((date.fromisoformat(x) - today).days - 30))
+            cons = [c for c in cons if c["expiration_date"] == e]
+            bars = alpaca._get("/v1beta1/options/bars", {"symbols": ",".join(c["symbol"] for c in cons), "timeframe": "1Day",
+                                                         "start": asof, "end": asof, "limit": 1000}, creds).get("bars") or {}
+            T = (date.fromisoformat(e) - today).days / 365.0
+            best = {}
+            for c in cons:
+                b = (bars.get(c["symbol"]) or [None])[-1]
+                if not b or b.get("v", 0) <= 0:
+                    continue
+                K, call = float(c["strike_price"]), c["type"] == "call"
+                iv = float(implied_vol(np.array([b["c"]]), np.array([S]), np.array([K]), np.array([T]), np.array([r]),
+                                       np.array([call]))[0])
+                if np.isfinite(iv) and (call not in best or abs(K - S) < best[call][0]):
+                    best[call] = (abs(K - S), iv)
+            if best:
+                out[s] = float(np.mean([v[1] for v in best.values()]))
+        except Exception as ex:  # noqa: BLE001 - one stock must not stop the rest
+            log(f"[options] {s}: {type(ex).__name__}: {str(ex)[:100]}")
+        time.sleep(0.35)
+    tmp = LIVE + ".tmp"
+    json.dump({"asof": asof, "iv": out}, open(tmp, "w"))
+    os.replace(tmp, LIVE)
+    log(f"[options] live IV for {asof}: {len(out)} of {len(names)} stocks")
+    return out
+
+
 # ---------------------------------------------------------------- implied volatility
 def _ncdf(x):
     return 0.5 * (1 + np.vectorize(math.erf)(x / math.sqrt(2)))
