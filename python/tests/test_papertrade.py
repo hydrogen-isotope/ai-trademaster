@@ -38,6 +38,30 @@ def test_refuses_non_paper_keys():
         T.alpaca.credentials = real
 
 
+def _night(held, ts, is_open, last_buy=None):
+    sent = []
+    T._order = lambda book, sym, side, qty=None, notional=None, log=print, tif="day": sent.append((side, qty, tif))
+    T._open_orders = lambda book: []
+    T._latest_prices = lambda syms: {"QQQ": 700.0}
+    st = {"books": {"night": {"cash": 10000.0 if not held else 0.0, "holdings": {"QQQ": held} if held else {}, "last_buy": last_buy}}}
+    T.night_step(st, {"timestamp": ts, "is_open": is_open})
+    return sent, st
+
+
+def test_night_buys_whole_shares_in_the_closing_auction_before_1550():
+    sent, st = _night(0, "2026-10-21T15:30:00-04:00", True)
+    assert sent == [("buy", 14.0, "cls")] and st["books"]["night"]["last_buy"] == "2026-10-21"
+    assert _night(0, "2026-10-21T15:55:00-04:00", True)[0] == []                         # too late for the closing auction
+    assert _night(0, "2026-10-21T15:30:00-04:00", True, last_buy="2026-10-21")[0] == []  # once per day
+
+
+def test_night_sells_at_the_open_or_right_away_if_missed():
+    assert _night(14.0, "2026-10-21T20:00:00-04:00", False)[0] == [("sell", 14.0, "opg")]
+    assert _night(14.0, "2026-10-22T08:00:00-04:00", False)[0] == [("sell", 14.0, "opg")]
+    assert _night(14.0, "2026-10-21T17:00:00-04:00", False)[0] == []                     # opening orders open at 19:00
+    assert _night(14.0, "2026-10-22T10:15:00-04:00", True)[0] == [("sell", 14.0, "day")]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

@@ -9,6 +9,9 @@ Two books, each with its own share of the paper account, tracked in our own ledg
   ai    holds the stocks whose latest 5-day Qwen + models research signal is BUY (latest close's evaluations), up to
         MAX_AI by chance of a rise, equal weight; rebalanced once per trading day.
   rank  holds the top decile of the v6 cross-stock ranking, equal weight; rebalanced on the first run of each week.
+  night holds QQQ only overnight: a market-on-close buy (sent before 15:50 New York time) and a market-on-open sell
+        (sent between 19:00 and 09:28 New York time). If the app was not open in time, the open sell is replaced by an
+        ordinary market sell at the next run during the session. Compared with simply holding QQQ.
 
 Files (private/reports/paper/): control.json (switches, set by the app), book.json (holdings and cash per book),
 ledger.jsonl (every order and fill), equity.jsonl (daily value per book and QQQ), status.json (what the page shows).
@@ -23,7 +26,9 @@ from . import alpaca, holidays
 PAPER = "https://paper-api.alpaca.markets"
 DIR = os.path.join("private", "reports", "paper")
 CONTROL, BOOK, LEDGER, EQUITY, STATUS = (os.path.join(DIR, f) for f in ("control.json", "book.json", "ledger.jsonl", "equity.jsonl", "status.json"))
-BOOKS = {"ai": "AI signals (Qwen + models, 5-day BUY)", "rank": "Top-ranked stocks (v6 top 10%)"}
+BOOKS = {"ai": "AI signals (Qwen + models, 5-day BUY)", "rank": "Top-ranked stocks (v6 top 10%)",
+         "night": "Overnight QQQ (buy at the close, sell at the next open)"}
+SPLIT = {"ai": 0.45, "rank": 0.45, "night": 0.10}
 MAX_AI = 20
 MIN_TRADE = 25.0                 # dollars: smaller differences from the target are left alone
 DRIFT = 0.20                     # rebalance a holding only when it is more than 20% away from its target value
@@ -77,7 +82,10 @@ def control():
     c = _load(CONTROL, {})
     c.setdefault("enabled", False)
     c.setdefault("books", {k: True for k in BOOKS})
-    c.setdefault("split", {"ai": 0.5, "rank": 0.5})
+    c.setdefault("split", dict(SPLIT))
+    for k in BOOKS:
+        c["books"].setdefault(k, True)
+        c["split"].setdefault(k, SPLIT[k])
     return c
 
 
@@ -116,8 +124,8 @@ def targets_rank():
 
 # ---------------------------------------------------------------- orders
 
-def _order(book, sym, side, qty=None, notional=None, log=print):
-    body = {"symbol": sym, "side": side, "type": "market", "time_in_force": "day",
+def _order(book, sym, side, qty=None, notional=None, log=print, tif="day"):
+    body = {"symbol": sym, "side": side, "type": "market", "time_in_force": tif,
             "client_order_id": f"tm-{book}-{int(time.time() * 1000)}-{sym}"[:48]}
     if notional is not None:
         body["notional"] = f"{notional:.2f}"
@@ -125,8 +133,8 @@ def _order(book, sym, side, qty=None, notional=None, log=print):
         body["qty"] = f"{qty:.9f}".rstrip("0").rstrip(".")
     o = _req("POST", "/v2/orders", body)
     _append(LEDGER, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "book": book, "symbol": sym, "side": side,
-                     "qty": qty, "notional": notional, "order_id": o.get("id"), "status": o.get("status")})
-    log(f"[paper] {book}: {side} {sym} " + (f"${notional:.2f}" if notional is not None else f"{qty} sh"))
+                     "qty": qty, "notional": notional, "tif": tif, "order_id": o.get("id"), "status": o.get("status")})
+    log(f"[paper] {book}: {side} {sym} " + (f"${notional:.2f}" if notional is not None else f"{qty} sh") + (f" ({tif})" if tif != "day" else ""))
     return o
 
 
@@ -174,6 +182,45 @@ def _rebalance(name, b, want, prices, log=print):
     return n
 
 
+def _open_orders(book):
+    """Our not-yet-final orders for a book (from the ledger, checked with Alpaca)."""
+    out = []
+    for rec in ([json.loads(l) for l in open(LEDGER)] if os.path.exists(LEDGER) else []):
+        if rec.get("book") == book and rec.get("order_id"):
+            o = _req("GET", f"/v2/orders/{rec['order_id']}")
+            if o.get("status") in ("new", "accepted", "pending_new", "partially_filled", "held", "accepted_for_bidding"):
+                out.append(o)
+    return out
+
+
+def night_step(st, clock, log=print):
+    """The overnight QQQ book (see module doc). Whole shares (auction orders cannot be fractional)."""
+    b = st["books"]["night"]
+    now = datetime.fromisoformat(str(clock["timestamp"])).astimezone(alpaca.NY)
+    mins = now.hour * 60 + now.minute
+    held = b["holdings"].get("QQQ", 0.0)
+    pend = _open_orders("night")
+    if any(o.get("side") == "buy" for o in pend) or any(o.get("side") == "sell" for o in pend):
+        return 0
+    session = clock.get("is_open")
+    if held > 0:
+        if session and mins >= 9 * 60 + 30:                                     # the open sell was missed: sell now
+            _order("night", "QQQ", "sell", qty=held, log=log)
+            return 1
+        if not session and (mins >= 19 * 60 or mins < 9 * 60 + 28):            # market-on-open sell for the next open
+            _order("night", "QQQ", "sell", qty=held, log=log, tif="opg")
+            return 1
+        return 0
+    if session and mins < 15 * 60 + 50 and b.get("last_buy") != now.date().isoformat():
+        px = _latest_prices(["QQQ"]).get("QQQ")
+        n = int(b["cash"] * 0.98 // px) if px else 0
+        if n >= 1:
+            _order("night", "QQQ", "buy", qty=float(n), log=log, tif="cls")
+            b["last_buy"] = now.date().isoformat()
+            return 1
+    return 0
+
+
 def run(a=None, log=print):
     c = control()
     if not c["enabled"]:
@@ -188,16 +235,17 @@ def run(a=None, log=print):
         _save(BOOK, st)
         log(f"[paper] started: ${eq:,.2f} paper equity split {c['split']}")
     _settle(st, log)
+    night = night_step(st, clock, log) if c["books"].get("night") and "night" in st["books"] else 0
     if not clock.get("is_open"):
         _save(BOOK, st)
         status(st, note="market closed: next open " + str(clock.get("next_open")))
-        return {"done": "market closed"}
+        return {"done": "market closed", "night_orders": night}
     day = str(clock["timestamp"])[:10]
     week = datetime.fromisoformat(day).isocalendar()[:2]
     done = {}
     for name in BOOKS:
         b = st["books"][name]
-        if not c["books"].get(name):
+        if name == "night" or not c["books"].get(name):
             continue
         last = b.get("last_rebalance")
         if name == "ai" and last == day:
@@ -213,7 +261,7 @@ def run(a=None, log=print):
     _settle(st, log)
     _save(BOOK, st)
     status(st)
-    return {"orders": done}
+    return {"orders": done, "night_orders": night}
 
 
 def close(book, log=print):

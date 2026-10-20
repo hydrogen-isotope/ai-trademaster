@@ -26,7 +26,8 @@ public static class PaperTrade
     public static JsonObject ReadControl()
     {
         try { if (File.Exists(Control)) return JsonNode.Parse(File.ReadAllText(Control))!.AsObject(); } catch (Exception) { }
-        return new JsonObject { ["enabled"] = false, ["books"] = new JsonObject { ["ai"] = true, ["rank"] = true }, ["split"] = new JsonObject { ["ai"] = 0.5, ["rank"] = 0.5 } };
+        return new JsonObject { ["enabled"] = false, ["books"] = new JsonObject { ["ai"] = true, ["rank"] = true, ["night"] = true },
+            ["split"] = new JsonObject { ["ai"] = 0.45, ["rank"] = 0.45, ["night"] = 0.10 } };
     }
 
     /// <summary>Switches from the page: {"enabled": bool, "books": {"ai": bool, "rank": bool}}.</summary>
@@ -35,7 +36,7 @@ public static class PaperTrade
         var c = ReadControl();
         if (change["enabled"] is JsonValue e && e.TryGetValue(out bool en)) c["enabled"] = en;
         if (change["books"] is JsonObject b)
-            foreach (var k in new[] { "ai", "rank" })
+            foreach (var k in new[] { "ai", "rank", "night" })
                 if (b[k] is JsonValue v && v.TryGetValue(out bool on)) (c["books"] ??= new JsonObject())[k] = on;
         Directory.CreateDirectory(Dir);
         File.WriteAllText(Control, c.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));

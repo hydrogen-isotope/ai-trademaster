@@ -65,12 +65,12 @@ td:first-child,th:first-child{text-align:left}tr+tr td{border-top:1px solid #1b1
     </div>
   </div>
   <div class="kpis" id="kpis"></div>
-  <div class="panel"><div class="ph">Value of each half vs QQQ (start = 100)</div><div class="pad"><div class="chart" id="chart"></div><div class="note" id="chartnote"></div></div></div>
+  <div class="panel"><div class="ph">Value of each slice vs simply holding QQQ (start = 100)</div><div class="pad"><div class="chart" id="chart"></div><div class="note" id="chartnote"></div></div></div>
   <div class="books" id="books"></div>
   <div class="panel"><div class="ph">Orders</div><div class="scroll"><table><thead><tr><th>Time</th><th>Half</th><th>Side</th><th>Stock</th><th>Amount</th><th>Status</th></tr></thead><tbody id="ledger"></tbody></table></div></div>
-  <div class="note">How it works: the paper account's $ is split 50/50. <b>AI signals</b> buys the stocks whose latest 5-day Qwen + models signal is BUY
+  <div class="note">How it works: the paper account is split 45% / 45% / 10%. <b>AI signals</b> buys the stocks whose latest 5-day Qwen + models signal is BUY
     (at most 20, 5% each; the rest stays in cash) and sells them when the signal goes away, once per trading day. <b>Top-ranked</b> holds the top 10% of
-    the cross-stock ranking, equal weight, rebalanced once a week. Small differences (under 20% of a position) are left alone to limit trading.
+    the cross-stock ranking, equal weight, rebalanced once a week. <b>Overnight QQQ</b> buys QQQ in the closing auction and sells it in the next opening auction, every trading day. Small differences (under 20% of a position) are left alone to limit trading.
     Research only; results on simulated money, before taxes, with Alpaca's paper fills.</div>
 </main>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -80,6 +80,11 @@ const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '
 const money = v => v == null ? '—' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pc = v => v == null ? '—' : `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : ''}">${v > 0 ? '+' : ''}${(v * 100).toFixed(2)}%</span>`;
 let S = null, chart = null;
+function nyLocal(h, m) {                          // today's h:m in New York, shown in the viewer's time zone
+  const now = new Date(), ny = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const t = new Date(now.getTime() + ((h * 60 + m) - (ny.getHours() * 60 + ny.getMinutes())) * 60000);
+  return t.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+}
 async function load() {
   try { S = await (await fetch('/api/paper/status')).json(); } catch (e) { return; }
   render();
@@ -95,22 +100,25 @@ function render() {
   const hist = st.equity_history || [], q0 = hist.length ? hist[0].qqq : null;
   $('kpis').innerHTML = [
     ['Paper account', money(a.equity), `cash ${money(a.cash)} · ${esc(a.status || '')}`],
-    ['Both halves', start ? money(tot) : '—', start ? `${pc(tot / start - 1)} since ${esc((st.started || '').slice(0, 10))}` : 'not started yet'],
+    ['All slices', start ? money(tot) : '—', start ? `${pc(tot / start - 1)} since ${esc((st.started || '').slice(0, 10))}` : 'not started yet'],
     ['QQQ over the same time', q0 && st.qqq ? pc(st.qqq / q0 - 1) : '—', 'what simply holding the Nasdaq-100 did'],
     ['Market', esc(st.note || (on ? 'checks every 5 min' : 'switch on to start')), ''],
   ].map(([k, v, d]) => `<div class="kpi"><div class="k">${k}</div><div class="v ${k === 'Market' ? '' : 'num'}" style="${k === 'Market' ? 'font-size:15px;font-weight:600' : ''}">${v}</div><div class="d">${d}</div></div>`).join('');
-  $('books').innerHTML = ['ai', 'rank'].map(k => {
-    const b = books[k] || { label: k === 'ai' ? 'AI signals (Qwen + models, 5-day BUY)' : 'Top-ranked stocks (v6 top 10%)', positions: [] };
+  const LABELS = { ai: 'AI signals (Qwen + models, 5-day BUY)', rank: 'Top-ranked stocks (v6 top 10%)', night: 'Overnight QQQ (buy at the close, sell at the next open)' };
+  $('books').innerHTML = ['ai', 'rank', 'night'].map(k => {
+    const b = books[k] || { label: LABELS[k], positions: [] };
+    const vsHold = k === 'night' && q0 && st.qqq && b.return != null
+      ? `<div class="note" style="padding:0 16px 10px">Simply holding QQQ over the same time: ${pc(st.qqq / q0 - 1)} · overnight-only ${pc(b.return)}. In 2016–26 QQQ gained about 11%/yr overnight and 6.5%/yr during the day.</div>` : (k === 'night' ? `<div class="note" style="padding:0 16px 10px">Compared with simply holding QQQ once it has a day of history. Auction orders need the app open before ${nyLocal(15, 50)} your time (3:50 PM New York, to buy at the close) and between ${nyLocal(19, 0)} and ${nyLocal(9, 28)} your time (to sell at the next open); a missed open sell is done at the next check instead.</div>` : '');
     const bon = (c.books || {})[k] !== false;
     const rows = (b.positions || []).sort((x, y) => y.value - x.value).map(p => `<tr><td><b>${esc(p.symbol)}</b></td><td class="num">${(+p.qty).toFixed(3)}</td><td class="num">${money(p.price)}</td><td class="num">${money(p.value)}</td></tr>`).join('');
-    return `<div class="panel bk"><div class="top"><div class="tgl sm ${bon ? 'on' : ''}" onclick="toggleBook('${k}', ${!bon})" title="Trade this half"></div>
+    return `<div class="panel bk"><div class="top"><div class="tgl sm ${bon ? 'on' : ''}" onclick="toggleBook('${k}', ${!bon})" title="Trade this slice"></div>
       <div><div class="t">${esc(b.label)}</div><div class="s">${bon ? 'trading' : 'paused (holdings kept)'} · last rebalance ${esc(b.last_rebalance || '—')}${b.signals_asof ? ' · signals from the ' + esc(b.signals_asof) + ' close' : ''}</div></div>
-      <div class="spacer" style="flex:1"></div><button class="btn danger" onclick="closeBook('${k}')">Sell this half</button></div>
+      <div class="spacer" style="flex:1"></div><button class="btn danger" onclick="closeBook('${k}')">Sell this slice</button></div>
       <div class="nums"><div><span>Value</span><b class="num">${money(b.value)}</b></div><div><span>Return</span><b class="num">${pc(b.return)}</b></div><div><span>Cash</span><b class="num">${money(b.cash)}</b></div></div>
-      <div class="scroll"><table><thead><tr><th>Stock</th><th>Shares</th><th>Price</th><th>Value</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No positions.</td></tr>'}</tbody></table></div></div>`;
+      ${vsHold}<div class="scroll"><table><thead><tr><th>Stock</th><th>Shares</th><th>Price</th><th>Value</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No positions.</td></tr>'}</tbody></table></div></div>`;
   }).join('');
-  $('ledger').innerHTML = (st.ledger || []).slice().reverse().map(r => `<tr><td class="num">${esc((r.t || '').replace('T', ' ').slice(0, 16))}</td><td>${r.book === 'ai' ? 'AI signals' : 'Top-ranked'}</td>
-    <td class="${r.side === 'buy' ? 'up' : 'down'}">${esc(r.side)}</td><td><b>${esc(r.symbol)}</b></td><td class="num">${r.notional != null ? money(r.notional) : (+r.qty).toFixed(3) + ' sh'}</td><td class="muted">${esc(r.status)}</td></tr>`).join('')
+  $('ledger').innerHTML = (st.ledger || []).slice().reverse().map(r => `<tr><td class="num">${esc((r.t || '').replace('T', ' ').slice(0, 16))}</td><td>${r.book === 'ai' ? 'AI signals' : r.book === 'rank' ? 'Top-ranked' : 'Overnight QQQ'}</td>
+    <td class="${r.side === 'buy' ? 'up' : 'down'}">${esc(r.side)}</td><td><b>${esc(r.symbol)}</b></td><td class="num">${r.notional != null ? money(r.notional) : (+r.qty).toFixed(3) + ' sh'}${r.tif === 'cls' ? ' <span class="dim">at close</span>' : r.tif === 'opg' ? ' <span class="dim">at open</span>' : ''}</td><td class="muted">${esc(r.status)}</td></tr>`).join('')
     || '<tr><td colspan="6" class="muted">No orders yet.</td></tr>';
   drawChart(hist);
 }
@@ -121,7 +129,7 @@ function drawChart(hist) {
   (drawChart.series || []).forEach(s => chart.removeSeries(s)); drawChart.series = [];
   if (hist.length < 1) { $('chartnote').textContent = 'The chart starts after the first trading day.'; return; }
   $('chartnote').textContent = hist.length < 2 ? 'One day so far; the lines appear from the second day.' : '';
-  for (const [k, col, title] of [['ai', '#a78bfa', 'AI signals'], ['rank', '#3b82f6', 'Top-ranked'], ['qqq', '#8a93a0', 'QQQ']]) {
+  for (const [k, col, title] of [['ai', '#a78bfa', 'AI signals'], ['rank', '#3b82f6', 'Top-ranked'], ['night', '#f0b90b', 'Overnight QQQ'], ['qqq', '#8a93a0', 'Hold QQQ']]) {
     const base = hist.find(h => h[k])?.[k]; if (!base) continue;
     const s = chart.addLineSeries({ color: col, lineWidth: k === 'qqq' ? 1 : 2, title, priceLineVisible: false });
     s.setData(hist.filter(h => h[k]).map(h => ({ time: h.date, value: 100 * h[k] / base }))); drawChart.series.push(s);
@@ -144,7 +152,7 @@ async function act(what) {
   if (r && r.output) $('lastrun').textContent = r.output.trim().split('\n').pop().slice(0, 160);
 }
 async function closeBook(k) {
-  if (!confirm(`Sell every paper position in ${k === 'all' ? 'both halves' : k === 'ai' ? 'the AI signals half' : 'the top-ranked half'}?`)) return;
+  if (!confirm(`Sell every paper position in ${k === 'all' ? 'all slices' : k === 'ai' ? 'the AI signals slice' : k === 'rank' ? 'the top-ranked slice' : 'the overnight QQQ slice'}?`)) return;
   $('lastrun').textContent = 'selling…';
   await post('/api/paper/close?book=' + k); await load();
 }

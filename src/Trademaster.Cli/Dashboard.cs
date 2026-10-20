@@ -276,7 +276,7 @@ public static class Dashboard
         app.MapPost("/api/paper/refresh", async () => Results.Json(new { output = await PaperTrade.Python("status") }));
         app.MapPost("/api/paper/close", async (string? book) =>
         {
-            var b = book is "ai" or "rank" ? book : "all";
+            var b = book is "ai" or "rank" or "night" ? book : "all";
             return Results.Json(new { output = await PaperTrade.Python("close", "--book", b) });
         });
         app.MapGet("/api/forward/runs", () =>
