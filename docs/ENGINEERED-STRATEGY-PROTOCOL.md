@@ -49,3 +49,13 @@ drag. Before the final check, an independent reviewer audits the code for look-a
 
 ## Live
 Only a passing design becomes a paper slice, compared with holding QQQ.
+
+## Amendment A (2026-10-21, after the development search, before the final period was opened)
+**What the search showed (development only):** all 288 designs lag QQQ (best: −5.6%/yr, IR −0.78; DSR 0.000, final
+stays closed). The cause is the sleeve's equal weighting: over 2019–2024 QQQ returned +22.1%/yr and the equal-weighted
+universe +2.2%/yr, a gap no stock signal in the grid can close.
+**Change:** a new grid dimension, the sleeve's base weight: `equal` (the 288 designs already run) or `size`, a
+weight ∝ the stock's 20-day dollar volume (`exp(log_dollar_vol20)`, a close proxy for market value; capped at 10% of
+the sleeve, the excess spread pro rata), multiplied by the same risk, attention and earnings factors. 288 more designs.
+**Selection and gate unchanged, over all 576 designs:** the highest development IR; the Deflated Sharpe Ratio counts
+576 trials; the final period opens only if DSR ≥ 0.95.
