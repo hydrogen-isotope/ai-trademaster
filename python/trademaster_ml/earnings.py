@@ -51,7 +51,8 @@ def fetch(max_age_days=30, symbols=None, log=print):
     def one(s):
         try:
             rows = _get(f"calendar/earnings-by-symbol/{s}")
-            keep = [{k: r.get(k) for k in ("date", "hour", "year", "quarter", "epsActual")} for r in rows if isinstance(r, dict) and r.get("date")]
+            keep = [{k: r.get(k) for k in ("date", "hour", "year", "quarter", "epsActual", "epsEstimate", "revenueActual", "revenueEstimate")}
+                    for r in rows if isinstance(r, dict) and r.get("date")]
             tmp = os.path.join(BY_SYM, f"{s}.json.tmp")
             json.dump(keep, open(tmp, "w"))
             os.replace(tmp, os.path.join(BY_SYM, f"{s}.json"))
@@ -59,7 +60,7 @@ def fetch(max_age_days=30, symbols=None, log=print):
             failed.append(s)
             log(f"[earnings] {s}: {type(e).__name__}: {str(e)[:120]}")
 
-    with ThreadPoolExecutor(3) as ex:
+    with ThreadPoolExecutor(6) as ex:
         for i, _ in enumerate(ex.map(one, todo)):
             if i % 250 == 0 and i:
                 log(f"[earnings] {i}/{len(todo)}")
