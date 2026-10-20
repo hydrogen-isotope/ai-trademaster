@@ -269,16 +269,15 @@ def keep_awake(on):
         ctypes.windll.kernel32.SetThreadExecutionState(0x80000000 | (0x00000001 if on else 0))
 
 
-# NASDAQ full-day closures (verify yearly against Nasdaq's official calendar).
-HOLIDAYS = {dt.date(2026, 11, 26), dt.date(2026, 12, 25), dt.date(2027, 1, 1)}
 
 
 def next_session(now_ny):
-    """The trading date whose regular session has not yet ended (weekends/listed holidays skipped)."""
+    """The trading date whose regular session has not yet ended (weekends and US market holidays skipped)."""
+    from .holidays import is_session
     d = now_ny.date()
     if now_ny.time() >= dt.time(16, 0):
         d += dt.timedelta(days=1)
-    while d.weekday() >= 5 or d in HOLIDAYS:
+    while not is_session(d):
         d += dt.timedelta(days=1)
     return d
 

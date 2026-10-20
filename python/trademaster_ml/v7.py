@@ -210,8 +210,8 @@ class Engine:
         return np.arange(self.P.day_start[d0] - self.a, self.P.day_start[d1 + 1] - self.a)
 
 
-def evaluate(E, d0, d1, label_prefix=""):
-    """Protocol metrics for every model over days d0..d1."""
+def evaluate(E, d0, d1, label_prefix="", return_daily=False):
+    """Protocol metrics for every model over days d0..d1 (and the per-day mean CRPS of each model if asked)."""
     P = E.P
     idx = E.rows(d0, d1)
     tt = P.t[E.a + idx]
@@ -268,7 +268,7 @@ def evaluate(E, d0, d1, label_prefix=""):
         a = [daily[name][i] for i in days]
         b = [daily["RW"][i] for i in days]
         res[name]["crps_vs_rw"] = block_bootstrap_diff(a, b)
-    return res
+    return (res, daily) if return_daily else res
 
 
 def print_table(res, title):

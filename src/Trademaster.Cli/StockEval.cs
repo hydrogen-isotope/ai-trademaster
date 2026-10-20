@@ -203,6 +203,26 @@ public static partial class StockEval
         return true;
     }
 
+    /// <summary>US market full-day holidays by rule (same rules as python/trademaster_ml/holidays.py).</summary>
+    public static bool IsUsHoliday(DateTime d)
+    {
+        int y = d.Year;
+        static DateTime Nth(int y, int m, DayOfWeek wd, int n) { var d = new DateTime(y, m, 1); d = d.AddDays(((int)wd - (int)d.DayOfWeek + 7) % 7); return d.AddDays(7 * (n - 1)); }
+        static DateTime Last(int y, int m, DayOfWeek wd) { var d = new DateTime(y, m, DateTime.DaysInMonth(y, m)); return d.AddDays(-(((int)d.DayOfWeek - (int)wd + 7) % 7)); }
+        static DateTime? Obs(DateTime d, bool newYear = false) => d.DayOfWeek switch
+        { DayOfWeek.Saturday => newYear ? null : d.AddDays(-1), DayOfWeek.Sunday => d.AddDays(1), _ => d };
+        static DateTime Easter(int y)
+        {
+            int a = y % 19, b = y / 100, c = y % 100, dd = b / 4, e = b % 4, f = (b + 8) / 25, g = (b - f + 1) / 3, h = (19 * a + b - dd - g + 15) % 30,
+                i = c / 4, k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = (a + 11 * h + 22 * l) / 451;
+            return new DateTime(y, (h + l - 7 * m + 114) / 31, (h + l - 7 * m + 114) % 31 + 1);
+        }
+        var days = new List<DateTime?> { Obs(new DateTime(y, 1, 1), true), Nth(y, 1, DayOfWeek.Monday, 3), Nth(y, 2, DayOfWeek.Monday, 3), Easter(y).AddDays(-2),
+            Last(y, 5, DayOfWeek.Monday), Obs(new DateTime(y, 7, 4)), Nth(y, 9, DayOfWeek.Monday, 1), Nth(y, 11, DayOfWeek.Thursday, 4), Obs(new DateTime(y, 12, 25)) };
+        if (y >= 2022) days.Add(Obs(new DateTime(y, 6, 19)));
+        return days.Contains(d.Date);
+    }
+
     /// <summary>The last finished session's date for a market: a weekday after its close plus 20 minutes (bars settle).</summary>
     public static string LastFinishedSession(string market, DateTimeOffset now)
     {
@@ -210,7 +230,7 @@ public static partial class StockEval
                                             : (OperatingSystem.IsWindows() ? "Eastern Standard Time" : "America/New_York", new TimeSpan(16, 20, 0));
         var local = TimeZoneInfo.ConvertTime(now, TimeZoneInfo.FindSystemTimeZoneById(tzId)).DateTime;
         var d = local.TimeOfDay >= close ? local.Date : local.Date.AddDays(-1);
-        while (d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday) d = d.AddDays(-1);
+        while (d.DayOfWeek is DayOfWeek.Saturday or DayOfWeek.Sunday || (market != "sgx" && IsUsHoliday(d))) d = d.AddDays(-1);
         return d.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
     }
 

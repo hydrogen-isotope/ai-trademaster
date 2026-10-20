@@ -281,14 +281,16 @@ def signal(p):
     return "buy" if p >= BUY_AT else "sell" if p <= SELL_AT else "none"
 
 
-def cone(close, asof, m, sd, R, days=5):
+def cone(close, asof, m, sd, R, days=5, market="nasdaq"):
     """Daily points from the close to the 5-day horizon for the chart. Only the day-5 values are the forecast; the
-    days in between scale the centre by h/5 and the spread by sqrt(h/5) (illustrative)."""
+    days in between scale the centre by h/5 and the spread by sqrt(h/5) (illustrative). NASDAQ dates skip US market
+    holidays; SGX dates skip weekends only (no SGX holiday calendar)."""
+    from .holidays import is_session
     q = v7.quantiles(np.array([m]), np.array([sd]), R)[0]
     pts, d = [{"date": asof, **{k: close for k in ("median", "lo50", "hi50", "lo80", "hi80", "lo95", "hi95")}}], datetime.fromisoformat(asof)
     for h in range(1, days + 1):
         d += timedelta(days=1)
-        while d.weekday() >= 5:
+        while d.weekday() >= 5 or (market == "nasdaq" and not is_session(d.date())):
             d += timedelta(days=1)
         a, b = h / days, math.sqrt(h / days)
         f = lambda i: float(close * math.exp(a * q[v7.I50] + b * (q[i] - q[v7.I50])))
@@ -387,7 +389,7 @@ def views(ctx, p_qwen, risk, h=5):
     sd_t = sd * RISK_SD[risk]
     m_t = m_for_p_up(p_tot, sd_t, R)
     m_q = m_for_p_up(float(np.clip(p_qwen, 0.02, 0.98)), sd, R)
-    mk = lambda mm, ss: {**dist(close, mm, ss, R), "cone": cone(close, asof, mm, ss, R, days=h), "m": mm, "sd": ss}
+    mk = lambda mm, ss: {**dist(close, mm, ss, R), "cone": cone(close, asof, mm, ss, R, days=h, market=ctx["market"]), "m": mm, "sd": ss}
     return {"total": {**mk(m_t, sd_t), "signal": signal(p_tot), "w": W_QWEN, "sd_mult": RISK_SD[risk]},
             "qwen": {**mk(m_q, sd), "signal": signal(float(np.clip(p_qwen, *P_CLIP)))},
             "model": {**mk(m, sd), "signal": signal(p_model)}}
@@ -420,9 +422,9 @@ def partial(ctx):
     """What the page can show before Qwen answers: price history and the model-only cone."""
     base = dist(ctx["close"], ctx["m"], ctx["sd"], ctx["R"])
     return {"status": "evaluating", "market": ctx["market"], "symbol": ctx["symbol"], "name": ctx["name"], "asof": ctx["asof"],
-            "close": ctx["close"], "history": ctx["history"], "model": {**base, "cone": cone(ctx["close"], ctx["asof"], ctx["m"], ctx["sd"], ctx["R"])},
+            "close": ctx["close"], "history": ctx["history"], "model": {**base, "cone": cone(ctx["close"], ctx["asof"], ctx["m"], ctx["sd"], ctx["R"], market=ctx["market"])},
             "facts": ctx["facts"], "rank": ctx["rank"], "industry": ctx["industry"], "peers": ctx["peers"], "market_news": ctx["market_news"],
-            "horizons": {str(h): {"model": {**dist(ctx["close"], x["m"], x["sd"], x["R"]), "cone": cone(ctx["close"], ctx["asof"], x["m"], x["sd"], x["R"], days=h)}}
+            "horizons": {str(h): {"model": {**dist(ctx["close"], x["m"], x["sd"], x["R"]), "cone": cone(ctx["close"], ctx["asof"], x["m"], x["sd"], x["R"], days=h, market=ctx["market"])}}
                          for h, x in sorted(ctx.get("hz", {}).items())}}
 
 

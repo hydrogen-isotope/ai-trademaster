@@ -25,7 +25,7 @@ from datetime import date, datetime, timedelta, timezone
 import numpy as np
 import torch
 
-from . import daily_data
+from . import daily_data, holidays
 from .futures import SPECS
 
 torch.set_num_threads(4)
@@ -39,18 +39,15 @@ GATE = dict(cov80_tol=0.06, cov95_tol=0.04, min_skill=-0.01)
 OUT = os.path.join("private", "reports", "daily_forecast")
 FC_DIR = os.path.join("private", "data", "forecasts")
 
-# NYSE full-day closures (verify yearly against NYSE's official calendar). COMEX settlements follow the same
-# business days closely enough for choosing the next 5 trading dates; history uses the dates actually observed.
-NYSE_HOLIDAYS = {date(2026, 11, 26), date(2026, 12, 25), date(2027, 1, 1), date(2027, 1, 18), date(2027, 2, 15),
-                 date(2027, 3, 26), date(2027, 5, 31), date(2027, 6, 18), date(2027, 7, 5), date(2027, 9, 6),
-                 date(2027, 11, 25), date(2027, 12, 24)}
+# NYSE full-day closures by rule (holidays.py). COMEX settlements follow the same business days closely enough for
+# choosing the next 5 trading dates; history uses the dates actually observed.
 
 
 def next_trading_days(d, n=H):
     out, x = [], d
     while len(out) < n:
         x += timedelta(days=1)
-        if x.weekday() < 5 and x not in NYSE_HOLIDAYS:
+        if holidays.is_session(x):
             out.append(x)
     return out
 
