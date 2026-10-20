@@ -119,6 +119,33 @@ def test_bracket_legs_settle_once_each():
     assert len(closed) == 1 and abs(closed[0]["pnl"] - 40.0) < 1e-9 and "P:done" in st["settled"]
 
 
+def test_intraday_slice_top5_every_30_min_and_flat_at_1550():
+    import importlib, json, os, tempfile, time as _t
+    importlib.reload(T)
+    d = tempfile.mkdtemp()
+    T.FORWARD = d
+    syms = [f"S{i}" for i in range(30)]
+    T.FROZEN_MANIFEST = os.path.join(d, "m.json")
+    json.dump({"symbols": syms, "is_etf": [False] * 30}, open(T.FROZEN_MANIFEST, "w"))
+    os.makedirs(os.path.join(d, "live-2026-10-20"))
+    now = _t.time()
+    rec = {"t": int(now) - 400, "label": "10:30", "valid": [True] * 30, "b1": [float(i) for i in range(30)]}
+    open(os.path.join(d, "live-2026-10-20", "predictions.jsonl"), "w").write(json.dumps(rec) + "\n")
+    sent = []
+    T._open_orders = lambda book: []
+    T._latest_prices = lambda ss: {x: 100.0 for x in ss}
+    T._order = lambda book, sym, side, qty=None, notional=None, log=print, **k: sent.append((sym, side, round(notional or qty)))
+    st = {"books": {"intraday": {"cash": 10000.0, "start": 10000.0, "holdings": {}}}}
+    T.intraday_step(st, {"timestamp": "2026-10-20T10:36:00-04:00", "is_open": True})
+    assert sorted(s_ for s_, side, _ in sent) == ["S25", "S26", "S27", "S28", "S29"] and all(n == 2000 for *_, n in sent[:4])
+    sent.clear()
+    T.intraday_step(st, {"timestamp": "2026-10-20T10:41:00-04:00", "is_open": True})       # same bar: no new trades
+    assert sent == []
+    st["books"]["intraday"]["holdings"] = {"S29": 20.0}
+    T.intraday_step(st, {"timestamp": "2026-10-20T15:51:00-04:00", "is_open": True})       # flat by the close
+    assert sent == [("S29", "sell", 20)]
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

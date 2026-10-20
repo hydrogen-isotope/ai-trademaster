@@ -34,8 +34,12 @@ PAPER = "https://paper-api.alpaca.markets"
 DIR = os.path.join("private", "reports", "paper")
 CONTROL, BOOK, LEDGER, EQUITY, STATUS = (os.path.join(DIR, f) for f in ("control.json", "book.json", "ledger.jsonl", "equity.jsonl", "status.json"))
 BOOKS = {"ai": "AI signals (Qwen + models, 5-day BUY)", "rank": "Top-ranked stocks (v6 top 10%)",
-         "night": "Overnight QQQ (buy at the close, sell at the next open)"}
-SPLIT = {"ai": 0.45, "rank": 0.45, "night": 0.10}
+         "night": "Overnight QQQ (buy at the close, sell at the next open)",
+         "intraday": "Intraday 30-minute model (top 5, every 30 min, flat by the close)"}
+SPLIT = {"ai": 0.40, "rank": 0.40, "night": 0.10, "intraday": 0.10}
+INTRA_TOP, INTRA_EVERY_S, INTRA_FLAT_MIN = 5, 1800, 15 * 60 + 50
+FORWARD = os.path.join("private", "data", "forward")
+FROZEN_MANIFEST = os.path.join("private", "models", "forward", "frozen-2026-10-17", "manifest.json")
 LABELS = {**BOOKS, "manual": "Your manual trades"}
 MANUAL, MANUAL_CLOSED = os.path.join(DIR, "manual.jsonl"), os.path.join(DIR, "manual_closed.jsonl")
 FINAL_STATES = ("filled", "canceled", "expired", "rejected", "done_for_day")
@@ -278,7 +282,56 @@ def _state(c, log=print):
         _save(BOOK, st)
         log(f"[paper] started: ${eq:,.2f} paper equity split {c['split']}")
     st["books"].setdefault("manual", {"cash": 0.0, "start": 0.0, "holdings": {}, "cost": {}})
+    for k in BOOKS:
+        if k not in st["books"]:
+            amt = st.get("start_equity", 0.0) * c["split"].get(k, 0.0)
+            st["books"][k] = {"cash": amt, "start": amt, "holdings": {}, "last_rebalance": None}
     return st
+
+
+def intraday_step(st, clock, log=print):
+    """The intraday slice: every 30 minutes hold the frozen 30-minute model's (B1) top INTRA_TOP stocks, long only, equal
+    weight; from 15:50 New York, and on the first run of a later day, sell everything. Uses the live forward test's
+    latest prediction (private/data/forward/live-<date>/predictions.jsonl), only if it is under 10 minutes old."""
+    b = st["books"]["intraday"]
+    now = datetime.fromisoformat(str(clock["timestamp"])).astimezone(alpaca.NY)
+    today, mins = now.date().isoformat(), now.hour * 60 + now.minute
+    if _open_orders("intraday"):
+        return 0
+    stale = b.get("day") and b["day"] != today
+    if b["holdings"] and (stale or mins >= INTRA_FLAT_MIN):
+        for sym, q in list(b["holdings"].items()):
+            _order("intraday", sym, "sell", qty=q, log=log)
+        b["note"] = "flat for the close" if not stale else "sold yesterday's leftovers"
+        return len(b["holdings"])
+    if mins >= INTRA_FLAT_MIN or not clock.get("is_open"):
+        return 0
+    path = os.path.join(FORWARD, f"live-{today}", "predictions.jsonl")
+    if not os.path.exists(path):
+        b["note"] = "waiting for the live 30-minute model"
+        return 0
+    last = None
+    with open(path) as f:
+        for line in f:
+            last = line
+    rec = json.loads(last) if last else None
+    if not rec or time.time() - rec["t"] > 600 + 300:              # the bar starts at t, completes at t + 300
+        b["note"] = "the live model's latest prediction is too old"
+        return 0
+    if b.get("last_t") and rec["t"] - b["last_t"] < INTRA_EVERY_S:
+        return 0
+    m = _load(FROZEN_MANIFEST, {})
+    syms, etf = m.get("symbols", []), m.get("is_etf", [])
+    cand = [(rec["b1"][i], s_) for i, s_ in enumerate(syms) if rec["valid"][i] and not (etf and etf[i])]
+    if len(cand) < 20:
+        b["note"] = f"model warming up ({len(cand)} stocks valid)"
+        return 0
+    want = [s_ for _, s_ in sorted(cand, reverse=True)[:INTRA_TOP]]
+    prices = _latest_prices(sorted(set(want) | set(b["holdings"])))
+    n = _rebalance("intraday", b, [s_ for s_ in want if s_ in prices], prices, log)
+    b["last_t"], b["day"], b["last_rebalance"], b["signals_asof"] = rec["t"], today, today, f"{rec['label']} ET bar"
+    b["note"] = f"holding the model's top {INTRA_TOP} from the {rec['label']} ET bar"
+    return n
 
 
 def run(a=None, log=print):
@@ -293,16 +346,17 @@ def run(a=None, log=print):
     st = _state(c, log)
     _settle(st, log)
     night = night_step(st, clock, log) if c["books"].get("night") and "night" in st["books"] else 0
+    intra = intraday_step(st, clock, log) if c["books"].get("intraday") and "intraday" in st["books"] else 0
     if not clock.get("is_open"):
         _save(BOOK, st)
         status(st, note="market closed: next open " + str(clock.get("next_open")))
-        return {"done": "market closed", "night_orders": night}
+        return {"done": "market closed", "night_orders": night, "intraday_orders": intra}
     day = str(clock["timestamp"])[:10]
     week = datetime.fromisoformat(day).isocalendar()[:2]
     done = {}
     for name in BOOKS:
         b = st["books"][name]
-        if name == "night" or not c["books"].get(name):
+        if name in ("night", "intraday") or not c["books"].get(name):
             continue
         last = b.get("last_rebalance")
         if name == "ai" and last == day:
@@ -318,7 +372,7 @@ def run(a=None, log=print):
     _settle(st, log)
     _save(BOOK, st)
     status(st)
-    return {"orders": done, "night_orders": night}
+    return {"orders": done, "night_orders": night, "intraday_orders": intra}
 
 
 def close(book, log=print):
@@ -360,7 +414,7 @@ def status(st=None, note=None, log=print):
                     p_["pnl"] = p_["value"] - cst if cst is not None else None
             out["books"][name] = {"label": LABELS.get(name, name), "enabled": c["books"].get(name, name == "manual"), "value": val, "start": b["start"],
                                   "return": val / b["start"] - 1 if b["start"] else None, "cash": b["cash"], "positions": pos,
-                                  "last_rebalance": b.get("last_rebalance"), "signals_asof": b.get("signals_asof")}
+                                  "last_rebalance": b.get("last_rebalance"), "signals_asof": b.get("signals_asof"), "note": b.get("note")}
         out["started"], out["qqq"] = st["started"], prices.get("QQQ")
         hist = [json.loads(l) for l in open(EQUITY)] if os.path.exists(EQUITY) else []
         today = datetime.now(alpaca.NY).date().isoformat() if hasattr(alpaca, "NY") else out["time"][:10]
@@ -485,7 +539,7 @@ def cancel(order_id, log=print):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["run", "status", "close", "order", "cancel"])
-    ap.add_argument("--book", choices=["ai", "rank", "night", "manual", "all"], default="all")
+    ap.add_argument("--book", choices=["ai", "rank", "night", "intraday", "manual", "all"], default="all")
     ap.add_argument("--json", default="{}")
     ap.add_argument("--id", default="")
     a = ap.parse_args()
