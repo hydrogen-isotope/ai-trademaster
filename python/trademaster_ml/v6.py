@@ -564,6 +564,37 @@ def rank(args):
     print(f"rankings {P.dates[last]}: {len(table)} stocks, model {label}; top: {', '.join(r['symbol'] for r in table[:10])}", flush=True)
 
 
+def rank_g(args=None, log=print):
+    """Today's ranking with G (LightGBM; the strongest long-only model of the 2025-26 final test, IC 0.068), refit on all
+    labelled rows with the last 12 months for early stopping -> rankings_g.json. Used by the paper auto-trader's
+    ranking slice (research only; R stays the adopted model for the Markets page)."""
+    import lightgbm as lgb
+    t0 = time.time()
+    P = Panel()
+    last = P.T - 1
+    X = np.hstack([P.X, regime(P)[P.t]]).astype(np.float32)
+    sch = latest_schedule(P)
+    tr, va = slice(*sch["train"]), slice(*sch["val"])
+    ok_tr, ok_va = np.isfinite(P.yrank[tr]), np.isfinite(P.yrank[va])
+    params = {**LGB_PARAMS, "num_threads": max(1, (os.cpu_count() or 4) - 2), "seed": 0}
+    rounds = params.pop("n_estimators")
+    dtr = lgb.Dataset(X[tr][ok_tr], P.yrank[tr][ok_tr], free_raw_data=True)
+    dva = lgb.Dataset(X[va][ok_va], P.yrank[va][ok_va], reference=dtr)
+    m = lgb.train(params, dtr, num_boost_round=rounds, valid_sets=[dva], callbacks=[lgb.early_stopping(50, verbose=False)])
+    rows = slice(*sch["pred"])
+    score = m.predict(X[rows], num_iteration=m.best_iteration)
+    syms = [P.symbols[j] for j in P.n[rows]]
+    order = np.argsort(-score)
+    out = {"asof": P.dates[last], "model": "G: LightGBM", "trees": int(m.best_iteration), "generated": datetime.now().isoformat(timespec="seconds"),
+           "ranking": [{"symbol": syms[i], "score": float(score[i]), "rank": k + 1} for k, i in enumerate(order)]}
+    tmp = os.path.join(OUT, "rankings_g.json.tmp")
+    json.dump(out, open(tmp, "w"))
+    os.replace(tmp, os.path.join(OUT, "rankings_g.json"))
+    log(f"rankings G {P.dates[last]}: {len(syms)} stocks, {m.best_iteration} trees ({time.time() - t0:.0f}s); top: "
+        f"{', '.join(syms[i] for i in order[:10])}")
+    return out
+
+
 def mlp_export_latest():
     P = Panel()
     X = np.hstack([P.X, regime(P)[P.t]]).astype(np.float32)

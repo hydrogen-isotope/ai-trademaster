@@ -123,6 +123,15 @@ def events_step():
         print(f"[refresh] events step skipped: {type(e).__name__}: {e}", flush=True)
 
 
+def rank_g_step():
+    """LightGBM ranking for the paper auto-trader's ranking slice (CPU, seconds)."""
+    from . import v6
+    try:
+        v6.rank_g()
+    except Exception as e:  # noqa: BLE001
+        print(f"[refresh] LightGBM ranking skipped: {type(e).__name__}: {e}", flush=True)
+
+
 def legacy_forecast_step():
     """The Watchlist's 5-Day Forecast tab (v2 GARCH-t for MU, NVDA, AMD, AAPL): daily closes, score the earlier
     forecasts, write the next one (CPU; the futures download in tools/daily-forecast.cmd is left out: it can cost money)."""
@@ -169,11 +178,12 @@ def run(args):
             # no new close: only the rolling news can have changed (e.g. weekend or pre-market headlines)
             news_step(args)
             events_step()
-        status("running", "price forecasts")
+            status("running", "price forecasts")
             v7.forecast(None)
             horizons_step()
             status("running", "rankings")
             v6.rank(None)
+            rank_g_step()
             indexes_step()
             legacy_forecast_step()
             sgx_step()
@@ -195,6 +205,7 @@ def run(args):
         horizons_step()
         status("running", "rankings")
         v6.rank(None)
+        rank_g_step()
         indexes_step()
         legacy_forecast_step()
         sgx_step()

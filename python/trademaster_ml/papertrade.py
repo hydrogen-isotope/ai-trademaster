@@ -33,7 +33,7 @@ from . import alpaca, holidays
 PAPER = "https://paper-api.alpaca.markets"
 DIR = os.path.join("private", "reports", "paper")
 CONTROL, BOOK, LEDGER, EQUITY, STATUS = (os.path.join(DIR, f) for f in ("control.json", "book.json", "ledger.jsonl", "equity.jsonl", "status.json"))
-BOOKS = {"ai": "AI signals (Qwen + models, 5-day BUY)", "rank": "Top-ranked stocks (v6 top 10%)",
+BOOKS = {"ai": "AI signals (Qwen + models, 5-day BUY)", "rank": "Top-ranked stocks (LightGBM top 20, daily)",
          "night": "Overnight QQQ (buy at the close, sell at the next open)",
          "intraday": "Intraday 30-minute model (top 5, every 30 min; keeps losers until break-even)",
          "focus": "NVDA & MU opening-range (buy if the first 5 minutes close up; keeps losers until break-even)"}
@@ -136,7 +136,14 @@ def targets_ai():
     return asof, [s for s, _ in buys[:MAX_AI]], len(idx)
 
 
+RANK_TOP = 20
+
+
 def targets_rank():
+    """The LightGBM ranking's top RANK_TOP (rankings_g.json, refit after each close); falls back to the ridge top decile."""
+    g = _load(os.path.join("private", "reports", "v6", "rankings_g.json"), {})
+    if g.get("ranking"):
+        return g.get("asof"), [r["symbol"] for r in g["ranking"][:RANK_TOP]]
     rk = _load(os.path.join("private", "reports", "v6", "rankings.json"), {})
     return rk.get("asof"), [r["symbol"] for r in rk.get("rankings", []) if r.get("decile") == 10]
 
@@ -516,7 +523,7 @@ def run(a=None, log=print):
         last = b.get("last_rebalance")
         if name == "ai" and last == day:
             continue
-        if name == "rank" and last and datetime.fromisoformat(last).isocalendar()[:2] == week:
+        if name == "rank" and last == day:                         # daily (was weekly with the ridge top decile)
             continue
         asof, want = (targets_ai()[:2] if name == "ai" else targets_rank())
         prices = _latest_prices(sorted(set(want) | set(b["holdings"])))
