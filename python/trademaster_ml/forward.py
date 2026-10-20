@@ -250,11 +250,15 @@ def fetch_all(symbols, out_dir):
     except Exception as e:  # keep the last good files
         return [f"download failed: {e}"]
     errors = []
+    ref = next((alpaca.regular_session(data.get(s, [])) for s in symbols if data.get(s)), [])
     for s in symbols:
         rows = alpaca.regular_session(data.get(s, []))
         if not rows:
             errors.append(f"{s}: no bars")
-            continue
+            if os.path.exists(os.path.join(out_dir, f"{s}-5m.json")) or not ref:
+                continue
+            nan = float("nan")                                 # e.g. delisted: missing values, so the stock is never valid
+            rows = [(r[0], nan, nan, nan, nan, 0) for r in ref]
         tmp = os.path.join(out_dir, f"{s}-5m.json.tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(alpaca.chart_json(rows), fh)
