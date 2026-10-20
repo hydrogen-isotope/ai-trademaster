@@ -50,3 +50,24 @@ no timing rule was ever tested on them.
 ## Live
 Only a passing design becomes a paper slice (exposure set from the daily close, traded near the next close), compared
 with holding QQQ. If none passes, nothing changes.
+
+## Results (added 2026-10-21 after the development search; the final period was not opened)
+Development 2000-01-03 → 2018-12-31, 78 designs. Holding QQQ: CAGR +3.2%, Sharpe 0.19, worst drawdown −83%.
+
+| selected design | CAGR | volatility | Sharpe | worst drawdown | alpha/yr | beta | alpha t (NW) |
+|---|---|---|---|---|---|---|---|
+| volatility target 25%, 60-day window, no leverage, no trend filter | +7.2% | 19.5% | 0.37 | −55% | +3.7% | 0.66 | +2.75 |
+
+**Deflated Sharpe Ratio 0.927 (gate 0.95): gate closed, the final period stays unopened, as written.** Close, but
+below the bar fixed in advance.
+
+What the grid shows (development only, average alpha t by choice):
+- **Volatility targeting is consistently positive:** every target level 1.8–1.9; the 60-day window slightly better
+  than 20 days (1.9 vs 1.75); 23 of 78 designs reach t ≥ 2, all of them volatility-targeted.
+- **Trend filters weaken it** (no filter 2.4, 200-day 1.65, 100-day 1.34) and trade far more (12–25× a year).
+- **Leverage adds return but not significance** (caps 1 / 1.5 / 2: 1.82 / 1.78 / 1.71); a 2× version (30% target) earned +10.4%
+  CAGR vs +3.2% for QQQ, with a −64% worst drawdown.
+
+**Reading.** The most promising effect found in any study here, consistent with the published evidence, but not proven
+under the rule set in advance. A follow-up must test it on data it was not chosen on (see
+`VOL-TARGET-REPLICATION-PROTOCOL.md`) rather than relax this gate.
