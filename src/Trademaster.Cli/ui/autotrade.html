@@ -56,6 +56,9 @@ button.go:disabled{opacity:.5}
 .tmsg{padding:0 16px 12px;font-size:12.5px;color:var(--muted)}
 .ctx{padding:0 16px 12px;font-size:12px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 14px}
 .ctx b{color:var(--text)}
+.trade label.chk{flex-direction:row;align-items:center;gap:6px;padding-bottom:9px;text-transform:none;letter-spacing:0;font-size:13px;color:var(--text)}
+.trade label.chk input{width:auto}
+#exhint{padding:0 16px 10px;font-size:12px;color:var(--muted)}
 @media (max-width:640px){.books{grid-template-columns:1fr}main{padding:10px}}
 </style>
 </head>
@@ -85,9 +88,13 @@ button.go:disabled{opacity:.5}
       <label><span id="tamtlab">Dollars</span><input id="tamt" type="number" min="0" step="any" placeholder="1000"></label>
       <label>Order<select id="ttype" onchange="typeChange()"><option value="market">market</option><option value="limit">limit</option></select></label>
       <label id="tlimwrap" style="display:none">Limit price<input id="tlim" type="number" min="0" step="0.01"></label>
+      <label class="chk"><span><input type="checkbox" id="texit" onchange="exitChange()"> Target &amp; stop</span></label>
+      <label class="ex" style="display:none">Take profit at<input id="ttp" type="number" min="0" step="0.01" oninput="exitHint()"></label>
+      <label class="ex" style="display:none">Stop loss at<input id="tsl" type="number" min="0" step="0.01" oninput="exitHint()"></label>
       <button class="go" id="tgo" onclick="submitTrade()">Place paper order</button>
     </div>
     <div class="ctx" id="tctx"></div>
+    <div id="exhint" style="display:none"></div>
     <div class="tmsg" id="tmsg">Market orders fill right away while the US market is open (9:30 AM - 4 PM New York); outside those hours they wait for the next open.</div>
   </div>
   <div class="panel" id="mypanel">
@@ -159,18 +166,18 @@ function renderManual(st) {
   const rows = (m.positions || []).map(p => `<tr><td><b>${esc(p.symbol)}</b></td><td class="num">${(+p.qty).toFixed(4)}</td><td class="num">${money(p.avg_entry)}</td>
     <td class="num">${money(p.price)}</td><td class="num">${money(p.value)}</td><td class="num ${p.pnl > 0 ? 'up' : p.pnl < 0 ? 'down' : ''}">${p.pnl == null ? '—' : (p.pnl > 0 ? '+' : '') + money(p.pnl)}
     ${p.avg_entry ? ` <span class="dim">(${((p.price / p.avg_entry - 1) * 100).toFixed(2)}%)</span>` : ''}</td>
-    <td><button class="btn" onclick="sellAll('${esc(p.symbol)}', ${p.qty})">Sell</button></td></tr>`).join('');
+    <td><button class="btn" onclick="sellAll('${esc(p.symbol)}', ${p.qty})">Sell</button> <button class="btn" onclick="protect('${esc(p.symbol)}', ${Math.floor(p.qty)}, ${p.price || 0})" title="Set a take-profit and a stop-loss for this holding">Target &amp; stop</button></td></tr>`).join('');
   $('mypos').innerHTML = rows || '<tr><td colspan="7" class="muted">No positions yet. Place a paper order above.</td></tr>';
   const wr = ms.closed ? ` · win rate ${Math.round(100 * ms.wins / ms.closed)}%` : '';
   $('mystats').textContent = ms.closed != null ? `${ms.closed} closed trade${ms.closed === 1 ? '' : 's'}${wr} · realised ${ms.realized_pnl >= 0 ? '+' : ''}${money(ms.realized_pnl)}` : '';
   const oo = ms.open_orders || [];
   $('myorders').style.display = oo.length ? '' : 'none';
   $('myorderrows').innerHTML = oo.map(o => `<tr><td><b>${esc(o.symbol)}</b></td><td class="${o.side === 'buy' ? 'up' : 'down'}">${esc(o.side)}</td>
-    <td class="num">${o.notional ? money(o.notional) : esc(o.qty) + ' sh'}</td><td>${esc(o.type)}${o.limit_price ? ' @ ' + money(o.limit_price) : ''}</td><td class="muted">${esc(o.status)}</td>
+    <td class="num">${o.notional ? money(o.notional) : esc(o.qty) + ' sh'}</td><td>${o.role === 'target' ? 'take profit' : o.role === 'stop' ? 'stop loss' : esc(o.type)}${o.limit_price ? ' @ ' + money(o.limit_price) : ''}${o.stop_price ? ' @ ' + money(o.stop_price) : ''}</td><td class="muted">${esc(o.status)}</td>
     <td><button class="btn danger" onclick="cancelOrder('${esc(o.id)}')">Cancel</button></td></tr>`).join('');
 }
 let side = 'buy';
-function setSide(s_) { side = s_; $('tbuy').classList.toggle('on', s_ === 'buy'); $('tsell').classList.toggle('on', s_ === 'sell'); }
+function setSide(s_) { side = s_; $('tbuy').classList.toggle('on', s_ === 'buy'); $('tsell').classList.toggle('on', s_ === 'sell'); exitHint(); }
 function unitChange() { $('tamtlab').textContent = $('tunit').value === 'usd' ? 'Dollars' : 'Shares'; if ($('ttype').value === 'limit' && $('tunit').value === 'usd') { $('tunit').value = 'qty'; unitChange(); } }
 function typeChange() { const lim = $('ttype').value === 'limit'; $('tlimwrap').style.display = lim ? '' : 'none'; if (lim) { $('tunit').value = 'qty'; unitChange(); } }
 let ctxT;
@@ -181,7 +188,7 @@ async function loadCtx() {
     const [q, e] = await Promise.all([fetch('/api/md/snapshots?symbols=' + encodeURIComponent(sym)).then(r => r.ok ? r.json() : {}),
       fetch('/api/stock/eval?market=nasdaq&symbol=' + encodeURIComponent(sym)).then(r => r.ok ? r.json() : null)]);
     const px = q[sym] && q[sym].last, parts = [];
-    if (px) parts.push(`Last <b>${money(px)}</b>`);
+    if (px) { parts.push(`Last <b>${money(px)}</b>`); lastPx = px; exitHint(); }
     const h = e && e.result && e.result.horizons;
     if (h && h['1']) parts.push(`AI 1-day: <b>${Math.round(h['1'].views.total.p_up * 100)}% rise</b> (${esc(h['1'].signal === 'none' ? 'hold' : h['1'].signal)})`);
     if (h && h['5']) parts.push(`5-day: <b>${Math.round(h['5'].views.total.p_up * 100)}%</b>`);
@@ -193,19 +200,46 @@ async function submitTrade() {
   const sym = $('tsym').value.trim().toUpperCase(), amt = parseFloat($('tamt').value), lim = $('ttype').value === 'limit' ? parseFloat($('tlim').value) : null;
   if (!sym || !(amt > 0)) { $('tmsg').textContent = 'Enter a stock and an amount.'; return; }
   if (lim !== null && !(lim > 0)) { $('tmsg').textContent = 'Enter a limit price.'; return; }
+  const ex = $('texit').checked, tp = ex ? parseFloat($('ttp').value) : null, sl = ex ? parseFloat($('tsl').value) : null;
+  if (ex && side === 'sell' && !(tp > 0 && sl > 0)) { $('tmsg').textContent = 'Protecting a holding needs both a target and a stop.'; return; }
+  if (ex && !(tp > 0 || sl > 0)) { $('tmsg').textContent = 'Enter a take-profit and/or a stop-loss price.'; return; }
   const what = $('tunit').value === 'usd' ? money(amt) + ' of' : amt + ' shares of';
-  if (!confirm(`Place a PAPER ${side.toUpperCase()} order: ${what} ${sym}${lim ? ' at a limit of ' + money(lim) : ' at market'}?
-
-Simulated money only.`)) return;
+  if (!confirm(`Place a PAPER ${side.toUpperCase()} order: ${what} ${sym}${lim ? ' at a limit of ' + money(lim) : side === 'sell' && ex ? '' : ' at market'}` +
+    `${ex ? `\nTake profit at ${tp ? money(tp) : '-'}, stop loss at ${sl ? money(sl) : '-'}` : ''}?\n\nSimulated money only.`)) return;
   $('tgo').disabled = true; $('tmsg').textContent = 'Sending...';
-  const spec = { symbol: sym, side, ...( $('tunit').value === 'usd' ? { notional: amt } : { qty: amt }), ...(lim ? { limit: lim } : {}) };
+  const spec = { symbol: sym, side, ...( $('tunit').value === 'usd' ? { notional: amt } : { qty: amt }), ...(lim ? { limit: lim } : {}),
+    ...(ex && tp ? { take_profit: tp } : {}), ...(ex && sl ? { stop_loss: sl } : {}) };
   const r = await post('/api/paper/order', spec);
   $('tgo').disabled = false;
   const out = (r && r.output || '').trim(), line = out.split('\n').filter(Boolean).pop() || '';
   $('tmsg').textContent = /refused|Error|HTTP/.test(out) ? 'Not placed: ' + line.replace(/^.*refused: /, '').slice(0, 200) : 'Order sent: ' + line.slice(0, 200);
   load();
 }
+let lastPx = null;
+function exitChange() {
+  const on = $('texit').checked;
+  document.querySelectorAll('.trade .ex').forEach(e => e.style.display = on ? '' : 'none');
+  $('exhint').style.display = on ? '' : 'none';
+  if (on) {
+    $('tunit').value = 'qty'; unitChange();
+    if (lastPx && !$('ttp').value) { $('ttp').value = (lastPx * 1.015).toFixed(2); $('tsl').value = (lastPx * 0.985).toFixed(2); }
+  }
+  exitHint();
+}
+function exitHint() {
+  if (!$('texit').checked) return;
+  const tp = parseFloat($('ttp').value), sl = parseFloat($('tsl').value), base = $('ttype').value === 'limit' ? parseFloat($('tlim').value) : lastPx;
+  const f = v => base && v ? ` (${v > base ? '+' : ''}${((v / base - 1) * 100).toFixed(2)}%)` : '';
+  $('exhint').innerHTML = (side === 'buy'
+    ? 'Bracket order: when the buy fills, a take-profit sell and a stop-loss sell wait together; when one fills, the other is cancelled. Whole shares only.'
+    : 'Protect a holding: a take-profit sell and a stop-loss sell wait together; when one fills, the other is cancelled.') +
+    ` Target ${tp ? money(tp) : '—'}${f(tp)}, stop ${sl ? money(sl) : '—'}${f(sl)}. Day orders: anything not filled by the 4 PM New York close is cancelled.`;
+}
 function sellAll(sym, qty) { $('tsym').value = sym; setSide('sell'); $('tunit').value = 'qty'; unitChange(); $('ttype').value = 'market'; typeChange(); $('tamt').value = qty; window.scrollTo(0, 0); loadCtx(); }
+function protect(sym, qty, px) {
+  sellAll(sym, qty); $('texit').checked = true; lastPx = px || lastPx;
+  $('ttp').value = lastPx ? (lastPx * 1.015).toFixed(2) : ''; $('tsl').value = lastPx ? (lastPx * 0.985).toFixed(2) : ''; exitChange();
+}
 async function cancelOrder(id) { if (!confirm('Cancel this paper order?')) return; await post('/api/paper/cancel?id=' + encodeURIComponent(id)); load(); }
 (() => { const m = location.hash.match(/symbol=([A-Za-z.]+)/); if (m) { $('tsym').value = m[1].toUpperCase(); loadCtx(); } })();
 function drawChart(hist) {

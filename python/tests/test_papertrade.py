@@ -72,7 +72,7 @@ def test_manual_orders_refuse_shorts_and_bad_input():
     T._append = lambda path, rec: None
     T.context = lambda sym: {}
     sent = []
-    T._order = lambda book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None: sent.append((book, sym, side, qty, notional, limit)) or {"id": "x"}
+    T._order = lambda book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None, take_profit=None, stop_loss=None:         sent.append((book, sym, side, qty, notional, limit) + ((take_profit, stop_loss) if take_profit or stop_loss else ())) or {"id": "x"}
     T.time.sleep = lambda s: None
     for spec in ({"symbol": "MU", "side": "sell", "qty": 3}, {"symbol": "NVDA", "side": "sell", "qty": 1}, {"symbol": "MU", "side": "buy"},
                  {"symbol": "MU", "side": "buy", "notional": 100, "limit": 850}, {"symbol": "MU X", "side": "buy", "qty": 1}):
@@ -85,6 +85,38 @@ def test_manual_orders_refuse_shorts_and_bad_input():
     T.manual_order({"symbol": "mu", "side": "sell", "notional": 900})            # $900 of a $900 stock = 1 share of the 2 held
     T.manual_order({"symbol": "MU", "side": "buy", "qty": 1, "limit": 850})
     assert sent == [("manual", "MU", "sell", 1.0, None, None), ("manual", "MU", "buy", 1.0, None, 850.0)]
+    # target / stop: whole shares, target above and stop below the price, both needed to protect a holding
+    for spec in ({"symbol": "MU", "side": "buy", "notional": 900, "take_profit": 950}, {"symbol": "MU", "side": "buy", "qty": 1.5, "take_profit": 950},
+                 {"symbol": "MU", "side": "buy", "qty": 1, "take_profit": 890}, {"symbol": "MU", "side": "buy", "qty": 1, "stop_loss": 910},
+                 {"symbol": "MU", "side": "sell", "qty": 1, "take_profit": 950}):
+        try:
+            T.manual_order(spec)
+            raise AssertionError(f"accepted {spec}")
+        except SystemExit:
+            pass
+    T.manual_order({"symbol": "MU", "side": "buy", "qty": 2, "take_profit": 930, "stop_loss": 880})
+    T.manual_order({"symbol": "MU", "side": "sell", "qty": 1, "take_profit": 930, "stop_loss": 880})
+    assert sent[-2:] == [("manual", "MU", "buy", 2.0, None, None, 930.0, 880.0), ("manual", "MU", "sell", 1.0, None, None, 930.0, 880.0)]
+
+
+def test_bracket_legs_settle_once_each():
+    import importlib
+    importlib.reload(T)                                                          # undo the earlier tests' stubs
+    T._req = lambda method, path, body=None, params=None: {
+        "id": "P", "status": "filled", "side": "buy", "filled_qty": "10", "filled_avg_price": "200",
+        "legs": [{"id": "TP", "status": "filled", "side": "sell", "type": "limit", "filled_qty": "10", "filled_avg_price": "204"},
+                 {"id": "SL", "status": "canceled", "side": "sell", "type": "stop", "filled_qty": "0", "filled_avg_price": None}]}
+    import json, os, tempfile
+    d = tempfile.mkdtemp()
+    T.LEDGER, T.MANUAL_CLOSED = os.path.join(d, "l.jsonl"), os.path.join(d, "c.jsonl")
+    T._append = lambda path, rec: open(path, "a").write(json.dumps(rec) + "\n")
+    T._append(T.LEDGER, {"book": "manual", "symbol": "NVDA", "side": "buy", "order_id": "P", "class": "bracket"})
+    st = {"books": {"manual": {"cash": 0.0, "start": 0.0, "holdings": {}, "cost": {}}}}
+    T._settle(st); T._settle(st)
+    m = st["books"]["manual"]
+    assert m["holdings"] == {} and abs(m["cash"] - 40.0) < 1e-9                  # bought 10 at 200, target sold 10 at 204
+    closed = [json.loads(l) for l in open(T.MANUAL_CLOSED)]
+    assert len(closed) == 1 and abs(closed[0]["pnl"] - 40.0) < 1e-9 and "P:done" in st["settled"]
 
 
 if __name__ == "__main__":

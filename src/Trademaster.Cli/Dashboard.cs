@@ -280,7 +280,7 @@ public static class Dashboard
             var body = await System.Text.Json.Nodes.JsonNode.ParseAsync(req.Body) as System.Text.Json.Nodes.JsonObject;
             if (body is null) return Results.BadRequest();
             var spec = new System.Text.Json.Nodes.JsonObject();
-            foreach (var k in new[] { "symbol", "side", "qty", "notional", "limit" })
+            foreach (var k in new[] { "symbol", "side", "qty", "notional", "limit", "take_profit", "stop_loss" })
                 if (body[k] is not null) spec[k] = body[k]!.DeepClone();
             return Results.Json(new { output = await PaperTrade.PythonWait("order", "--json", spec.ToJsonString()) });
         });

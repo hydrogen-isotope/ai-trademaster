@@ -38,6 +38,8 @@ BOOKS = {"ai": "AI signals (Qwen + models, 5-day BUY)", "rank": "Top-ranked stoc
 SPLIT = {"ai": 0.45, "rank": 0.45, "night": 0.10}
 LABELS = {**BOOKS, "manual": "Your manual trades"}
 MANUAL, MANUAL_CLOSED = os.path.join(DIR, "manual.jsonl"), os.path.join(DIR, "manual_closed.jsonl")
+FINAL_STATES = ("filled", "canceled", "expired", "rejected", "done_for_day")
+OPEN_STATES = ("new", "accepted", "pending_new", "partially_filled", "held", "accepted_for_bidding")
 MAX_AI = 20
 MIN_TRADE = 25.0                 # dollars: smaller differences from the target are left alone
 DRIFT = 0.20                     # rebalance a holding only when it is more than 20% away from its target value
@@ -133,9 +135,19 @@ def targets_rank():
 
 # ---------------------------------------------------------------- orders
 
-def _order(book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None):
+def _order(book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None, take_profit=None, stop_loss=None):
     body = {"symbol": sym, "side": side, "type": "limit" if limit else "market", "time_in_force": tif,
             "client_order_id": f"tm-{book}-{int(time.time() * 1000)}-{sym}"[:48]}
+    exits = None
+    if take_profit or stop_loss:                    # buy: bracket (entry + target + stop); sell: one-cancels-other exit
+        exits = "bracket" if side == "buy" else "oco"
+        body["order_class"] = exits
+        if take_profit:
+            body["take_profit"] = {"limit_price": f"{take_profit:.2f}"}
+        if stop_loss:
+            body["stop_loss"] = {"stop_price": f"{stop_loss:.2f}"}
+        if exits == "oco":                          # the OCO parent is the take-profit limit itself
+            body["type"], body["limit_price"] = "limit", f"{take_profit:.2f}"
     if limit:
         body["limit_price"] = f"{limit:.2f}"
     if notional is not None:
@@ -144,7 +156,8 @@ def _order(book, sym, side, qty=None, notional=None, log=print, tif="day", limit
         body["qty"] = f"{qty:.9f}".rstrip("0").rstrip(".")
     o = _req("POST", "/v2/orders", body)
     _append(LEDGER, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "book": book, "symbol": sym, "side": side,
-                     "qty": qty, "notional": notional, "tif": tif, "order_id": o.get("id"), "status": o.get("status")})
+                     "qty": qty, "notional": notional, "tif": tif, "order_id": o.get("id"), "status": o.get("status"),
+                     **({"class": exits, "take_profit": take_profit, "stop_loss": stop_loss} if exits else {})})
     log(f"[paper] {book}: {side} {sym} " + (f"${notional:.2f}" if notional is not None else f"{qty} sh") + (f" ({tif})" if tif != "day" else ""))
     return o
 
@@ -155,32 +168,41 @@ def _settle(book_state, log=print):
     pending = [json.loads(l) for l in open(LEDGER)] if os.path.exists(LEDGER) else []
     for rec in pending:
         oid = rec.get("order_id")
-        if not oid or oid in seen:
+        if not oid or oid in seen or f"{oid}:done" in seen:
             continue
-        o = _req("GET", f"/v2/orders/{oid}")
-        if o.get("status") not in ("filled", "canceled", "expired", "rejected", "done_for_day"):
-            continue
-        q, px = float(o.get("filled_qty") or 0), float(o.get("filled_avg_price") or 0)
-        b = book_state["books"].setdefault(rec["book"], {"cash": 0.0, "start": 0.0, "holdings": {}})
-        sign = 1 if rec["side"] == "buy" else -1
-        if rec["book"] == "manual" and q > 0:
-            cost = b.setdefault("cost", {})
-            held = b["holdings"].get(rec["symbol"], 0.0)
-            if sign > 0:
-                cost[rec["symbol"]] = cost.get(rec["symbol"], 0.0) + q * px
-            elif held > 0:
-                avg = cost.get(rec["symbol"], 0.0) / held
-                cost[rec["symbol"]] = cost.get(rec["symbol"], 0.0) - avg * q
-                _append(MANUAL_CLOSED, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "symbol": rec["symbol"], "qty": q,
-                                        "avg_entry": avg, "exit": px, "pnl": (px - avg) * q, "ret": px / avg - 1 if avg else None,
-                                        "order_id": oid})
-        b["holdings"][rec["symbol"]] = round(b["holdings"].get(rec["symbol"], 0.0) + sign * q, 9)
-        if abs(b["holdings"][rec["symbol"]]) < 1e-9:
-            b["holdings"].pop(rec["symbol"])
-            b.get("cost", {}).pop(rec["symbol"], None)
-        b["cash"] -= sign * q * px
-        seen.add(oid)
+        o = _req("GET", f"/v2/orders/{oid}", params={"nested": "true"})
+        parts = [o] + list(o.get("legs") or [])                   # bracket / OCO: the target and stop legs fill separately
+        if all(x.get("status") in FINAL_STATES for x in parts):
+            seen.add(f"{oid}:done")
+        for x in parts:
+            if x.get("id") in seen or x.get("status") not in FINAL_STATES:
+                continue
+            seen.add(x["id"])
+            _apply_fill(book_state, rec, x, log)
     book_state["settled"] = sorted(seen)
+
+
+def _apply_fill(book_state, rec, o, log=print):
+    oid = o.get("id")
+    q, px = float(o.get("filled_qty") or 0), float(o.get("filled_avg_price") or 0)
+    b = book_state["books"].setdefault(rec["book"], {"cash": 0.0, "start": 0.0, "holdings": {}})
+    sign = 1 if o.get("side", rec["side"]) == "buy" else -1
+    if rec["book"] == "manual" and q > 0:
+        cost = b.setdefault("cost", {})
+        held = b["holdings"].get(rec["symbol"], 0.0)
+        if sign > 0:
+            cost[rec["symbol"]] = cost.get(rec["symbol"], 0.0) + q * px
+        elif held > 0:
+            avg = cost.get(rec["symbol"], 0.0) / held
+            cost[rec["symbol"]] = cost.get(rec["symbol"], 0.0) - avg * q
+            _append(MANUAL_CLOSED, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "symbol": rec["symbol"], "qty": q,
+                                    "avg_entry": avg, "exit": px, "pnl": (px - avg) * q, "ret": px / avg - 1 if avg else None,
+                                    "order_id": oid})
+    b["holdings"][rec["symbol"]] = round(b["holdings"].get(rec["symbol"], 0.0) + sign * q, 9)
+    if abs(b["holdings"][rec["symbol"]]) < 1e-9:
+        b["holdings"].pop(rec["symbol"])
+        b.get("cost", {}).pop(rec["symbol"], None)
+    b["cash"] -= sign * q * px
 
 
 def _rebalance(name, b, want, prices, log=print):
@@ -210,9 +232,11 @@ def _open_orders(book):
     out = []
     for rec in ([json.loads(l) for l in open(LEDGER)] if os.path.exists(LEDGER) else []):
         if rec.get("book") == book and rec.get("order_id"):
-            o = _req("GET", f"/v2/orders/{rec['order_id']}")
-            if o.get("status") in ("new", "accepted", "pending_new", "partially_filled", "held", "accepted_for_bidding"):
-                out.append(o)
+            o = _req("GET", f"/v2/orders/{rec['order_id']}", params={"nested": "true"})
+            for x in [o] + list(o.get("legs") or []):
+                if x.get("status") in OPEN_STATES:
+                    out.append({**x, "role": "entry" if x is o and rec.get("class") != "oco" else
+                                ("target" if x.get("type") == "limit" else "stop" if x.get("type") in ("stop", "stop_limit") else "")})
     return out
 
 
@@ -401,6 +425,8 @@ def manual_order(spec, log=print):
     qty = float(spec["qty"]) if spec.get("qty") not in (None, "") else None
     notional = float(spec["notional"]) if spec.get("notional") not in (None, "") else None
     limit = float(spec["limit"]) if spec.get("limit") not in (None, "") else None
+    tp = float(spec["take_profit"]) if spec.get("take_profit") not in (None, "") else None
+    sl = float(spec["stop_loss"]) if spec.get("stop_loss") not in (None, "") else None
     if (qty is None) == (notional is None) or (qty or notional or 0) <= 0:
         raise SystemExit("refused: give either a share quantity or a dollar amount")
     if notional is not None and limit:
@@ -417,9 +443,23 @@ def manual_order(spec, log=print):
         if held <= 0 or want > held * 1.0001:
             raise SystemExit(f"refused: you hold {held:g} {sym} in manual trades (long only; nothing to short)")
         qty, notional = min(want, held), None
-    o = _order("manual", sym, side, qty=qty, notional=notional, log=log, limit=limit)
+    if tp or sl:
+        if qty is None or abs(qty - round(qty)) > 1e-9:
+            raise SystemExit("refused: a target/stop order needs a whole number of shares")
+        qty = float(round(qty))
+        base = limit or px
+        if tp and tp <= base + 0.01:
+            raise SystemExit(f"refused: the target {tp:.2f} must be above the {'limit' if limit else 'current'} price {base:.2f}")
+        if sl and sl >= base - 0.01:
+            raise SystemExit(f"refused: the stop {sl:.2f} must be below the {'limit' if limit else 'current'} price {base:.2f}")
+        if side == "sell" and not (tp and sl):
+            raise SystemExit("refused: protecting a holding needs both a target and a stop (or use a plain limit sell)")
+        if side == "sell" and limit:
+            raise SystemExit("refused: a protective exit uses the target as its limit; leave the limit price empty")
+    o = _order("manual", sym, side, qty=qty, notional=notional, log=log, limit=limit, take_profit=tp, stop_loss=sl)
     _append(MANUAL, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "order_id": o.get("id"), "symbol": sym, "side": side,
-                     "qty": qty, "notional": notional, "limit": limit, "price_at_order": px, "context": context(sym)})
+                     "qty": qty, "notional": notional, "limit": limit, "take_profit": tp, "stop_loss": sl, "price_at_order": px,
+                     "context": context(sym)})
     _save(BOOK, st)
     time.sleep(2)
     _settle(st, log)
@@ -430,6 +470,11 @@ def manual_order(spec, log=print):
 
 def cancel(order_id, log=print):
     mine = {json.loads(l).get("order_id") for l in open(MANUAL)} if os.path.exists(MANUAL) else set()
+    for parent in list(mine):                                      # a target or stop leg of one of the user's orders
+        if parent and order_id not in mine:
+            o = _req("GET", f"/v2/orders/{parent}", params={"nested": "true"})
+            if any(x.get("id") == order_id for x in o.get("legs") or []):
+                mine.add(order_id)
     if order_id not in mine:
         raise SystemExit("refused: not one of your manual orders")
     _req("DELETE", f"/v2/orders/{order_id}")
