@@ -610,11 +610,11 @@ def label_decisions(log=print):
         for s_ in (r["symbol"], "QQQ"):
             key = "" if s_ == r["symbol"] else "qqq_"
             try:
-                if f"{key}ret_30m" not in o and now > t0 + 1800 + 300:
+                if f"{key}ret_30m" not in o and now > t0 + 1800 + 1000:   # the free plan serves SIP data only after 15 minutes
                     b = alpaca.get_bars([s_], "5Min", t0 - 300, t0 + 1800, feed="sip", creds=creds, pause=0.1)[s_]
                     if len(b) >= 2:
                         o[f"{key}ret_30m"] = sign * (b[-1][4] / b[0][4] - 1)
-                daily = alpaca.get_bars([s_], "1Day", t0 - 5 * 86400, min(now, t0 + 12 * 86400), feed="sip", creds=creds, pause=0.1)[s_]
+                daily = alpaca.get_bars([s_], "1Day", t0 - 5 * 86400, min(now - 1000, t0 + 12 * 86400), feed="sip", creds=creds, pause=0.1)[s_]
                 day0 = datetime.fromtimestamp(t0, alpaca.NY).date()
                 after = [x for x in daily if datetime.fromtimestamp(x[0], alpaca.NY).date() >= day0]
                 base = o["fill_price"] if not key else (next((x[1] for x in after), None))
