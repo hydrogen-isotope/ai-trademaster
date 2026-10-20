@@ -28,3 +28,18 @@ QQQ and SPY: 2 bps base (also 1 and 4). MU and NVDA: 5 bps base (also 2 and 10).
   t ≥ 2 at the base cost (t over trades; one trade per day).
 - Also reported: hit rate, annualised net return (sum of daily trade returns per year) and the cost at which the
   mean breaks even.
+
+## Results (added 2026-10-20 after the complete run; nothing above was changed)
+Base costs (QQQ/SPY 2 bps, MU/NVDA 5 bps round trip); mean per trade, t over trades.
+
+| rule | stock | development gross / net (t) | hold-out gross / net (t) | long-only net dev / hold-out | verdict |
+|---|---|---|---|---|---|
+| R1 intraday momentum | QQQ | +0.2 / −1.8 bps (−1.9) | −0.3 / −2.3 bps (−2.6) | −2.2 / −1.9 | fails |
+| R1 intraday momentum | SPY | −0.6 / −2.6 bps (−3.1) | +0.5 / −1.6 bps (−2.2) | −3.4 / −1.5 | fails |
+| R2 opening-range breakout | QQQ | +3.9 / +1.9 bps (+1.2) | +2.1 / +0.1 bps (+0.0) | +2.3 / −0.0 | fails |
+| R2 opening-range breakout | MU | −1.3 / −6.3 bps (−1.7) | −1.8 / −6.8 bps (−1.2) | −11.2 / −7.4 | fails |
+| R2 opening-range breakout | NVDA | +6.7 / +1.7 bps (+0.4) | +7.1 / +2.1 bps (+0.4) | +1.5 / +1.4 | fails |
+
+**No rule works.** Intraday momentum has no edge even before costs on QQQ or SPY in 2016–26. The opening-range breakout
+has a small, consistent edge before costs on QQQ (2–4 bps) and NVDA (about 7 bps), but costs leave about zero and the
+results are far from significant; on MU it loses before costs. This matches the independent replications.
