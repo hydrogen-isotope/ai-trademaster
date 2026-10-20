@@ -56,3 +56,32 @@ day** (average the trades of each day first, then t over days). Annual figures a
 `python/trademaster_ml/earnings_study.py` (event table and evaluation), `private/reports/earnings_study/` (events,
 development table, selection, hold-out result). Results are added to the end of this file without changing anything
 above.
+
+## Results (added 2026-10-20 after the complete run; nothing above was changed)
+Run as a workflow of 7 Claude Sonnet agents: one built the events and evaluation code, three tested H1–H3 on
+development, and three independent reviewers tried to refute each result and recomputed it with their own scripts.
+
+**Events:** 18,550 in development and 13,442 in the hold-out. Only 0.17% have a known report time, so the
+known-time robustness run is nearly empty (5–31 trades per rule) and cannot test the unknown-time rule.
+
+**Development (2016–22), net market-adjusted return per trade, t clustered by reaction day:**
+
+| rule | trades | net (bps) | t | at 2× costs | long-only net |
+|---|---|---|---|---|---|
+| H1 continuation, gap ≥ 1σ / 2σ / 3σ | 10,861 / 6,283 / 3,808 | −30.0 / −26.7 / −25.3 | −2.04 / −2.16 / −0.27 | −45 / −42 / −40 | −51 / −56 / −49 |
+| H1 reversal, gap ≥ 1σ / 2σ / 3σ | 10,861 / 6,283 / 3,808 | 0.0 / −3.3 / −4.7 | −0.92 / −0.26 / −1.84 | −15 / −18 / −20 | −23 / −34 / −27 |
+| H2 surprise on day 0, (a) / (b) | 11,648 / 7,955 | −14.6 / −21.8 | −1.47 / −1.26 | −30 / −37 | −29 / −27 |
+| H3 drift 5 days, (a) / (b) | 11,643 / 7,212 | +1.5 / +0.6 | −2.02 / −1.05 | −6.5 / −7.4 | −36 / −28 |
+| H3 drift 20 days, (a) / (b) | 11,625 / 7,205 | +7.2 / +7.5 | −1.58 / −0.86 | −0.8 / −0.5 | −141 / −107 |
+
+**Selection: no rule has development t ≥ 2 in the right direction, so H1, H2 and H3 are all dropped. The hold-out was
+not opened.** All three reviewers reproduced the numbers and could not overturn the conclusion:
+- H1: no rule turns positive with t ≥ 2 under other reaction-day definitions either (report day; next day). The
+  max-gap rule peeks at the next open, so "continuation loses" is not a reliable finding on its own.
+- H2: gross is about +0.4 bps per trade; the 15 bps round trip is the whole loss.
+- H3: 20-day drift is +7 bps per trade before the clustered t is considered, and below zero at 2× costs.
+
+**Reading.** On daily data, with costs at the open of 10 bps one-way, none of the standard earnings patterns is
+tradable in NASDAQ stocks in 2016–22. Earnings moves are large but their direction after the open is not predictable
+from the gap or the EPS surprise. An automated earnings strategy is not built on this evidence. A finer test would need
+report times (to trade the true first reaction) and intraday quotes; neither is in the current data.
