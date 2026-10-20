@@ -97,6 +97,11 @@ def test_manual_orders_refuse_shorts_and_bad_input():
     T.manual_order({"symbol": "MU", "side": "buy", "qty": 2, "take_profit": 930, "stop_loss": 880})
     T.manual_order({"symbol": "MU", "side": "sell", "qty": 1, "take_profit": 930, "stop_loss": 880})
     assert sent[-2:] == [("manual", "MU", "buy", 2.0, None, None, 930.0, 880.0), ("manual", "MU", "sell", 1.0, None, None, 930.0, 880.0)]
+    tifs = []
+    T._order = lambda book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None, take_profit=None, stop_loss=None: tifs.append(tif) or {"id": "x"}
+    T.manual_order({"symbol": "MU", "side": "buy", "qty": 1, "take_profit": 930, "stop_loss": 880})
+    T.manual_order({"symbol": "MU", "side": "buy", "qty": 1})
+    assert tifs == ["gtc", "day"]
 
 
 def test_bracket_legs_settle_once_each():

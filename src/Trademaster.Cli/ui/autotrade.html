@@ -235,7 +235,7 @@ function exitHint() {
   $('exhint').innerHTML = (side === 'buy'
     ? 'Bracket order: when the buy fills, a take-profit sell and a stop-loss sell wait together; when one fills, the other is cancelled. Whole shares only.'
     : 'Protect a holding: a take-profit sell and a stop-loss sell wait together; when one fills, the other is cancelled.') +
-    ` Target ${tp ? money(tp) : '—'}${f(tp)}, stop ${sl ? money(sl) : '—'}${f(sl)}. Day orders: anything not filled by the 4 PM New York close is cancelled.`;
+    ` Target ${tp ? money(tp) : '—'}${f(tp)}, stop ${sl ? money(sl) : '—'}${f(sl)}. Good till cancelled: they stay active across days until one fills or you cancel them.`;
 }
 function sellAll(sym, qty) { $('tsym').value = sym; setSide('sell'); $('tunit').value = 'qty'; unitChange(); $('ttype').value = 'market'; typeChange(); $('tamt').value = qty; window.scrollTo(0, 0); loadCtx(); }
 function protect(sym, qty, px) {

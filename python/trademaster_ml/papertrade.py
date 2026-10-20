@@ -570,7 +570,9 @@ def manual_order(spec, log=print):
             raise SystemExit("refused: protecting a holding needs both a target and a stop (or use a plain limit sell)")
         if side == "sell" and limit:
             raise SystemExit("refused: a protective exit uses the target as its limit; leave the limit price empty")
-    o = _order("manual", sym, side, qty=qty, notional=notional, log=log, limit=limit, take_profit=tp, stop_loss=sl)
+    # target / stop orders stay active across days until they fill or are cancelled (good till cancelled)
+    o = _order("manual", sym, side, qty=qty, notional=notional, log=log, limit=limit, take_profit=tp, stop_loss=sl,
+               tif="gtc" if (tp or sl) else "day")
     _append(MANUAL, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "order_id": o.get("id"), "symbol": sym, "side": side,
                      "qty": qty, "notional": notional, "limit": limit, "take_profit": tp, "stop_loss": sl, "price_at_order": px, "note": note,
                      "context": context(sym)})
