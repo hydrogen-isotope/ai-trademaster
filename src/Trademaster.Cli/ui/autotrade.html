@@ -30,7 +30,7 @@ button.btn.danger:hover{border-color:var(--down);color:var(--down)}
 .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
 .kpi .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:600}
 .kpi .v{font-size:22px;font-weight:700;margin-top:6px}.kpi .d{color:var(--muted);font-size:12px;margin-top:4px}
-.books{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}
+.books{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(420px,100%),1fr));gap:14px}
 .bk{display:flex;flex-direction:column}
 .bk .top{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
 .bk .top .t{font-weight:600;font-size:14px}.bk .top .s{color:var(--muted);font-size:12px}
@@ -107,6 +107,8 @@ button.go:disabled{opacity:.5}
   <div class="panel"><div class="ph">Value of each slice vs simply holding QQQ (start = 100)</div><div class="pad"><div class="chart" id="chart"></div><div class="note" id="chartnote"></div></div></div>
   <div class="books" id="books"></div>
   <div class="panel"><div class="ph">Orders</div><div class="scroll"><table><thead><tr><th>Time</th><th>Half</th><th>Side</th><th>Stock</th><th>Amount</th><th>Status</th></tr></thead><tbody id="ledger"></tbody></table></div></div>
+  <div class="panel" id="phonepanel" style="display:none"><div class="ph">Phone access (Tailscale) <span class="dim" style="text-transform:none;letter-spacing:0">shown only on this PC</span></div>
+    <div class="pad" id="phoneinfo"></div></div>
   <div class="note">How it works: the automatic slices get 40% / 40% / 10% / 10% of the paper account, plus 10% on margin for NVDA &amp; MU. <b>AI signals</b> buys the stocks whose latest 5-day Qwen + models signal is BUY
     (at most 20, 5% each; the rest stays in cash) and sells them when the signal goes away, once per trading day. <b>Top-ranked</b> holds the LightGBM ranking's top 20
     stocks, 5% each, rebalanced daily. <b>Intraday</b> holds the frozen 30-minute model's top 5 stocks, reshuffled every 30 minutes from about 10:30 AM New York, and sells at 3:50 PM what is at or above its buy price. It never sells at a loss just to follow the schedule: losing positions are kept (overnight too) until they are back at their buy price, fall 4% below it, or have been held 3 trading days, and are never added to; it needs the live model running (started from this page's session). <b>NVDA &amp; MU</b> buys each of the two at 9:35 AM New York if its first 5 minutes closed up (needs the app open at 9:35-9:50 AM New York), with the same keep-losers exits. <b>Overnight QQQ</b> buys QQQ in the closing auction and sells it in the next opening auction, every trading day. Small differences (under 20% of a position) are left alone to limit trading.
@@ -280,6 +282,13 @@ async function closeBook(k) {
   await post('/api/paper/close?book=' + k); await load();
 }
 load(); setInterval(load, 30000);
+fetch('/api/remote/info').then(r => r.ok ? r.json() : null).then(j => {
+  if (!j) return;
+  $('phonepanel').style.display = '';
+  $('phoneinfo').innerHTML = j.url
+    ? `On your phone (with Tailscale on), open <b class="num">${esc(j.url)}</b> and enter the code <b class="num" style="font-size:18px;letter-spacing:2px">${esc(j.code)}</b>. This PC must be on with the app open. Only devices on your Tailscale network can reach it.`
+    : 'Tailscale is not connected on this PC, so the phone cannot reach the dashboard. Start Tailscale, then restart the app.';
+}).catch(() => { });
 </script>
 <script src="/nav.js"></script>
 </body>

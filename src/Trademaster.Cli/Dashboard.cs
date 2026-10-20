@@ -61,8 +61,11 @@ public static class Dashboard
 
         var builder = WebApplication.CreateBuilder();
         builder.Logging.SetMinimumLevel(LogLevel.Warning);
-        builder.WebHost.UseUrls($"http://127.0.0.1:{port}");
+        // phone access over Tailscale (private network only): also listen on this PC's Tailscale address, behind a sign-in code
+        var ts = RemoteAccess.TailscaleAddress();
+        builder.WebHost.UseUrls(ts is null ? new[] { $"http://127.0.0.1:{port}" } : new[] { $"http://127.0.0.1:{port}", $"http://{ts}:{port}" });
         var app = builder.Build();
+        RemoteAccess.Use(app, port);
         string uiDir = Path.Combine(AppContext.BaseDirectory, "ui");
         // local dashboard: always revalidate, so an updated page or new daily data shows without a hard refresh
         app.Use(async (ctx, next) => { ctx.Response.Headers.CacheControl = "no-cache"; await next(); });
