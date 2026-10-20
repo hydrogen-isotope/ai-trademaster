@@ -176,6 +176,31 @@ def test_intraday_keeps_losers_overnight_until_breakeven_stop_or_3_days():
         assert (("A", "sell") in sent) == expect, (price, day)
 
 
+def test_focus_buys_up_openers_once_and_keeps_losers():
+    import importlib
+    importlib.reload(T)
+    sent, px = [], {"NVDA": 216.0, "MU": 900.0}
+    T._open_orders = lambda book: []
+    T._latest_prices = lambda ss: {x: px[x] for x in ss if x in px}
+    T._first_bar = lambda sym, day: {"NVDA": (215.0, 216.0), "MU": (905.0, 900.0)}[sym]     # NVDA up, MU down
+    T._order = lambda book, sym, side, qty=None, notional=None, log=print, **k: sent.append((sym, side, round(notional or qty)))
+    b = {"cash": 10000.0, "start": 10000.0, "holdings": {}}
+    st = {"books": {"focus": b}}
+    T.focus_step(st, {"timestamp": "2026-10-21T09:30:00-04:00", "is_open": True})          # before the window: nothing
+    assert sent == []
+    T.focus_step(st, {"timestamp": "2026-10-21T09:36:00-04:00", "is_open": True})
+    assert sent == [("NVDA", "buy", 5000)]
+    sent.clear()
+    T.focus_step(st, {"timestamp": "2026-10-21T09:41:00-04:00", "is_open": True})          # once per day
+    assert sent == []
+    b["holdings"], b["cost"] = {"NVDA": 23.0}, {"NVDA": 23.0 * 220.0}                      # bought at 220, now 216: a loss
+    T.focus_step(st, {"timestamp": "2026-10-21T15:51:00-04:00", "is_open": True})
+    assert sent == [] and b["carry"] == {"NVDA": "2026-10-21"}
+    px["NVDA"] = 221.0
+    T.focus_step(st, {"timestamp": "2026-10-22T09:31:00-04:00", "is_open": True})          # back above cost: sold
+    assert ("NVDA", "sell", 23) in sent
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

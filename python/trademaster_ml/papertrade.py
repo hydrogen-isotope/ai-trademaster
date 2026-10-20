@@ -35,8 +35,10 @@ DIR = os.path.join("private", "reports", "paper")
 CONTROL, BOOK, LEDGER, EQUITY, STATUS = (os.path.join(DIR, f) for f in ("control.json", "book.json", "ledger.jsonl", "equity.jsonl", "status.json"))
 BOOKS = {"ai": "AI signals (Qwen + models, 5-day BUY)", "rank": "Top-ranked stocks (v6 top 10%)",
          "night": "Overnight QQQ (buy at the close, sell at the next open)",
-         "intraday": "Intraday 30-minute model (top 5, every 30 min; keeps losers until break-even)"}
-SPLIT = {"ai": 0.40, "rank": 0.40, "night": 0.10, "intraday": 0.10}
+         "intraday": "Intraday 30-minute model (top 5, every 30 min; keeps losers until break-even)",
+         "focus": "NVDA & MU opening-range (buy if the first 5 minutes close up; keeps losers until break-even)"}
+SPLIT = {"ai": 0.40, "rank": 0.40, "night": 0.10, "intraday": 0.10, "focus": 0.10}   # focus is on margin (1.1x)
+FOCUS_SYMS, FOCUS_ENTRY = ("NVDA", "MU"), (9 * 60 + 35, 9 * 60 + 50)
 INTRA_TOP, INTRA_EVERY_S, INTRA_FLAT_MIN = 5, 1800, 15 * 60 + 50
 CARRY_STOP, CARRY_MAX_DAYS = -0.04, 3        # a position kept to avoid selling at a loss: sold at -4% or after 3 sessions
 FORWARD = os.path.join("private", "data", "forward")
@@ -322,6 +324,83 @@ def _sessions_since(day, today):
     return n
 
 
+def _first_bar(sym, day):
+    """The 09:30-09:35 New York 5-minute bar of `day` (IEX feed, real time on the free plan): (open, close) or None."""
+    t0 = int(datetime.fromisoformat(f"{day}T09:30:00").replace(tzinfo=alpaca.NY).timestamp())
+    kid, sec = _creds()
+    bars = alpaca.get_bars([sym], "5Min", t0, t0 + 299, feed="iex", creds=(kid, sec, None), pause=0.1).get(sym, [])
+    b0 = next((b for b in bars if b[0] == t0), None)
+    return (b0[1], b0[4]) if b0 else None
+
+
+def focus_step(st, clock, log=print):
+    """The NVDA & MU slice: at 09:35-09:50 New York, buy each of FOCUS_SYMS (half the slice each) whose first 5-minute
+    bar closed above its open; exits as the intraday slice: at 15:50 sell what is at or above cost, keep losers until
+    back at cost, CARRY_STOP below it, or CARRY_MAX_DAYS sessions; never add to a kept loser."""
+    b = st["books"]["focus"]
+    now = datetime.fromisoformat(str(clock["timestamp"])).astimezone(alpaca.NY)
+    today, mins = now.date().isoformat(), now.hour * 60 + now.minute
+    if not clock.get("is_open") or _open_orders("focus"):
+        return 0
+    if b["holdings"] and set(b["holdings"]) - set(b.get("cost", {})):
+        _rebuild_cost(st, "focus")
+    carry = b.setdefault("carry", {})
+    for sym in list(carry):
+        if sym not in b["holdings"]:
+            carry.pop(sym)
+    prices = _latest_prices(sorted(set(FOCUS_SYMS) | set(b["holdings"])))
+
+    def ret(sym):
+        c, q, px = b.get("cost", {}).get(sym), b["holdings"].get(sym), prices.get(sym)
+        return px / (c / q) - 1 if c and q and px else None
+
+    def may_sell(sym):
+        r = ret(sym)
+        if r is None or r >= 0:
+            return True
+        return sym in carry and (r <= CARRY_STOP or _sessions_since(carry[sym], today) >= CARRY_MAX_DAYS)
+
+    n = 0
+    for sym in list(carry):                                        # kept losers: sell when a rule says so
+        if may_sell(sym):
+            _order("focus", sym, "sell", qty=b["holdings"][sym], log=log)
+            n += 1
+    if mins >= INTRA_FLAT_MIN or (b.get("day") and b["day"] != today and not b.get("entered_today")):
+        kept = []
+        for sym, q in list(b["holdings"].items()):                 # the close (or leftovers from a day the app missed)
+            if sym in carry:
+                continue
+            if may_sell(sym):
+                _order("focus", sym, "sell", qty=q, log=log)
+                n += 1
+            else:
+                carry[sym] = today
+                kept.append(sym)
+        if mins >= INTRA_FLAT_MIN:
+            b["note"] = "sold for the close" + (f"; kept overnight at a loss: {', '.join(kept)}" if kept else "")
+            return n
+    if b.get("entered") == today or not (FOCUS_ENTRY[0] <= mins < FOCUS_ENTRY[1]):
+        if b.get("entered") != today and mins >= FOCUS_ENTRY[1]:
+            b["note"] = "no entry today (the app was not open at 9:35-9:50 New York)"
+        return n
+    b["entered"], b["day"] = today, today
+    value = b["cash"] + sum(q * prices.get(s_, 0) for s_, q in b["holdings"].items())
+    per = value / len(FOCUS_SYMS)
+    took = []
+    for sym in FOCUS_SYMS:
+        fb = _first_bar(sym, today)
+        if not fb or fb[1] <= fb[0] or sym in carry or b["holdings"].get(sym):
+            continue
+        amt = min(per, b["cash"] * 0.98)
+        if amt > MIN_TRADE:
+            _order("focus", sym, "buy", notional=round(amt, 2), log=log)
+            took.append(sym)
+            n += 1
+    b["note"] = f"bought {', '.join(took)} at the open" if took else "first 5 minutes were down: no entry today"
+    b["last_rebalance"], b["signals_asof"] = today, "09:30-09:35 bar"
+    return n
+
+
 def intraday_step(st, clock, log=print):
     """The intraday slice: every 30 minutes hold the frozen 30-minute model's (B1) top INTRA_TOP stocks, long only, equal
     weight, from the live forward test's latest prediction (private/data/forward/live-<date>/predictions.jsonl, under
@@ -422,6 +501,7 @@ def run(a=None, log=print):
     _settle(st, log)
     night = night_step(st, clock, log) if c["books"].get("night") and "night" in st["books"] else 0
     intra = intraday_step(st, clock, log) if c["books"].get("intraday") and "intraday" in st["books"] else 0
+    intra += focus_step(st, clock, log) if c["books"].get("focus") and "focus" in st["books"] else 0
     if not clock.get("is_open"):
         _save(BOOK, st)
         status(st, note="market closed: next open " + str(clock.get("next_open")))
@@ -431,7 +511,7 @@ def run(a=None, log=print):
     done = {}
     for name in BOOKS:
         b = st["books"][name]
-        if name in ("night", "intraday") or not c["books"].get(name):
+        if name in ("night", "intraday", "focus") or not c["books"].get(name):
             continue
         last = b.get("last_rebalance")
         if name == "ai" and last == day:
@@ -723,7 +803,7 @@ def cancel(order_id, log=print):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("cmd", choices=["run", "status", "close", "order", "cancel"])
-    ap.add_argument("--book", choices=["ai", "rank", "night", "intraday", "manual", "all"], default="all")
+    ap.add_argument("--book", choices=["ai", "rank", "night", "intraday", "focus", "manual", "all"], default="all")
     ap.add_argument("--json", default="{}")
     ap.add_argument("--id", default="")
     a = ap.parse_args()

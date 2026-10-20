@@ -289,7 +289,7 @@ public static class Dashboard
                 ? Results.Json(new { output = await PaperTrade.PythonWait("cancel", "--id", id!) }) : Results.BadRequest());
         app.MapPost("/api/paper/close", async (string? book) =>
         {
-            var b = book is "ai" or "rank" or "night" or "intraday" ? book : "all";
+            var b = book is "ai" or "rank" or "night" or "intraday" or "focus" ? book : "all";
             return Results.Json(new { output = await PaperTrade.Python("close", "--book", b) });
         });
         app.MapGet("/api/forward/runs", () =>
