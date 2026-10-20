@@ -42,6 +42,7 @@ FORWARD = os.path.join("private", "data", "forward")
 FROZEN_MANIFEST = os.path.join("private", "models", "forward", "frozen-2026-10-17", "manifest.json")
 LABELS = {**BOOKS, "manual": "Your manual trades"}
 MANUAL, MANUAL_CLOSED = os.path.join(DIR, "manual.jsonl"), os.path.join(DIR, "manual_closed.jsonl")
+OUTCOMES = os.path.join(DIR, "manual_outcomes.json")         # what happened after each decision (learning labels)
 FINAL_STATES = ("filled", "canceled", "expired", "rejected", "done_for_day")
 OPEN_STATES = ("new", "accepted", "pending_new", "partially_filled", "held", "accepted_for_bidding")
 MAX_AI = 20
@@ -425,9 +426,17 @@ def status(st=None, note=None, log=print):
             open(EQUITY, "w").write("".join(json.dumps(h) + "\n" for h in hist))
         out["equity_history"] = [json.loads(l) for l in open(EQUITY)] if os.path.exists(EQUITY) else []
         out["ledger"] = ([json.loads(l) for l in open(LEDGER)] if os.path.exists(LEDGER) else [])[-60:]
+        if not os.path.exists(OUTCOMES) or time.time() - os.path.getmtime(OUTCOMES) > 1800:
+            try:
+                label_decisions(log)
+            except Exception as e:  # noqa: BLE001
+                log(f"[paper] outcomes skipped: {type(e).__name__}: {e}")
+        outc = _load(OUTCOMES, {})
         closed = [json.loads(l) for l in open(MANUAL_CLOSED)] if os.path.exists(MANUAL_CLOSED) else []
         wins = [x for x in closed if (x.get("pnl") or 0) > 0]
-        out["manual"] = {"closed": len(closed), "wins": len(wins), "realized_pnl": sum(x.get("pnl") or 0 for x in closed),
+        out["manual"] = {"decisions": sum(1 for _ in open(MANUAL)) if os.path.exists(MANUAL) else 0,
+                         "labelled": sum(1 for v in outc.values() if "ret_1d" in v),
+                         "closed": len(closed), "wins": len(wins), "realized_pnl": sum(x.get("pnl") or 0 for x in closed),
                          "recent_closed": closed[-20:], "open_orders": [{k: o.get(k) for k in ("id", "symbol", "side", "qty", "notional", "type",
                                                                                                    "limit_price", "status", "submitted_at")}
                                                                           for o in _open_orders("manual")]}
@@ -435,9 +444,59 @@ def status(st=None, note=None, log=print):
     return out
 
 
+def market_snapshot(sym):
+    """Market conditions at the moment of a decision: the stock, QQQ, SPY and VIXY (volatility fear gauge), and the
+    time of day."""
+    kid, sec = _creds()
+    now = datetime.now(alpaca.NY)
+    today = now.date().isoformat()
+    out = {"time_ny": now.isoformat(timespec="minutes"), "minutes_since_open": now.hour * 60 + now.minute - (9 * 60 + 30),
+           "weekday": now.strftime("%a")}
+    try:
+        d = alpaca._get("/v2/stocks/snapshots", {"symbols": ",".join(dict.fromkeys([sym, "QQQ", "SPY", "VIXY"])), "feed": "iex"}, (kid, sec, None))
+    except Exception:  # noqa: BLE001 - conditions are best effort
+        return out
+    for s_, x in (d or {}).items():
+        last = (x.get("latestTrade") or {}).get("p")
+        day, prev = x.get("dailyBar") or {}, x.get("prevDailyBar") or {}
+        is_today = str(day.get("t", ""))[:10] == today
+        prev_close = (prev if is_today else day).get("c")
+        rec = {"last": last, "prev_close": prev_close,
+               "chg_pct": round((last / prev_close - 1) * 100, 3) if last and prev_close else None}
+        if is_today:
+            rec.update({"open": day.get("o"), "high": day.get("h"), "low": day.get("l"), "volume": day.get("v"), "vwap": day.get("vw"),
+                        "range_pct": round((day["h"] / day["l"] - 1) * 100, 3) if day.get("h") and day.get("l") else None,
+                        "from_open_pct": round((last / day["o"] - 1) * 100, 3) if last and day.get("o") else None})
+        out[s_] = rec
+    return out
+
+
+def intraday_view(sym):
+    """The live 30-minute model's latest score for `sym` and its rank among the stocks it could score."""
+    today = datetime.now(alpaca.NY).date().isoformat()
+    path = os.path.join(FORWARD, f"live-{today}", "predictions.jsonl")
+    m = _load(FROZEN_MANIFEST, {})
+    syms = m.get("symbols", [])
+    if not os.path.exists(path) or sym not in syms:
+        return None
+    last = None
+    with open(path) as f:
+        for line in f:
+            last = line
+    if not last:
+        return None
+    rec = json.loads(last)
+    i = syms.index(sym)
+    if not rec["valid"][i]:
+        return {"bar": rec["label"], "valid": False}
+    vals = sorted((rec["b1"][k] for k, ok in enumerate(rec["valid"]) if ok), reverse=True)
+    return {"bar": rec["label"], "b1_bps": rec["b1"][i], "rank": vals.index(rec["b1"][i]) + 1, "of": len(vals)}
+
+
 def context(sym):
-    """What the models said about `sym` right now (saved with each manual order, for learning from the user's habits)."""
-    out = {}
+    """What the models said about `sym` right now, plus market conditions (saved with each manual order, so the user's
+    decisions can later be learned from)."""
+    out = {"market": market_snapshot(sym), "intraday_model": intraday_view(sym)}
     for h, path in (("1", os.path.join("private", "reports", "v7", "h1", "forecast.json")), ("5", os.path.join("private", "reports", "v7", "forecast.json"))):
         f = _load(path, {})
         r = (f.get("rows") or {}).get(sym)
@@ -479,6 +538,7 @@ def manual_order(spec, log=print):
     qty = float(spec["qty"]) if spec.get("qty") not in (None, "") else None
     notional = float(spec["notional"]) if spec.get("notional") not in (None, "") else None
     limit = float(spec["limit"]) if spec.get("limit") not in (None, "") else None
+    note = str(spec.get("note") or "")[:300]
     tp = float(spec["take_profit"]) if spec.get("take_profit") not in (None, "") else None
     sl = float(spec["stop_loss"]) if spec.get("stop_loss") not in (None, "") else None
     if (qty is None) == (notional is None) or (qty or notional or 0) <= 0:
@@ -512,7 +572,7 @@ def manual_order(spec, log=print):
             raise SystemExit("refused: a protective exit uses the target as its limit; leave the limit price empty")
     o = _order("manual", sym, side, qty=qty, notional=notional, log=log, limit=limit, take_profit=tp, stop_loss=sl)
     _append(MANUAL, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "order_id": o.get("id"), "symbol": sym, "side": side,
-                     "qty": qty, "notional": notional, "limit": limit, "take_profit": tp, "stop_loss": sl, "price_at_order": px,
+                     "qty": qty, "notional": notional, "limit": limit, "take_profit": tp, "stop_loss": sl, "price_at_order": px, "note": note,
                      "context": context(sym)})
     _save(BOOK, st)
     time.sleep(2)
@@ -520,6 +580,54 @@ def manual_order(spec, log=print):
     _save(BOOK, st)
     status(st)
     return {"order_id": o.get("id"), "status": o.get("status"), "symbol": sym, "side": side}
+
+
+def label_decisions(log=print):
+    """For each manual decision, what happened next (stock and QQQ): 30 minutes after the fill, at that day's close, and
+    1 and 5 trading days later. Filled in as each horizon matures -> manual_outcomes.json."""
+    if not os.path.exists(MANUAL):
+        return {}
+    out = _load(OUTCOMES, {})
+    kid, sec = _creds()
+    creds = (kid, sec, None)
+    now = time.time()
+    for line in open(MANUAL):
+        r = json.loads(line)
+        oid = r.get("order_id")
+        o = out.get(oid) or {"symbol": r["symbol"], "side": r["side"], "note": r.get("note")}
+        if all(k in o for k in ("ret_30m", "ret_close", "ret_1d", "ret_5d")):
+            continue
+        if "fill_t" not in o:
+            try:
+                x = _req("GET", f"/v2/orders/{oid}")
+            except Exception:  # noqa: BLE001
+                continue
+            if not x.get("filled_at"):
+                continue
+            o["fill_price"] = float(x["filled_avg_price"])
+            o["fill_t"] = int(datetime.fromisoformat(x["filled_at"].replace("Z", "+00:00")).timestamp())
+        t0, sign = o["fill_t"], 1 if r["side"] == "buy" else -1
+        for s_ in (r["symbol"], "QQQ"):
+            key = "" if s_ == r["symbol"] else "qqq_"
+            try:
+                if f"{key}ret_30m" not in o and now > t0 + 1800 + 300:
+                    b = alpaca.get_bars([s_], "5Min", t0 - 300, t0 + 1800, feed="sip", creds=creds, pause=0.1)[s_]
+                    if len(b) >= 2:
+                        o[f"{key}ret_30m"] = sign * (b[-1][4] / b[0][4] - 1)
+                daily = alpaca.get_bars([s_], "1Day", t0 - 5 * 86400, min(now, t0 + 12 * 86400), feed="sip", creds=creds, pause=0.1)[s_]
+                day0 = datetime.fromtimestamp(t0, alpaca.NY).date()
+                after = [x for x in daily if datetime.fromtimestamp(x[0], alpaca.NY).date() >= day0]
+                base = o["fill_price"] if not key else (next((x[1] for x in after), None))
+                if after and base and now > datetime.combine(day0, datetime.min.time(), alpaca.NY).timestamp() + 16.5 * 3600:
+                    o[f"{key}ret_close"] = sign * (after[0][4] / base - 1)
+                for n in (1, 5):
+                    if len(after) > n and base:
+                        o[f"{key}ret_{n}d"] = sign * (after[n][4] / base - 1)
+            except Exception as e:  # noqa: BLE001 - try again on the next refresh
+                log(f"[paper] outcome {r['symbol']}: {type(e).__name__}: {str(e)[:80]}")
+        out[oid] = o
+    _save(OUTCOMES, out)
+    return out
 
 
 def cancel(order_id, log=print):

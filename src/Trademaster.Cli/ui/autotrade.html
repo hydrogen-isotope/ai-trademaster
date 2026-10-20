@@ -80,7 +80,7 @@ button.go:disabled{opacity:.5}
     </div>
   </div>
   <div class="panel" id="tradepanel">
-    <div class="ph">Trade yourself (paper account) <span class="dim" style="text-transform:none;letter-spacing:0">buy-only positions; sell what you hold. Every order is saved with what the models said, so we can learn from your trades.</span></div>
+    <div class="ph">Trade yourself (paper account) <span class="dim" style="text-transform:none;letter-spacing:0">buy-only positions; sell what you hold. Every order is saved with what the models said, the market conditions and your note, and what happened next, so the AI can learn from your trades.</span></div>
     <div class="trade">
       <label>Stock<input id="tsym" placeholder="MU" oninput="ctxLater()" autocomplete="off"></label>
       <div class="side"><button class="buy on" id="tbuy" onclick="setSide('buy')">BUY</button><button class="sell" id="tsell" onclick="setSide('sell')">SELL</button></div>
@@ -91,6 +91,7 @@ button.go:disabled{opacity:.5}
       <label class="chk"><span><input type="checkbox" id="texit" onchange="exitChange()"> Target &amp; stop</span></label>
       <label class="ex" style="display:none">Take profit at<input id="ttp" type="number" min="0" step="0.01" oninput="exitHint()"></label>
       <label class="ex" style="display:none">Stop loss at<input id="tsl" type="number" min="0" step="0.01" oninput="exitHint()"></label>
+      <label style="flex:1;min-width:200px">Why (optional, saved for learning)<input id="tnote" style="width:100%" maxlength="300" placeholder="e.g. gap up on chip news, buying the dip"></label>
       <button class="go" id="tgo" onclick="submitTrade()">Place paper order</button>
     </div>
     <div class="ctx" id="tctx"></div>
@@ -170,7 +171,7 @@ function renderManual(st) {
     <td><button class="btn" onclick="sellAll('${esc(p.symbol)}', ${p.qty})">Sell</button> <button class="btn" onclick="protect('${esc(p.symbol)}', ${Math.floor(p.qty)}, ${p.price || 0})" title="Set a take-profit and a stop-loss for this holding">Target &amp; stop</button></td></tr>`).join('');
   $('mypos').innerHTML = rows || '<tr><td colspan="7" class="muted">No positions yet. Place a paper order above.</td></tr>';
   const wr = ms.closed ? ` · win rate ${Math.round(100 * ms.wins / ms.closed)}%` : '';
-  $('mystats').textContent = ms.closed != null ? `${ms.closed} closed trade${ms.closed === 1 ? '' : 's'}${wr} · realised ${ms.realized_pnl >= 0 ? '+' : ''}${money(ms.realized_pnl)}` : '';
+  $('mystats').textContent = ms.closed != null ? `${ms.decisions || 0} decisions saved (${ms.labelled || 0} with next-day outcome) · ${ms.closed} closed trade${ms.closed === 1 ? '' : 's'}${wr} · realised ${ms.realized_pnl >= 0 ? '+' : ''}${money(ms.realized_pnl)}` : '';
   const oo = ms.open_orders || [];
   $('myorders').style.display = oo.length ? '' : 'none';
   $('myorderrows').innerHTML = oo.map(o => `<tr><td><b>${esc(o.symbol)}</b></td><td class="${o.side === 'buy' ? 'up' : 'down'}">${esc(o.side)}</td>
@@ -209,7 +210,7 @@ async function submitTrade() {
     `${ex ? `\nTake profit at ${tp ? money(tp) : '-'}, stop loss at ${sl ? money(sl) : '-'}` : ''}?\n\nSimulated money only.`)) return;
   $('tgo').disabled = true; $('tmsg').textContent = 'Sending...';
   const spec = { symbol: sym, side, ...( $('tunit').value === 'usd' ? { notional: amt } : { qty: amt }), ...(lim ? { limit: lim } : {}),
-    ...(ex && tp ? { take_profit: tp } : {}), ...(ex && sl ? { stop_loss: sl } : {}) };
+    ...(ex && tp ? { take_profit: tp } : {}), ...(ex && sl ? { stop_loss: sl } : {}), ...($('tnote').value.trim() ? { note: $('tnote').value.trim() } : {}) };
   const r = await post('/api/paper/order', spec);
   $('tgo').disabled = false;
   const out = (r && r.output || '').trim(), line = out.split('\n').filter(Boolean).pop() || '';
