@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI Trademaster Auto-trade</title>
+<style>
+:root{--bg:#0b0e11;--panel:#14181d;--panel2:#1b2027;--line:#262c34;--text:#e6e9ee;--muted:#8a93a0;--dim:#5d6672;--up:#16c784;--down:#f6465d;--accent:#3b82f6;--warn:#f0b90b;--mono:ui-monospace,SFMono-Regular,Consolas,monospace;color-scheme:dark}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--text);font:13px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}.up{color:var(--up)}.down{color:var(--down)}.muted{color:var(--muted)}.dim{color:var(--dim)}
+header{height:48px;display:flex;align-items:center;gap:12px;padding:0 16px;border-bottom:1px solid var(--line);background:var(--panel);white-space:nowrap;overflow-x:auto}
+.brand{font-weight:600;font-size:15px}.chip{padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;border:1px solid var(--line);background:var(--panel2)}
+.chip.paper{color:#7cc4ff;border-color:#1d3f63;background:#0f2134}.chip.on{color:var(--up);border-color:#164d36;background:#0f2a20}.chip.off{color:var(--muted)}
+.spacer{flex:1}a{color:#7cc4ff;text-decoration:none}
+main{padding:16px;display:grid;gap:14px;max-width:1400px;margin:0 auto}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:12px}
+.ph{padding:10px 14px;border-bottom:1px solid var(--line);color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;font-weight:600;display:flex;align-items:center;gap:10px}
+.pad{padding:14px}
+.bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding:14px 16px}
+.master{display:flex;align-items:center;gap:12px}
+.master b{font-size:16px}
+.tgl{position:relative;width:46px;height:26px;border-radius:999px;background:#2a2f37;border:1px solid var(--line);cursor:pointer;flex:none;transition:background .15s}
+.tgl::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#c9ced6;transition:left .15s}
+.tgl.on{background:#0f5c3c;border-color:#16c784}.tgl.on::after{left:23px;background:#fff}
+.tgl.sm{width:38px;height:22px}.tgl.sm::after{width:14px;height:14px}.tgl.sm.on::after{left:19px}
+button.btn{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:7px 14px;font:inherit;cursor:pointer}
+button.btn:hover{border-color:var(--accent);color:#9cc3ff}button.btn:disabled{opacity:.5;cursor:default}
+button.btn.danger:hover{border-color:var(--down);color:var(--down)}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+.kpi .k{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.6px;font-weight:600}
+.kpi .v{font-size:22px;font-weight:700;margin-top:6px}.kpi .d{color:var(--muted);font-size:12px;margin-top:4px}
+.books{display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:14px}
+.bk{display:flex;flex-direction:column}
+.bk .top{display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--line)}
+.bk .top .t{font-weight:600;font-size:14px}.bk .top .s{color:var(--muted);font-size:12px}
+.bk .nums{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:12px 16px}
+.bk .nums div span{display:block;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+.bk .nums div b{font-size:17px}
+.scroll{max-height:300px;overflow:auto}
+table{width:100%;border-collapse:collapse}th,td{padding:6px 14px;text-align:right;white-space:nowrap}
+th{color:var(--muted);font-weight:500;font-size:11px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+td:first-child,th:first-child{text-align:left}tr+tr td{border-top:1px solid #1b1f26}
+.chart{height:260px}
+.note{color:var(--muted);font-size:12px;line-height:1.5}
+.msg{color:var(--muted);font-size:12px}
+@media (max-width:640px){.books{grid-template-columns:1fr}main{padding:10px}}
+</style>
+</head>
+<body>
+<header>
+  <span class="brand">AI Trademaster</span><span class="muted">Auto-trade</span>
+  <span class="chip paper">PAPER ACCOUNT · SIMULATED MONEY</span><span class="chip" id="statechip">—</span>
+  <div class="spacer"></div><span class="msg" id="lastrun"></span>
+</header>
+<main>
+  <div class="panel">
+    <div class="bar">
+      <div class="master"><div class="tgl" id="master" onclick="toggleMaster()" title="Switch auto-trading on or off"></div><div><b id="mastertext">Auto-trade is off</b>
+        <div class="note">Trades only while this app is open, only on Alpaca's paper account, buy-only. It checks every 5 minutes during US market hours.</div></div></div>
+      <div class="spacer"></div>
+      <button class="btn" id="runbtn" onclick="act('run')">Run now</button>
+      <button class="btn" onclick="act('refresh')">Refresh</button>
+      <button class="btn danger" onclick="closeBook('all')">Sell everything</button>
+    </div>
+  </div>
+  <div class="kpis" id="kpis"></div>
+  <div class="panel"><div class="ph">Value of each half vs QQQ (start = 100)</div><div class="pad"><div class="chart" id="chart"></div><div class="note" id="chartnote"></div></div></div>
+  <div class="books" id="books"></div>
+  <div class="panel"><div class="ph">Orders</div><div class="scroll"><table><thead><tr><th>Time</th><th>Half</th><th>Side</th><th>Stock</th><th>Amount</th><th>Status</th></tr></thead><tbody id="ledger"></tbody></table></div></div>
+  <div class="note">How it works: the paper account's $ is split 50/50. <b>AI signals</b> buys the stocks whose latest 5-day Qwen + models signal is BUY
+    (at most 20, 5% each; the rest stays in cash) and sells them when the signal goes away, once per trading day. <b>Top-ranked</b> holds the top 10% of
+    the cross-stock ranking, equal weight, rebalanced once a week. Small differences (under 20% of a position) are left alone to limit trading.
+    Research only; results on simulated money, before taxes, with Alpaca's paper fills.</div>
+</main>
+<script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const money = v => v == null ? '—' : '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pc = v => v == null ? '—' : `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : ''}">${v > 0 ? '+' : ''}${(v * 100).toFixed(2)}%</span>`;
+let S = null, chart = null;
+async function load() {
+  try { S = await (await fetch('/api/paper/status')).json(); } catch (e) { return; }
+  render();
+}
+function render() {
+  const c = S.control || {}, st = S.status || {}, on = !!c.enabled;
+  $('master').classList.toggle('on', on);
+  $('mastertext').textContent = on ? 'Auto-trade is ON' : 'Auto-trade is off';
+  $('statechip').className = 'chip ' + (on ? 'on' : 'off'); $('statechip').textContent = on ? 'RUNNING WHILE THE APP IS OPEN' : 'OFF';
+  $('lastrun').textContent = (S.busy ? 'working… ' : '') + (S.last_run || (st.note || ''));
+  const a = st.account || {}, books = st.books || {};
+  const bk = Object.values(books), tot = bk.reduce((s, b) => s + (b.value || 0), 0), start = bk.reduce((s, b) => s + (b.start || 0), 0);
+  const hist = st.equity_history || [], q0 = hist.length ? hist[0].qqq : null;
+  $('kpis').innerHTML = [
+    ['Paper account', money(a.equity), `cash ${money(a.cash)} · ${esc(a.status || '')}`],
+    ['Both halves', start ? money(tot) : '—', start ? `${pc(tot / start - 1)} since ${esc((st.started || '').slice(0, 10))}` : 'not started yet'],
+    ['QQQ over the same time', q0 && st.qqq ? pc(st.qqq / q0 - 1) : '—', 'what simply holding the Nasdaq-100 did'],
+    ['Market', esc(st.note || (on ? 'checks every 5 min' : 'switch on to start')), ''],
+  ].map(([k, v, d]) => `<div class="kpi"><div class="k">${k}</div><div class="v ${k === 'Market' ? '' : 'num'}" style="${k === 'Market' ? 'font-size:15px;font-weight:600' : ''}">${v}</div><div class="d">${d}</div></div>`).join('');
+  $('books').innerHTML = ['ai', 'rank'].map(k => {
+    const b = books[k] || { label: k === 'ai' ? 'AI signals (Qwen + models, 5-day BUY)' : 'Top-ranked stocks (v6 top 10%)', positions: [] };
+    const bon = (c.books || {})[k] !== false;
+    const rows = (b.positions || []).sort((x, y) => y.value - x.value).map(p => `<tr><td><b>${esc(p.symbol)}</b></td><td class="num">${(+p.qty).toFixed(3)}</td><td class="num">${money(p.price)}</td><td class="num">${money(p.value)}</td></tr>`).join('');
+    return `<div class="panel bk"><div class="top"><div class="tgl sm ${bon ? 'on' : ''}" onclick="toggleBook('${k}', ${!bon})" title="Trade this half"></div>
+      <div><div class="t">${esc(b.label)}</div><div class="s">${bon ? 'trading' : 'paused (holdings kept)'} · last rebalance ${esc(b.last_rebalance || '—')}${b.signals_asof ? ' · signals from the ' + esc(b.signals_asof) + ' close' : ''}</div></div>
+      <div class="spacer" style="flex:1"></div><button class="btn danger" onclick="closeBook('${k}')">Sell this half</button></div>
+      <div class="nums"><div><span>Value</span><b class="num">${money(b.value)}</b></div><div><span>Return</span><b class="num">${pc(b.return)}</b></div><div><span>Cash</span><b class="num">${money(b.cash)}</b></div></div>
+      <div class="scroll"><table><thead><tr><th>Stock</th><th>Shares</th><th>Price</th><th>Value</th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No positions.</td></tr>'}</tbody></table></div></div>`;
+  }).join('');
+  $('ledger').innerHTML = (st.ledger || []).slice().reverse().map(r => `<tr><td class="num">${esc((r.t || '').replace('T', ' ').slice(0, 16))}</td><td>${r.book === 'ai' ? 'AI signals' : 'Top-ranked'}</td>
+    <td class="${r.side === 'buy' ? 'up' : 'down'}">${esc(r.side)}</td><td><b>${esc(r.symbol)}</b></td><td class="num">${r.notional != null ? money(r.notional) : (+r.qty).toFixed(3) + ' sh'}</td><td class="muted">${esc(r.status)}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="muted">No orders yet.</td></tr>';
+  drawChart(hist);
+}
+function drawChart(hist) {
+  if (!window.LightweightCharts) return;
+  if (!chart) chart = LightweightCharts.createChart($('chart'), { layout: { background: { color: '#14181d' }, textColor: '#8a93a0' }, autoSize: true,
+    grid: { vertLines: { color: '#1b2027' }, horzLines: { color: '#1b2027' } }, rightPriceScale: { borderColor: '#262c34' }, timeScale: { borderColor: '#262c34' } });
+  (drawChart.series || []).forEach(s => chart.removeSeries(s)); drawChart.series = [];
+  if (hist.length < 1) { $('chartnote').textContent = 'The chart starts after the first trading day.'; return; }
+  $('chartnote').textContent = hist.length < 2 ? 'One day so far; the lines appear from the second day.' : '';
+  for (const [k, col, title] of [['ai', '#a78bfa', 'AI signals'], ['rank', '#3b82f6', 'Top-ranked'], ['qqq', '#8a93a0', 'QQQ']]) {
+    const base = hist.find(h => h[k])?.[k]; if (!base) continue;
+    const s = chart.addLineSeries({ color: col, lineWidth: k === 'qqq' ? 1 : 2, title, priceLineVisible: false });
+    s.setData(hist.filter(h => h[k]).map(h => ({ time: h.date, value: 100 * h[k] / base }))); drawChart.series.push(s);
+  }
+  chart.timeScale().fitContent();
+}
+async function post(url, body) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  return r.ok ? r.json() : null;
+}
+async function toggleMaster() {
+  const on = !(S && S.control && S.control.enabled);
+  if (on && !confirm('Switch auto-trading ON?\n\nIt places orders on your Alpaca PAPER account (simulated money only) while this app is open.')) return;
+  S = await post('/api/paper/control', { enabled: on }) || S; render(); setTimeout(load, 4000);
+}
+async function toggleBook(k, on) { S = await post('/api/paper/control', { books: { [k]: on } }) || S; render(); }
+async function act(what) {
+  $('lastrun').textContent = 'working…';
+  const r = await post('/api/paper/' + what); await load();
+  if (r && r.output) $('lastrun').textContent = r.output.trim().split('\n').pop().slice(0, 160);
+}
+async function closeBook(k) {
+  if (!confirm(`Sell every paper position in ${k === 'all' ? 'both halves' : k === 'ai' ? 'the AI signals half' : 'the top-ranked half'}?`)) return;
+  $('lastrun').textContent = 'selling…';
+  await post('/api/paper/close?book=' + k); await load();
+}
+load(); setInterval(load, 30000);
+</script>
+<script src="/nav.js"></script>
+</body>
+</html>

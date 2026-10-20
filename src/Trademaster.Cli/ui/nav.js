@@ -9,9 +9,11 @@
     signals: '<path d="M4 18l5-6 4 3 7-9"/><path d="M15 6h5v5"/>',
     markets: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
     sim: '<rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+    auto: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="M8.5 3.8L7 2M15.5 3.8L17 2"/>',
   };
   const items = [['/', 'Watchlist', 'watch', 'Watchlist and charts'], ['/forward', 'AI Signals', 'signals', 'AI buy/sell indicators and forward test'],
-    ['/markets', 'Markets', 'markets', 'NASDAQ and SGX rankings, 5-day forecasts and AI analysis'], ['/sim', 'Simulation', 'sim', 'Engine simulation terminal']];
+    ['/markets', 'Markets', 'markets', 'NASDAQ and SGX rankings, 5-day forecasts and AI analysis'], ['/autotrade', 'Auto-trade', 'auto', 'Automatic trading on the Alpaca paper account (simulated money)'],
+    ['/sim', 'Simulation', 'sim', 'Engine simulation terminal']];
   const here = location.pathname.replace(/\/$/, '') || '/';
   const css = document.createElement('style');
   css.textContent = `#tmrail{position:fixed;left:0;top:0;bottom:0;width:60px;background:#121317;border-right:1px solid #24272e;display:flex;flex-direction:column;align-items:center;padding-top:8px;gap:4px;z-index:50}

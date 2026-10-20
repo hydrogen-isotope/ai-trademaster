@@ -166,7 +166,7 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
     <div class="brand"><i></i>AI Trademaster</div>
     <div class="srch"><input id="search" placeholder="Search a stock, company, index or sector" autocomplete="off" spellcheck="false"><div id="sugg"></div></div>
     <span class="chip" id="src">…</span>
-    <span class="chip" style="color:#7cc4ff;border-color:#1d3f63;background:#0f2134">READ-ONLY · NO ORDERS</span>
+    <a href="/autotrade" class="chip" id="papchip" style="color:#7cc4ff;border-color:#1d3f63;background:#0f2134;text-decoration:none" title="Real-money orders: never. Paper trading: see Auto-trade">NO REAL ORDERS · PAPER AUTO-TRADE OFF</a>
     <div class="spacer"></div>
     <span class="muted num" id="clock"></span>
   </div>
@@ -175,6 +175,7 @@ td:first-child,th:first-child{text-align:left}tbody tr{border-bottom:1px solid #
     <a href="/" class="on" title="Watchlist and charts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/></svg>Watchlist</a>
     <a href="/forward" title="AI buy/sell indicators and forward test"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 18l5-6 4 3 7-9"/><path d="M15 6h5v5"/></svg>AI Signals</a>
     <a href="/markets" title="Markets: NASDAQ and SGX rankings and 5-day price forecasts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Markets</a>
+    <a href="/autotrade" title="Automatic trading on the Alpaca paper account (simulated money)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="M8.5 3.8L7 2M15.5 3.8L17 2"/></svg>Auto-trade</a>
     <a href="/sim" title="Engine simulation terminal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></svg>Simulation</a>
   </nav>
 
@@ -755,6 +756,7 @@ document.querySelectorAll('[data-type]').forEach(b => b.onclick = () => { ctype 
 document.querySelectorAll('[data-ind]').forEach(b => b.onclick = () => { ind[b.dataset.ind] = !ind[b.dataset.ind]; store.set('tm.ind', ind); syncToolbar(); drawChart(false); });
 
 // ---------------------------------------------------------------- data loops
+fetch('/api/paper/status').then(r => r.json()).then(j => { if (j && j.control && j.control.enabled) $('papchip').textContent = 'NO REAL ORDERS · PAPER AUTO-TRADE ON'; }).catch(() => { });
 async function select(s) {
   sel = s; store.set('tm.sel', s); $('qai').innerHTML = ''; renderRows(); renderQuote(); loadQwen(s);
   const d = await fetch(`/api/md/bars?symbol=${s}&tf=1D`); window._daily = d.ok ? await d.json() : [];

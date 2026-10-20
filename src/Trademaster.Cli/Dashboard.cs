@@ -261,6 +261,24 @@ public static class Dashboard
         // Forward test (real data, predictions only): files written by python -m trademaster_ml.forward
         string fwdRoot = Path.Combine("private", "data", "forward");
         app.MapGet("/forward", () => Results.File(Path.Combine(uiDir, "forward.html"), "text/html; charset=utf-8"));
+        // Auto-trade on Alpaca's PAPER account (simulated money; python refuses non-paper keys and endpoints)
+        app.MapGet("/autotrade", () => Results.File(Path.Combine(uiDir, "autotrade.html"), "text/html; charset=utf-8"));
+        app.MapGet("/api/paper/status", () => Results.Text(PaperTrade.Status(), "application/json"));
+        app.MapPost("/api/paper/control", async (HttpRequest req) =>
+        {
+            var body = await System.Text.Json.Nodes.JsonNode.ParseAsync(req.Body) as System.Text.Json.Nodes.JsonObject;
+            if (body is null) return Results.BadRequest();
+            PaperTrade.SetControl(body);
+            _ = PaperTrade.Python("status");
+            return Results.Text(PaperTrade.Status(), "application/json");
+        });
+        app.MapPost("/api/paper/run", async () => Results.Json(new { output = await PaperTrade.Python("run") }));
+        app.MapPost("/api/paper/refresh", async () => Results.Json(new { output = await PaperTrade.Python("status") }));
+        app.MapPost("/api/paper/close", async (string? book) =>
+        {
+            var b = book is "ai" or "rank" ? book : "all";
+            return Results.Json(new { output = await PaperTrade.Python("close", "--book", b) });
+        });
         app.MapGet("/api/forward/runs", () =>
         {
             var runs = Directory.Exists(fwdRoot)
@@ -351,6 +369,7 @@ public static class Dashboard
             }
         });
 
+        PaperTrade.StartLoop();
         Console.WriteLine($"AI Trademaster dashboard: http://127.0.0.1:{port}/   (SIMULATION, paced x{cfg.Run.Speed}; Ctrl+C to stop)");
         if (windowPage is null)
         {
