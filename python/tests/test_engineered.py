@@ -24,6 +24,7 @@ class FakeD:
         self.r_cc = np.tile([0.01, 0.0, -0.01], (T, 1))
         self.r_co = np.tile([0.004, 0.0, -0.004], (T, 1))
         self.q_cc = np.zeros(T)
+        self.dv = np.tile([100.0, 10.0, 1.0], (T, 1))
 
 
 def base(**k):
@@ -57,6 +58,18 @@ def test_overnight_mode_pays_both_legs_every_day():
     ex, tr, c = E.simulate(D, base(q=0.3, mode="overnight"), 0, 3)
     assert all(abs(t - 2.0) < 1e-12 for t in tr)
     assert abs(ex[0] - (0.5 * 0.004 - 2 * E.COST_STOCK)) < 1e-12
+
+
+def test_size_weighting_and_cap():
+    D = FakeD()
+    w = E.target(D, 0, base(base="size"))                                       # 3 stocks: the cap becomes 1/3
+    assert abs(w.sum() - 1) < 1e-9 and np.allclose(w, 1 / 3)
+    x = np.array([50.0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1])  # 20 stocks, one giant
+    T, N = 2, len(x)
+    D.P, D.U, D.rG, D.r_att = FakeP(T, N), np.ones((T, N), bool), np.full((T, N), 0.5), np.full((T, N), 0.5)
+    D.vol, D.earn, D.dv = np.full((T, N), 0.02), np.zeros((T, N), bool), np.tile(x, (T, 1))
+    w = E.target(D, 0, base(base="size"))
+    assert abs(w.sum() - 1) < 1e-9 and abs(w[0] - E.SIZE_CAP) < 1e-9 and np.allclose(w[1:], 0.9 / 19)
 
 
 def test_dsr_penalises_many_trials():

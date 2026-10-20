@@ -59,3 +59,28 @@ weight ∝ the stock's 20-day dollar volume (`exp(log_dollar_vol20)`, a close pr
 the sleeve, the excess spread pro rata), multiplied by the same risk, attention and earnings factors. 288 more designs.
 **Selection and gate unchanged, over all 576 designs:** the highest development IR; the Deflated Sharpe Ratio counts
 576 trials; the final period opens only if DSR ≥ 0.95.
+
+## Results (added 2026-10-21 after the complete search; the final period was not opened)
+**576 designs on development 2019–2024.** The 288 equal-weight designs all lag QQQ. With size weighting (amendment A)
+the best designs beat QQQ by +1.0% to +2.3%/yr, but none reliably:
+
+| selected design | excess/yr | IR | Newey-West t | worst excess drawdown | tracking error | turnover/yr | cost/yr |
+|---|---|---|---|---|---|---|---|
+| 50% QQQ + size-weighted sleeve minus the bottom 30% by the ranking, risk-sized (γ 0.5), day mode | +1.0% | +0.32 | +0.79 | −7.7% | 3.1% | 8× | 0.4% |
+
+**Deflated Sharpe Ratio 0.000 (gate 0.95): the final period stays closed, as written.** Even without the trial
+correction, t = 0.8 is far from the t ≥ 2 the final check requires. (The DSR's benchmark is inflated by the 144
+overnight designs, whose costs make them very negative; the conclusion does not depend on it.)
+
+What the grid shows, one choice at a time (size-weighted, day mode):
+- **Loser filter helps, steadily:** dropping the bottom 0 / 10 / 20 / 30% by the ranking gives +0.9 / +1.9 / +2.2 /
+  +2.3%/yr (no QQQ core) and +0.4 / +0.7 / +1.0 / +1.3%/yr (50% QQQ). Consistent with the v6 final test: the ranking's
+  information is in the losers. Small, and not significant on its own over six years.
+- **Attention hurts:** tilting toward unusual volume lowers the excess (λ 0 / 0.5 / 1: +1.9 / +0.5 / −1.9%/yr), in line
+  with the evidence that attention-grabbing stocks underperform after the attention.
+- **Halving positions before earnings** slightly hurts (+1.9 → +0.8%/yr).
+- **Overnight-only holding is ruined by costs:** −30.6%/yr (buying and selling the whole sleeve every day).
+
+**Reading.** No design earns a reliable edge over QQQ. The one consistent, sensible effect is the loser filter, worth
+roughly 1–2% a year before it can be told apart from luck. Nothing is promoted; a paper slice of the selected design
+would be an experiment, not a tested strategy.

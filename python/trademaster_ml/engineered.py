@@ -16,8 +16,9 @@ DIR = os.path.join("private", "reports", "engineered")
 DEV = ("2019-01-02", "2024-12-31")
 FINAL_FROM = "2025-01-02"
 GRID = dict(alpha=(0.0, 0.5), q=(0.0, 0.1, 0.2, 0.3), gamma=(0.0, 0.5, 1.0), lam=(0.0, 0.5, 1.0), e=("keep", "halve"),
-            mode=("day", "overnight"))
+            mode=("day", "overnight"), base=("equal", "size"))          # base: amendment A
 COST_STOCK, COST_QQQ, BAND = 5e-4, 1e-4, 0.20
+SIZE_CAP = 0.10                                                     # amendment A: no stock above 10% of the sleeve
 
 
 # ---------------------------------------------------------------- 1-2. data and signals (all known at close t)
@@ -53,6 +54,8 @@ class Data:
         G[P.t, P.n] = g
         self.rG = _pct(G, U)
         self.r_att = _pct(_raw(P, "volume_surprise"), U)
+        ldv = _raw(P, "log_dollar_vol20")
+        self.dv = np.where(np.isfinite(ldv), np.exp(np.clip(ldv, -50, 50)), 0.0)
         vol = _raw(P, "vol20")
         med = np.nanmedian(np.where(U, vol, np.nan), axis=1, keepdims=True)
         self.vol = np.where(np.isfinite(vol) & (vol > 0), vol, np.where(np.isfinite(med), med, 0.02))
@@ -95,11 +98,25 @@ def target(D, t, p):
     if not ok.any():
         return w
     x = D.vol[t, ok] ** (-p["gamma"]) if p["gamma"] else np.ones(ok.sum())
+    if p.get("base") == "size":
+        x = x * D.dv[t, ok]
     if p["lam"]:
         x = x * (1 + p["lam"] * (2 * np.nan_to_num(D.r_att[t, ok], nan=0.5) - 1))
     if p["e"] == "halve":
         x = x * np.where(D.earn[t, ok], 0.5, 1.0)
-    w[ok] = x / x.sum() * (1 - p["alpha"])
+    if not x.sum() > 0:
+        return w
+    x = x / x.sum()
+    if p.get("base") == "size":                                       # cap at SIZE_CAP, spreading the excess pro rata
+        cap = max(SIZE_CAP, 1.0 / len(x))                             # (an equal share when fewer than 10 stocks)
+        for _ in range(50):
+            over = x > cap + 1e-12
+            if not over.any():
+                break
+            spare = (x[over] - cap).sum()
+            x[over] = cap
+            x[~over] += spare * x[~over] / x[~over].sum()
+    w[ok] = x * (1 - p["alpha"])
     return w
 
 
@@ -172,11 +189,12 @@ def search(log=print):
         m = metrics(ex, tr, c)
         rows.append({"design": p, **m})
         if k % 24 == 0:
-            log(f"  {k + 1}/288 ({(time.time() - t0) / 60:.1f} min)", flush=True)
+            log(f"  {k + 1}/{len(designs())} ({(time.time() - t0) / 60:.1f} min)", flush=True)
     best = max(rows, key=lambda r: r["ir"])
     d, sr0 = dsr(best["sr_daily"], best["days"], best["skew"], best["kurt"], np.array([r["sr_daily"] for r in rows]))
     qqq_only = next(r for r in rows if r["design"]["alpha"] == 0.5 and r["design"]["q"] == 0 and r["design"]["gamma"] == 0
-                    and r["design"]["lam"] == 0 and r["design"]["e"] == "keep" and r["design"]["mode"] == "day")
+                    and r["design"]["lam"] == 0 and r["design"]["e"] == "keep" and r["design"]["mode"] == "day"
+                    and r["design"]["base"] == "equal")
     out = {"period": [D.dates[d0], D.dates[d1]], "trials": len(rows), "selected": best, "dsr": d, "sr0_daily": sr0,
            "gate_open_final": bool(d >= 0.95), "reference_half_qqq_half_equal_weight": qqq_only, "all": rows,
            "minutes": (time.time() - t0) / 60}
