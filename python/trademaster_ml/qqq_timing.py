@@ -41,8 +41,8 @@ class Data:
         return max(i for i, x in enumerate(self.dates) if x <= d)
 
 
-def load():
-    rows = json.load(open(os.path.join(DIR, "qqq_td_all.json")))
+def load(name="qqq_td_all.json"):
+    rows = json.load(open(os.path.join(DIR, name)))
     rows = sorted({r["datetime"]: r for r in rows}.values(), key=lambda r: r["datetime"])
     vol = np.array([float(r["volume"]) for r in rows])
     keep = [i for i in range(len(rows)) if i < 20 or vol[i] >= 0.1 * np.median(vol[i - 20:i])]
@@ -86,9 +86,9 @@ def target_series(D, p):
     return tg
 
 
-def simulate(D, p, d0, d1):
+def simulate(D, p, d0, d1, tg=None):
     """Daily net returns over days d0..d1 (return of day s = close s-1 -> close s). Target from close t is traded at close t+1."""
-    tg = target_series(D, p)
+    tg = target_series(D, p) if tg is None else tg
     x = tg[d0 - 2]
     if not np.isfinite(x):
         raise ValueError("not enough history before the start")

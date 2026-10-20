@@ -56,6 +56,16 @@ def test_grid_size():
     assert len(Q.designs()) == 78
 
 
+def test_replication_exposure_scales_to_own_history():
+    from trademaster_ml import vol_replication as V
+    rng = np.random.default_rng(2)
+    lr = np.r_[rng.normal(0, 0.01, 1400), rng.normal(0, 0.03, 100)]      # volatility triples at the end
+    D = make(100 * np.exp(np.cumsum(lr)))
+    e = V.exposure(D)
+    assert np.isnan(e[:1260]).all() and np.nanmax(e) == 1.0
+    assert e[-1] < 0.5                                                   # high recent volatility -> hold less
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
