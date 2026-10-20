@@ -141,7 +141,8 @@ function render() {
   const hist = st.equity_history || [], q0 = hist.length ? hist[0].qqq : null;
   $('kpis').innerHTML = [
     ['Paper account', money(a.equity), `cash ${money(a.cash)} · ${esc(a.status || '')}`],
-    ['All slices', start ? money(tot) : '—', start ? `${pc(tot / start - 1)} since ${esc((st.started || '').slice(0, 10))}` : 'not started yet'],
+    ['Profit / loss, all slices', start ? `${tot - start >= 0 ? '+' : '−'}${money(Math.abs(tot - start))}` : '—',
+      start ? `${pc(tot / start - 1)} · slices hold ${money(tot)} of ${money(start)} put in (incl. ${money(Math.max(0, start - (parseFloat(a.equity) || 0) + (tot - start)))} on margin)` : 'not started yet'],
     ['QQQ over the same time', q0 && st.qqq ? pc(st.qqq / q0 - 1) : '—', 'what simply holding the Nasdaq-100 did'],
     ['Market', esc(st.note || (on ? 'checks every 5 min' : 'switch on to start')), ''],
   ].map(([k, v, d]) => `<div class="kpi"><div class="k">${k}</div><div class="v ${k === 'Market' ? '' : 'num'}" style="${k === 'Market' ? 'font-size:15px;font-weight:600' : ''}">${v}</div><div class="d">${d}</div></div>`).join('');
