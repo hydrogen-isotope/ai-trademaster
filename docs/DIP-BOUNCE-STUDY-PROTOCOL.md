@@ -27,3 +27,20 @@ Alpaca 5-minute bars (SIP, split-adjusted), 2016-01 → 2026-10-19, `private/dat
 - **Success per stock:** hold-out mean net per trade > 0 with t ≥ 2 at the base cost, and > 0 at 3 bps.
 - Reported for context: the share of days with a trade, the hit rate, and the mean return per trading day on the
   capital committed. The user's 1%-a-day target is compared with that.
+
+## Results (added 2026-10-21 after the complete run; nothing above was changed)
+Development 2016–22, net per trade at 1 bp round trip (t over trades), dip d below VWAP / bounce target u:
+
+| stock | d = 0.5% | d = 1% | d = 1.5% | d = 2% | selected |
+|---|---|---|---|---|---|
+| NVDA | −20 to −24 bps (t −4 to −6), 1,274 trades | −15 to −20 (t −3) | −12 to −17 (t −2) | −3 to −22 (t −0.4 to −1.7), 276 trades | none |
+| MU | −21 to −25 (t −5 to −7), 1,333 trades | −16 to −21 (t −3 to −4) | −14 to −18 (t −2) | −0.4 to −11 (t −0.1 to −1.0), 274 trades | none |
+| QQQ | −8 to −14 (t −2 to −4), 668 trades | −6 to −12 | +7 to +9 (t < 1), 91 trades | **+31 to +63 (t 3–6), 35 trades** | d 2%, u 1% |
+
+**Hold-out 2023–26, QQQ d 2% / u 1%: 4 trades, −71 bps per trade (t −0.7). Fails.**
+
+**No setting works.** Buying intraday dips in NVDA and MU **loses money, significantly** (t down to −7): a stock that has
+fallen well below its day's average tends to keep falling, and a limit order is filled exactly then. The only positive
+cell was QQQ after a 2% intraday drop, which happened 35 times in seven years (mostly the 2020 crash rebound) and 4
+times since, losing. Against the user's target of 1% a day: the best NVDA and MU settings earned about 0 per day on the
+capital used, before any chance of 1%.
