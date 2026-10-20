@@ -90,8 +90,11 @@ a small edge.
 - **Earnings.**
   - Dates from Eulerpool: `calendar/earnings-by-symbol/{symbol}` for history and `calendar/earnings/{date}` for the
     coming weeks, with the report time (`bmo` before the open, `amc` after the close).
-  - Reaction day: the report date for `bmo`, during-market or unknown times; the next trading day for `amc`.
+  - Reaction day: the report date for `bmo` or during-market times; the next trading day for `amc`.
   - n_e = the number of reaction days in the forecast window (t, t+h].
+  - *Clarified 2026-10-20, before any result:* Eulerpool gives no report time for 94% of 2021–26 reports. For those,
+    the reaction falls on the report date or the next trading day. Such a report counts in n_e (once) if either day is
+    in the window, and its q (below) uses the larger of the two days' values.
   - Variance: σ² = β²·V_m + idio²·(h + n_e·(k_i − 1)).
   - k_i, refitted monthly from reaction days before the refit day within the past 3 years:
     - for each event, q = (r_i − β·r_m)² / idio_vol60² on the reaction day (idio_vol60 from the day before), capped at 100;
