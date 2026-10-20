@@ -82,6 +82,44 @@ a small edge.
   with block bootstrap blocks of max(5, h) dates, because 20-day outcomes overlap.
 - **App.** 1 day is the default view; 5 days and 20 days ("1M") are selectable.
 
+
+**B (2026-10-20, at the user's request, written before any result of it). Event-aware ranges ("v7r").**
+- **Why.** v7's ranges are calibrated on average but ignore two things that are known in advance: scheduled earnings
+  reports, and the volatility the options market prices in. v5 tested both as *direction* inputs and found no signal;
+  this amendment uses them only for the *size* of moves. The mean (median forecast) is unchanged.
+- **Earnings.**
+  - Dates from Eulerpool: `calendar/earnings-by-symbol/{symbol}` for history and `calendar/earnings/{date}` for the
+    coming weeks, with the report time (`bmo` before the open, `amc` after the close).
+  - Reaction day: the report date for `bmo`, during-market or unknown times; the next trading day for `amc`.
+  - n_e = the number of reaction days in the forecast window (t, t+h].
+  - Variance: σ² = β²·V_m + idio²·(h + n_e·(k_i − 1)).
+  - k_i, refitted monthly from reaction days before the refit day within the past 3 years:
+    - for each event, q = (r_i − β·r_m)² / idio_vol60² on the reaction day (idio_vol60 from the day before), capped at 100;
+    - pooled k̄ = the median of q over all stocks;
+    - k_i = (n_i·mean_i + 4·k̄) / (n_i + 4), where mean_i is over the stock's last 8 events (n_i ≤ 8).
+  - Stated limitation: historical dates are the actual report dates. Companies announce them in advance, so this is
+    close to point in time, but a date announced less than h days ahead is a small look-ahead in development.
+- **Implied volatility** (stocks with options data only; Alpaca options bars from Feb 2024).
+  - iv = the ATM implied volatility from the monthly expiry nearest 30 days (at least 7), as in v5's `iv_atm`.
+  - log σ² = (1 − w)·log σ²_e + w·log(iv²·h/252), where σ²_e is the earnings-adjusted variance above. Stocks without an
+    IV that day keep σ²_e.
+  - w ∈ {0, 0.25, 0.5, 0.75}, chosen once by the lowest 5-day development CRPS on rows with an IV, 2024-04-01 →
+    2024-12-31, and used for every horizon. w = 0 means IV is not used.
+  - Live: IV is refreshed daily from Alpaca options bars of the nearest monthly expiry.
+- **Recalibration.** As in v7 (pooled symmetric, monthly, from known PITs).
+- **Adoption, per horizon (1, 5, 20 days), decided now:** v7r replaces v7's ranges at a horizon only if, on development
+  2021–2024, (1) its mean CRPS is below v7's with the 95% block-bootstrap CI of the daily difference excluding 0, and
+  (2) its 80% coverage is within 0.75–0.85. Otherwise v7's ranges stay. 2025–26 is reported as *seen*.
+- **Forward test.** v7 keeps its shadow logs. v7r writes its own (`shadow_r.jsonl` per horizon) from the day it is
+  adopted, with the same promotion rule as v7. v8's AI views use whichever ranges the app shows; each log line records
+  which.
+- **Also added, not used for adoption.**
+  - Stock vs market: the app shows the chance of beating the market (the market drift and the stock-specific part are
+    already separate in v7). The forward score also reports direction relative to the market: the sign of (m − β·μ_m)
+    against the sign of (y − β·y_m).
+  - US market holidays (NYSE rules) are skipped in forecast dates. Display only; the model's trading-day count is
+    unchanged.
+
 **Amendment A results (2026-10-19), against the gate written above:**
 
 | market | horizon | shrink | dev CRPS (RW) | dev 80% cov. | seen 80% cov. | dev / seen hit | gate |
