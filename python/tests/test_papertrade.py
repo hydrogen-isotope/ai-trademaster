@@ -147,8 +147,33 @@ def test_intraday_slice_top5_every_30_min_and_flat_at_1550():
     T.intraday_step(st, {"timestamp": "2026-10-20T10:41:00-04:00", "is_open": True})       # same bar: no new trades
     assert sent == []
     st["books"]["intraday"]["holdings"] = {"S29": 20.0}
+    st["books"]["intraday"]["cost"] = {"S29": 1900.0}                                     # bought at 95, now 100: a gain
     T.intraday_step(st, {"timestamp": "2026-10-20T15:51:00-04:00", "is_open": True})       # flat by the close
     assert sent == [("S29", "sell", 20)]
+
+
+def test_intraday_keeps_losers_overnight_until_breakeven_stop_or_3_days():
+    import importlib
+    importlib.reload(T)
+    sent, px = [], {"A": 98.0, "B": 101.0}
+    T._open_orders = lambda book: []
+    T._latest_prices = lambda ss: {x: px[x] for x in ss if x in px}
+    T._order = lambda book, sym, side, qty=None, notional=None, log=print, **k: sent.append((sym, side))
+    b = {"cash": 0.0, "start": 10000.0, "holdings": {"A": 10.0, "B": 10.0}, "cost": {"A": 1000.0, "B": 1000.0}, "day": "2026-10-20"}
+    st = {"books": {"intraday": b}}
+    T.intraday_step(st, {"timestamp": "2026-10-20T15:51:00-04:00", "is_open": True})       # A is -2%: kept; B is +1%: sold
+    assert sent == [("B", "sell")] and b["carry"] == {"A": "2026-10-20"}
+    b["holdings"].pop("B"); sent.clear()
+    T.intraday_step(st, {"timestamp": "2026-10-21T09:40:00-04:00", "is_open": True})       # next day, still -2%: kept
+    assert ("A", "sell") not in sent
+    px["A"] = 100.5; sent.clear()
+    T.intraday_step(st, {"timestamp": "2026-10-21T10:05:00-04:00", "is_open": True})       # back above cost: sold
+    assert ("A", "sell") in sent
+    for price, day, expect in ((95.9, "2026-10-21", True), (98.0, "2026-10-23", True), (98.0, "2026-10-22", False)):
+        px["A"] = price; sent.clear()
+        b["holdings"], b["cost"], b["carry"], b["day"] = {"A": 10.0}, {"A": 1000.0}, {"A": "2026-10-20"}, day
+        T.intraday_step(st, {"timestamp": f"{day}T10:05:00-04:00", "is_open": True})       # -4.1% stop; 3 sessions; 2 sessions
+        assert (("A", "sell") in sent) == expect, (price, day)
 
 
 if __name__ == "__main__":

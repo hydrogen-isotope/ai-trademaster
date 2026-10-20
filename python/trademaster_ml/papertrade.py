@@ -35,9 +35,10 @@ DIR = os.path.join("private", "reports", "paper")
 CONTROL, BOOK, LEDGER, EQUITY, STATUS = (os.path.join(DIR, f) for f in ("control.json", "book.json", "ledger.jsonl", "equity.jsonl", "status.json"))
 BOOKS = {"ai": "AI signals (Qwen + models, 5-day BUY)", "rank": "Top-ranked stocks (v6 top 10%)",
          "night": "Overnight QQQ (buy at the close, sell at the next open)",
-         "intraday": "Intraday 30-minute model (top 5, every 30 min, flat by the close)"}
+         "intraday": "Intraday 30-minute model (top 5, every 30 min; keeps losers until break-even)"}
 SPLIT = {"ai": 0.40, "rank": 0.40, "night": 0.10, "intraday": 0.10}
 INTRA_TOP, INTRA_EVERY_S, INTRA_FLAT_MIN = 5, 1800, 15 * 60 + 50
+CARRY_STOP, CARRY_MAX_DAYS = -0.04, 3        # a position kept to avoid selling at a loss: sold at -4% or after 3 sessions
 FORWARD = os.path.join("private", "data", "forward")
 FROZEN_MANIFEST = os.path.join("private", "models", "forward", "frozen-2026-10-17", "manifest.json")
 LABELS = {**BOOKS, "manual": "Your manual trades"}
@@ -192,7 +193,7 @@ def _apply_fill(book_state, rec, o, log=print):
     q, px = float(o.get("filled_qty") or 0), float(o.get("filled_avg_price") or 0)
     b = book_state["books"].setdefault(rec["book"], {"cash": 0.0, "start": 0.0, "holdings": {}})
     sign = 1 if o.get("side", rec["side"]) == "buy" else -1
-    if rec["book"] == "manual" and q > 0:
+    if q > 0:                                                       # cost basis for every book
         cost = b.setdefault("cost", {})
         held = b["holdings"].get(rec["symbol"], 0.0)
         if sign > 0:
@@ -200,9 +201,10 @@ def _apply_fill(book_state, rec, o, log=print):
         elif held > 0:
             avg = cost.get(rec["symbol"], 0.0) / held
             cost[rec["symbol"]] = cost.get(rec["symbol"], 0.0) - avg * q
-            _append(MANUAL_CLOSED, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "symbol": rec["symbol"], "qty": q,
-                                    "avg_entry": avg, "exit": px, "pnl": (px - avg) * q, "ret": px / avg - 1 if avg else None,
-                                    "order_id": oid})
+            if rec["book"] == "manual":
+                _append(MANUAL_CLOSED, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "symbol": rec["symbol"], "qty": q,
+                                        "avg_entry": avg, "exit": px, "pnl": (px - avg) * q, "ret": px / avg - 1 if avg else None,
+                                        "order_id": oid})
     b["holdings"][rec["symbol"]] = round(b["holdings"].get(rec["symbol"], 0.0) + sign * q, 9)
     if abs(b["holdings"][rec["symbol"]]) < 1e-9:
         b["holdings"].pop(rec["symbol"])
@@ -290,23 +292,90 @@ def _state(c, log=print):
     return st
 
 
+def _rebuild_cost(st, book):
+    """Cost basis from the book's own filled orders (for holdings bought before cost tracking covered every book)."""
+    b = st["books"][book]
+    cost, held = {}, {}
+    for line in (open(LEDGER) if os.path.exists(LEDGER) else []):
+        rec = json.loads(line)
+        if rec.get("book") != book or not rec.get("order_id"):
+            continue
+        o = _req("GET", f"/v2/orders/{rec['order_id']}")
+        q, px = float(o.get("filled_qty") or 0), float(o.get("filled_avg_price") or 0)
+        if q <= 0:
+            continue
+        sym = rec["symbol"]
+        if rec["side"] == "buy":
+            cost[sym], held[sym] = cost.get(sym, 0.0) + q * px, held.get(sym, 0.0) + q
+        elif held.get(sym):
+            cost[sym] -= cost[sym] / held[sym] * min(q, held[sym])
+            held[sym] -= min(q, held[sym])
+    b["cost"] = {k: v for k, v in cost.items() if k in b["holdings"]}
+
+
+def _sessions_since(day, today):
+    from . import holidays
+    n, d = 0, day
+    while d < today:
+        d = holidays.next_sessions(d, 1)[0]
+        n += 1
+    return n
+
+
 def intraday_step(st, clock, log=print):
     """The intraday slice: every 30 minutes hold the frozen 30-minute model's (B1) top INTRA_TOP stocks, long only, equal
-    weight; from 15:50 New York, and on the first run of a later day, sell everything. Uses the live forward test's
-    latest prediction (private/data/forward/live-<date>/predictions.jsonl), only if it is under 10 minutes old."""
+    weight, from the live forward test's latest prediction (private/data/forward/live-<date>/predictions.jsonl, under
+    10 minutes old). It never sells at a loss just to follow the schedule: at 15:50 New York it sells what is at or above
+    cost and keeps the rest overnight; the 30-minute reshuffle also keeps losers. A kept ("carried") position is sold
+    once it is back at or above cost, at CARRY_STOP below cost, or after CARRY_MAX_DAYS sessions. Carried stocks are
+    never added to."""
     b = st["books"]["intraday"]
     now = datetime.fromisoformat(str(clock["timestamp"])).astimezone(alpaca.NY)
     today, mins = now.date().isoformat(), now.hour * 60 + now.minute
     if _open_orders("intraday"):
         return 0
+    if b["holdings"] and set(b["holdings"]) - set(b.get("cost", {})):
+        _rebuild_cost(st, "intraday")
+    carry = b.setdefault("carry", {})
+    for sym in list(carry):
+        if sym not in b["holdings"]:
+            carry.pop(sym)
+    prices = _latest_prices(sorted(b["holdings"])) if b["holdings"] else {}
+
+    def pnl(sym):
+        c, q, px = b.get("cost", {}).get(sym), b["holdings"].get(sym), prices.get(sym)
+        return px / (c / q) - 1 if c and q and px else None
+
+    def may_sell(sym):                                              # not at a loss, or a carry limit was reached
+        r = pnl(sym)
+        if r is None or r >= 0:
+            return True
+        return sym in carry and (r <= CARRY_STOP or _sessions_since(carry[sym], today) >= CARRY_MAX_DAYS)
+
+    n = 0
+    if clock.get("is_open"):
+        for sym in list(carry):                                    # carried positions: sell when a rule says so
+            if sym in b["holdings"] and may_sell(sym):
+                _order("intraday", sym, "sell", qty=b["holdings"][sym], log=log)
+                n += 1
     stale = b.get("day") and b["day"] != today
-    if b["holdings"] and (stale or mins >= INTRA_FLAT_MIN):
+    if b["holdings"] and clock.get("is_open") and (stale or mins >= INTRA_FLAT_MIN):
+        kept = []
         for sym, q in list(b["holdings"].items()):
-            _order("intraday", sym, "sell", qty=q, log=log)
-        b["note"] = "flat for the close" if not stale else "sold yesterday's leftovers"
-        return len(b["holdings"])
+            if sym in carry:
+                continue
+            if may_sell(sym):
+                _order("intraday", sym, "sell", qty=q, log=log)
+                n += 1
+            else:
+                carry[sym] = today
+                kept.append(sym)
+        b["day"] = today
+        b["note"] = ("flat for the close" if not kept else f"kept overnight at a loss: {', '.join(kept)}") if not stale \
+            else "sold yesterday's leftovers"
+        return n
     if mins >= INTRA_FLAT_MIN or not clock.get("is_open"):
-        return 0
+        return n
     path = os.path.join(FORWARD, f"live-{today}", "predictions.jsonl")
     if not os.path.exists(path):
         b["note"] = "waiting for the live 30-minute model"
@@ -328,10 +397,15 @@ def intraday_step(st, clock, log=print):
         b["note"] = f"model warming up ({len(cand)} stocks valid)"
         return 0
     want = [s_ for _, s_ in sorted(cand, reverse=True)[:INTRA_TOP]]
-    prices = _latest_prices(sorted(set(want) | set(b["holdings"])))
-    n = _rebalance("intraday", b, [s_ for s_ in want if s_ in prices], prices, log)
+    prices.update(_latest_prices(sorted(set(want) - set(prices))))
+    for sym in b["holdings"]:                                       # dropped from the top 5 at a loss: keep (carry)
+        if sym not in want and sym not in carry and not may_sell(sym):
+            carry[sym] = today
+    free = {"cash": b["cash"], "holdings": {k: v for k, v in b["holdings"].items() if k not in carry}}
+    n += _rebalance("intraday", free, [s_ for s_ in want if s_ in prices and s_ not in carry], prices, log)
     b["last_t"], b["day"], b["last_rebalance"], b["signals_asof"] = rec["t"], today, today, f"{rec['label']} ET bar"
-    b["note"] = f"holding the model's top {INTRA_TOP} from the {rec['label']} ET bar"
+    b["note"] = f"holding the model's top {INTRA_TOP} from the {rec['label']} ET bar" + \
+        (f"; kept at a loss: {', '.join(sorted(carry))}" if carry else "")
     return n
 
 

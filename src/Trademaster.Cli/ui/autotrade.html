@@ -109,7 +109,7 @@ button.go:disabled{opacity:.5}
   <div class="panel"><div class="ph">Orders</div><div class="scroll"><table><thead><tr><th>Time</th><th>Half</th><th>Side</th><th>Stock</th><th>Amount</th><th>Status</th></tr></thead><tbody id="ledger"></tbody></table></div></div>
   <div class="note">How it works: the automatic slices get 40% / 40% / 10% / 10% of the paper account. <b>AI signals</b> buys the stocks whose latest 5-day Qwen + models signal is BUY
     (at most 20, 5% each; the rest stays in cash) and sells them when the signal goes away, once per trading day. <b>Top-ranked</b> holds the top 10% of
-    the cross-stock ranking, equal weight, rebalanced once a week. <b>Intraday</b> holds the frozen 30-minute model's top 5 stocks, reshuffled every 30 minutes from about 10:30 AM New York, and sells everything at 3:50 PM; it needs the live model running (started from this page's session). <b>Overnight QQQ</b> buys QQQ in the closing auction and sells it in the next opening auction, every trading day. Small differences (under 20% of a position) are left alone to limit trading.
+    the cross-stock ranking, equal weight, rebalanced once a week. <b>Intraday</b> holds the frozen 30-minute model's top 5 stocks, reshuffled every 30 minutes from about 10:30 AM New York, and sells at 3:50 PM what is at or above its buy price. It never sells at a loss just to follow the schedule: losing positions are kept (overnight too) until they are back at their buy price, fall 4% below it, or have been held 3 trading days, and are never added to; it needs the live model running (started from this page's session). <b>Overnight QQQ</b> buys QQQ in the closing auction and sells it in the next opening auction, every trading day. Small differences (under 20% of a position) are left alone to limit trading.
     Research only; results on simulated money, before taxes, with Alpaca's paper fills.</div>
 </main>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -144,7 +144,7 @@ function render() {
     ['Market', esc(st.note || (on ? 'checks every 5 min' : 'switch on to start')), ''],
   ].map(([k, v, d]) => `<div class="kpi"><div class="k">${k}</div><div class="v ${k === 'Market' ? '' : 'num'}" style="${k === 'Market' ? 'font-size:15px;font-weight:600' : ''}">${v}</div><div class="d">${d}</div></div>`).join('');
   const LABELS = { ai: 'AI signals (Qwen + models, 5-day BUY)', rank: 'Top-ranked stocks (v6 top 10%)', night: 'Overnight QQQ (buy at the close, sell at the next open)',
-    intraday: 'Intraday 30-minute model (top 5, every 30 min, flat by the close)' };
+    intraday: 'Intraday 30-minute model (top 5, every 30 min; keeps losers until break-even)' };
   $('books').innerHTML = ['ai', 'rank', 'night', 'intraday'].map(k => {
     const b = books[k] || { label: LABELS[k], positions: [] };
     const vsHold = k === 'night' && q0 && st.qqq && b.return != null
