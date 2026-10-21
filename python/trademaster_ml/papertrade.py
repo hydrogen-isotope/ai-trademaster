@@ -47,6 +47,7 @@ FORWARD = os.path.join("private", "data", "forward")
 FROZEN_MANIFEST = os.path.join("private", "models", "forward", "frozen-2026-10-17", "manifest.json")
 LABELS = {**BOOKS, "manual": "Your manual trades"}
 MANUAL, MANUAL_CLOSED = os.path.join(DIR, "manual.jsonl"), os.path.join(DIR, "manual_closed.jsonl")
+MANUAL_CONTEXT = os.environ.get("TM_MANUAL_CONTEXT") or os.path.join(DIR, "manual_context.jsonl")   # written in the background
 OUTCOMES = os.path.join(DIR, "manual_outcomes.json")         # what happened after each decision (learning labels)
 FINAL_STATES = ("filled", "canceled", "expired", "rejected", "done_for_day")
 OPEN_STATES = ("new", "accepted", "pending_new", "partially_filled", "held", "accepted_for_bidding")
@@ -812,13 +813,40 @@ def manual_order(spec, log=print):
                tif="gtc" if (tp or sl) else "day")
     _append(MANUAL, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "order_id": o.get("id"), "symbol": sym, "side": side,
                      "qty": qty, "notional": notional, "limit": limit, "take_profit": tp, "stop_loss": sl, "price_at_order": px, "note": note,
-                     "context": context(sym, px)})
+                     "context_file": os.path.basename(MANUAL_CONTEXT)})
+    _record_context_async(o.get("id"), sym, px, log)
     _save(BOOK, st)
     time.sleep(2)
     _settle(st, log)
     _save(BOOK, st)
     status(st)
     return {"order_id": o.get("id"), "status": o.get("status"), "symbol": sym, "side": side}
+
+
+def _record_context_async(order_id, sym, px, log=print):
+    """Collect the decision's market conditions in a detached process, so the order returns at once."""
+    import subprocess, sys
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = {**os.environ, "PYTHONPATH": root + os.pathsep + os.environ.get("PYTHONPATH", "")}
+    flags = (subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == "nt" else 0
+    try:
+        subprocess.Popen([sys.executable, "-m", "trademaster_ml.papertrade", "enrich",
+                          "--json", json.dumps({"order_id": order_id, "symbol": sym, "price": px})],
+                         cwd=os.getcwd(), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, close_fds=True, creationflags=flags, start_new_session=os.name != "nt")
+    except Exception as e:  # noqa: BLE001 - recording must never block a trade
+        log(f"[paper] could not start the context recorder: {type(e).__name__}: {e}")
+
+
+def enrich(spec):
+    """Background half of a manual order: save what the models and the market showed at that moment."""
+    t0 = datetime.now(timezone.utc)
+    try:
+        ctx = context(spec["symbol"], spec.get("price"))
+    except Exception as e:  # noqa: BLE001
+        ctx = {"error": f"{type(e).__name__}: {str(e)[:200]}"}
+    _append(MANUAL_CONTEXT, {"order_id": spec.get("order_id"), "symbol": spec["symbol"], "t": t0.isoformat(timespec="seconds"),
+                             "seconds": round((datetime.now(timezone.utc) - t0).total_seconds(), 1), "context": ctx})
 
 
 def label_decisions(log=print):
@@ -885,12 +913,14 @@ def cancel(order_id, log=print):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["run", "status", "close", "order", "cancel"])
+    ap.add_argument("cmd", choices=["run", "status", "close", "order", "cancel", "enrich"])
     ap.add_argument("--book", choices=["ai", "rank", "night", "intraday", "focus", "manual", "all"], default="all")
     ap.add_argument("--json", default="{}")
     ap.add_argument("--id", default="")
     a = ap.parse_args()
-    if a.cmd == "order":
+    if a.cmd == "enrich":
+        enrich(json.loads(a.json))
+    elif a.cmd == "order":
         print(json.dumps(manual_order(json.loads(a.json))))
     elif a.cmd == "cancel":
         cancel(a.id)

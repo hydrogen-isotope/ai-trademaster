@@ -71,6 +71,7 @@ def test_manual_orders_refuse_shorts_and_bad_input():
     T.status = lambda *a, **k: None
     T._append = lambda path, rec: None
     T.context = lambda sym, px=None: {}
+    T._record_context_async = lambda *a, **k: None
     sent = []
     T._order = lambda book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None, take_profit=None, stop_loss=None:         sent.append((book, sym, side, qty, notional, limit) + ((take_profit, stop_loss) if take_profit or stop_loss else ())) or {"id": "x"}
     T.time.sleep = lambda s: None
