@@ -718,10 +718,19 @@ def intraday_view(sym):
     return {"bar": rec["label"], "b1_bps": rec["b1"][i], "rank": vals.index(rec["b1"][i]) + 1, "of": len(vals)}
 
 
-def context(sym):
+def context(sym, px=None):
     """What the models said about `sym` right now, plus market conditions (saved with each manual order, so the user's
     decisions can later be learned from)."""
     out = {"market": market_snapshot(sym), "intraday_model": intraday_view(sym)}
+    try:                                                           # the 5-minute model's 117 inputs at this moment
+        from . import intraday_big
+        out["model_inputs"] = intraday_big.live_features(sym)
+    except Exception as e:  # noqa: BLE001 - recording must never block a trade
+        out["model_inputs"] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+    try:                                                           # near-the-money options: ATM IV, put/call ratio
+        out["options"] = options_watch.reading(sym, px) if px else None
+    except Exception as e:  # noqa: BLE001
+        out["options"] = {"error": f"{type(e).__name__}: {str(e)[:120]}"}
     for h, path in (("1", os.path.join("private", "reports", "v7", "h1", "forecast.json")), ("5", os.path.join("private", "reports", "v7", "forecast.json"))):
         f = _load(path, {})
         r = (f.get("rows") or {}).get(sym)
@@ -771,6 +780,9 @@ def manual_order(spec, log=print):
     if notional is not None and limit:
         raise SystemExit("refused: a limit order needs a share quantity")
     c = control()
+    if c.get("reset") in ("pending", "submitted"):
+        raise SystemExit("refused: the account reset runs at the open (it sells everything); trade once it has finished, "
+                         "a few minutes after 9:30 AM New York")
     st = _state(c, log)
     _settle(st, log)
     px = _latest_prices([sym]).get(sym)
@@ -800,7 +812,7 @@ def manual_order(spec, log=print):
                tif="gtc" if (tp or sl) else "day")
     _append(MANUAL, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "order_id": o.get("id"), "symbol": sym, "side": side,
                      "qty": qty, "notional": notional, "limit": limit, "take_profit": tp, "stop_loss": sl, "price_at_order": px, "note": note,
-                     "context": context(sym)})
+                     "context": context(sym, px)})
     _save(BOOK, st)
     time.sleep(2)
     _settle(st, log)

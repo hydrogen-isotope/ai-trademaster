@@ -107,8 +107,8 @@ FINAL = (20250701, 20261020)
 NQ = 12
 
 
-def _grid(sym, days, di):
-    z = np.load(os.path.join(DIR, "bars", f"{sym}.npz"))
+def _grid(sym, days, di, z=None):
+    z = z if z is not None else np.load(os.path.join(DIR, "bars", f"{sym}.npz"))
     T = len(days)
     O, C, V = (np.full((T, SLOTS), np.nan) for _ in range(3))
     r = np.array([di.get(int(d), -1) for d in z["day"]])
@@ -204,6 +204,64 @@ def build(log=print):
         np.save(os.path.join(DIR, f"{name}_meta.npy"), np.concatenate([p[2] for p in ps]))
         log(f"{name}: {sum(len(p[1]) for p in ps):,} samples, {ps[0][0].shape[1]} inputs", flush=True)
     json.dump(syms, open(os.path.join(DIR, "symbols.json"), "w"))
+
+
+def vector(zs, zq, day, slot):
+    """The model's 117 inputs for one stock at the close of bar `slot` on `day` (YYYYMMDD), from bar dicts
+    {day, minute, o, h, l, c, v} for the stock (zs) and QQQ (zq). Same formulas as build()."""
+    days = np.unique(zq["day"])
+    days = days[days <= day]
+    di = {int(x): i for i, x in enumerate(days)}
+    d = di[int(day)]
+    qO, qC, qV = _grid("QQQ", days, di, zq)
+    qR, _, qvol, _ = _features(qO, qC, qV, None)
+    qRn = (qR / qvol[:, None]).reshape(-1)
+    O0, C, V = _grid("", days, di, zs)
+    R, VR, vol, gap = _features(O0, C, V, None)
+    Rn = np.clip(R / vol[:, None], -20, 20).reshape(-1)
+    VRf = np.clip(np.nan_to_num(VR, nan=0.0), -5, 5).reshape(-1)
+    f = d * SLOTS + slot
+    so = np.log(C[d, slot] / O0[d]) / (vol[d] * math.sqrt(slot + 1))
+    qo = np.log(qC[d, slot] / qO[d]) / (qvol[d] * math.sqrt(slot + 1))
+    dw = date(int(str(day)[:4]), int(str(day)[4:6]), int(str(day)[6:])).weekday()
+    x = np.r_[Rn[f - LOOK + 1:f + 1], VRf[f - LOOK + 1:f + 1], np.clip(so, -10, 10),
+              np.clip(gap[d] / (vol[d] * math.sqrt(SLOTS)), -10, 10), np.clip(qRn[f - NQ + 1:f + 1], -20, 20),
+              np.clip(qo, -10, 10), slot / (SLOTS - 1), np.eye(5)[dw]].astype(np.float32)
+    return np.nan_to_num(x)
+
+
+def live_features(sym, creds=None):
+    """The model's inputs for `sym` at the latest complete 5-minute bar today (IEX feed, the live data the account can
+    read), saved with each manual trade so the user's decisions can be compared with what the model saw."""
+    from . import alpaca
+    creds = creds or alpaca.credentials()
+    now = datetime.now(alpaca.NY)
+    start = (now - timedelta(days=45)).strftime("%Y-%m-%dT00:00:00Z")
+
+    def get(s):
+        rows, token = [], None
+        while True:
+            p = {"timeframe": "5Min", "feed": "iex", "adjustment": "split", "start": start, "limit": 10000}
+            if token:
+                p["page_token"] = token
+            d = alpaca._get(f"/v2/stocks/{s}/bars", p, creds) or {}
+            for x in d.get("bars") or []:
+                t = datetime.fromisoformat(x["t"].replace("Z", "+00:00")).astimezone(alpaca.NY)
+                m = t.hour * 60 + t.minute
+                if 570 <= m < 960 and t + timedelta(minutes=5) <= now:
+                    rows.append((int(t.strftime("%Y%m%d")), m, x["o"], x["h"], x["l"], x["c"], x["v"]))
+            token = d.get("next_page_token")
+            if not token:
+                break
+        a = np.array(rows, dtype=np.float64)
+        return {"day": a[:, 0].astype(np.int64), "minute": a[:, 1].astype(int), "o": a[:, 2], "h": a[:, 3], "l": a[:, 4],
+                "c": a[:, 5], "v": a[:, 6]}
+
+    zs, zq = get(sym), get("QQQ")
+    day = int(zq["day"].max())
+    slot = int((zq["minute"][zq["day"] == day].max() - 570) // 5)
+    return {"feed": "iex", "day": day, "bar": f"{(570 + 5 * slot) // 60}:{(570 + 5 * slot) % 60:02d}",
+            "inputs": [round(float(v), 5) for v in vector(zs, zq, day, slot)]}
 
 
 # ---------------------------------------------------------------- training (GPU, python/.venv-gpu)

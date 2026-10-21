@@ -70,7 +70,7 @@ def test_manual_orders_refuse_shorts_and_bad_input():
     T._latest_prices = lambda syms: {s: 900.0 for s in syms}
     T.status = lambda *a, **k: None
     T._append = lambda path, rec: None
-    T.context = lambda sym: {}
+    T.context = lambda sym, px=None: {}
     sent = []
     T._order = lambda book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None, take_profit=None, stop_loss=None:         sent.append((book, sym, side, qty, notional, limit) + ((take_profit, stop_loss) if take_profit or stop_loss else ())) or {"id": "x"}
     T.time.sleep = lambda s: None
