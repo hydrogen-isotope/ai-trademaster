@@ -46,3 +46,26 @@ IV jump ∈ {5%, 8%, 12%, 20%} × put/call rule ∈ {off, on (1.5×, ≥ 1.0, �
 ## Live
 Whatever passes replaces the current alarm rule on the paper slice; if nothing passes, the slice keeps the rule as
 it is (an untested experiment, as the user asked), and the result is shown on the Auto-trade page.
+
+## Amendment A (2026-10-21, before any option or model result was seen): a larger model on much more data, on the GPU
+The user asked for a larger model trained on more data (the earlier small models found almost nothing). Section 4 is
+replaced by:
+- **Data:** 5-minute bars (SIP, split-adjusted) 2019-01-02 → 2026-10-20 for the 100 most-traded NASDAQ stocks of each
+  year (top 100 by 20-day dollar volume on the year's first trading day, from the v6 panel, so the universe is point in
+  time; a stock is used only in its own years), plus NVDA, MU and QQQ.
+- **Target:** the stock's return over the next 30 minutes (6 bars) from each bar close 9:40 → 15:20, divided by its
+  trailing 20-day 5-minute volatility (training only; trading uses the sign and rank).
+- **Inputs (known at the bar close):** the stock's last 48 bar returns and volume ratios (vs its 20-day average for that
+  time of day), return since the open and since the prior close, the same for QQQ, time of day, day of week. No options
+  inputs (options history covers only 2024 onward and only two stocks; the alarm keeps those).
+- **Model sizes, all counted:** small (2 × 64), medium (3 × 256), large (4 × 1024) fully connected networks, plus a large
+  sequence model (1-D convolution over the 48 bars, 4 layers × 256 channels). Adam, fixed seed, early stopping.
+  - Fit 2019-01 → 2024-12; **validation 2025-01-02 → 2025-06-30** picks the size (highest rank correlation, IC) and the
+    exit threshold (10th / 20th / 30th percentile of predictions).
+- **Final 2025-07-01 → 2026-10-20, once, for the chosen model:**
+  - IC over all stocks (reported, with t over days);
+  - **exit rule C** (as A, plus sell at the next bar's open when NVDA/MU's prediction is below the threshold);
+  - **entry rule D** (as A, but buy at 9:35 only if the first 5 minutes closed up *and* the prediction is above 0).
+  - Pass for each: mean (C or D) − A per trade > 0 with t ≥ 2.24 (two rules: Bonferroni at 5%).
+- Trained on the RX 7800 XT through DirectML. Stated limitation: the 2025-07 → 2026-10 period was already used in
+  earlier daily studies, but no 5-minute model was ever evaluated on it.
