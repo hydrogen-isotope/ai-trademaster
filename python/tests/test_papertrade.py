@@ -201,6 +201,41 @@ def test_focus_buys_up_openers_once_and_keeps_losers():
     assert ("NVDA", "sell", 23) in sent
 
 
+def test_focus_options_alarm_sells_even_at_a_loss():
+    import importlib
+    from trademaster_ml import options_watch as W
+    importlib.reload(T)
+    sent, px, iv = [], {"NVDA": 216.0, "MU": 900.0}, {"v": 0.50}
+    T._open_orders = lambda book: []
+    T._latest_prices = lambda ss: {x: px[x] for x in ss if x in px}
+    T._order = lambda book, sym, side, qty=None, notional=None, log=print, **k: sent.append((sym, side, round(notional or qty)))
+    saved = W.reading, W.record
+    W.reading = lambda sym, S, **k: {"iv": iv["v"], "pc": 0.6, "vol": 1000, "expiry": "2026-10-30"}
+    W.record = lambda *a, **k: None
+    try:
+        b = {"cash": 0.0, "start": 10000.0, "holdings": {"NVDA": 23.0}, "cost": {"NVDA": 23.0 * 220.0},
+             "entered": "2026-10-21", "day": "2026-10-21"}
+        st = {"books": {"focus": b}}
+        T.focus_step(st, {"timestamp": "2026-10-21T10:00:00-04:00", "is_open": True})      # first reading = the base
+        assert sent == [] and b["opt_entry"]["NVDA"]["iv"] == 0.50
+        iv["v"] = 0.53                                                                     # +6%: below the 8% alarm
+        T.focus_step(st, {"timestamp": "2026-10-21T10:05:00-04:00", "is_open": True})
+        assert sent == []
+        iv["v"] = 0.55                                                                     # +10%: sell, though at a loss
+        T.focus_step(st, {"timestamp": "2026-10-21T10:10:00-04:00", "is_open": True})
+        assert sent == [("NVDA", "sell", 23)] and "options alarm" in b["note"]
+    finally:
+        W.reading, W.record = saved
+
+
+def test_options_alarm_put_call_needs_volume():
+    from trademaster_ml import options_watch as W
+    base = {"iv": 0.5, "pc": 0.6}
+    assert W.alarm(base, {"iv": 0.5, "pc": 1.2, "vol": 100}) is None                       # too few contracts
+    assert "put/call" in W.alarm(base, {"iv": 0.5, "pc": 1.2, "vol": 900})
+    assert W.alarm(base, {"iv": 0.5, "pc": 0.95, "vol": 900}) is None                      # 1.5x but below 1.0
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

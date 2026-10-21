@@ -28,7 +28,7 @@ Usage: python -m trademaster_ml.papertrade run | status | close --book ai|rank|n
 import argparse, json, os, time, urllib.error, urllib.request
 from datetime import datetime, timezone
 
-from . import alpaca, holidays
+from . import alpaca, holidays, options_watch
 
 PAPER = "https://paper-api.alpaca.markets"
 DIR = os.path.join("private", "reports", "paper")
@@ -36,7 +36,7 @@ CONTROL, BOOK, LEDGER, EQUITY, STATUS = (os.path.join(DIR, f) for f in ("control
 BOOKS = {"ai": "AI signals (Qwen + models, 5-day BUY)", "rank": "Top-ranked stocks (LightGBM top 20, daily)",
          "night": "Overnight QQQ (buy at the close, sell at the next open)",
          "intraday": "Intraday 30-minute model (top 5, every 30 min; keeps losers until break-even)",
-         "focus": "NVDA & MU opening-range (buy if the first 5 minutes close up; keeps losers until break-even)"}
+         "focus": "NVDA & MU opening-range, options-watched (buy if the first 5 minutes close up; sell on an options alarm)"}
 SPLIT = {"ai": 0.40, "rank": 0.40, "night": 0.10, "intraday": 0.10, "focus": 0.10}   # focus is on margin (1.1x)
 FOCUS_SYMS, FOCUS_ENTRY = ("NVDA", "MU"), (9 * 60 + 35, 9 * 60 + 50)
 INTRA_TOP, INTRA_EVERY_S, INTRA_FLAT_MIN = 5, 1800, 15 * 60 + 50
@@ -367,15 +367,42 @@ def focus_step(st, clock, log=print):
             return True
         return sym in carry and (r <= CARRY_STOP or _sessions_since(carry[sym], today) >= CARRY_MAX_DAYS)
 
-    n = 0
+    n, sold = 0, set()
     for sym in list(carry):                                        # kept losers: sell when a rule says so
         if may_sell(sym):
             _order("focus", sym, "sell", qty=b["holdings"][sym], log=log)
+            sold.add(sym)
+            n += 1
+    ent = b.setdefault("opt_entry", {})
+    for sym in list(ent):
+        if sym not in b["holdings"]:
+            ent.pop(sym)
+    for sym, q in list(b["holdings"].items()):                     # options watch: the first reading of the day is the base
+        if sym in sold or not prices.get(sym):
+            continue
+        try:
+            r = options_watch.reading(sym, prices[sym])
+        except Exception as e:  # noqa: BLE001 - the watch must not stop the slice
+            log(f"[paper] options reading {sym} failed: {type(e).__name__}: {str(e)[:100]}")
+            continue
+        base = ent.get(sym)
+        if not base or base.get("day") != today:
+            if r and r.get("iv"):
+                ent[sym] = {**r, "day": today}
+            options_watch.record(sym, prices[sym], r)
+            continue
+        why = options_watch.alarm(base, r)
+        options_watch.record(sym, prices[sym], r, why)
+        if why:                                                    # the alarm overrides the keep-losers rule
+            _order("focus", sym, "sell", qty=q, log=log)
+            carry.pop(sym, None)
+            sold.add(sym)
+            b["note"] = f"sold {sym}: {why}"
             n += 1
     if mins >= INTRA_FLAT_MIN or (b.get("day") and b["day"] != today and not b.get("entered_today")):
         kept = []
         for sym, q in list(b["holdings"].items()):                 # the close (or leftovers from a day the app missed)
-            if sym in carry:
+            if sym in carry or sym in sold:
                 continue
             if may_sell(sym):
                 _order("focus", sym, "sell", qty=q, log=log)
@@ -504,6 +531,10 @@ def run(a=None, log=print):
     if not c["enabled"]:
         return {"done": "auto-trade is off"}
     clock = _req("GET", "/v2/clock")
+    if c.get("reset") in ("pending", "submitted"):
+        waiting = _reset_step(c, clock, log)
+        if waiting:
+            return waiting
     st = _state(c, log)
     _settle(st, log)
     night = night_step(st, clock, log) if c["books"].get("night") and "night" in st["books"] else 0
@@ -535,6 +566,37 @@ def run(a=None, log=print):
     _save(BOOK, st)
     status(st)
     return {"orders": done, "night_orders": night, "intraday_orders": intra}
+
+
+def _reset_step(c, clock, log=print):
+    """Account reset requested from control.json ("reset": "pending"): at the open, cancel every order and sell every
+    position (manual ones too); once all are filled, move the old books, ledger and equity history aside to
+    private/reports/paper/archive-<time>/ and start fresh books from the current equity with the current split."""
+    if not clock.get("is_open"):
+        return {"done": "reset waits for the open: " + str(clock.get("next_open"))}
+    if c["reset"] == "pending":
+        _req("DELETE", "/v2/positions", params={"cancel_orders": "true"})
+        c["reset"] = "submitted"
+        _save(CONTROL, c)
+        log("[paper] reset: cancelled all orders and sent sells for every position")
+    for _ in range(12):                                            # market sells at the open fill in seconds
+        if not (_req("GET", "/v2/positions") or _req("GET", "/v2/orders", params={"status": "open"})):
+            break
+        time.sleep(10)
+    else:
+        return {"done": "reset: waiting for the sells to fill"}
+    stamp = datetime.now(alpaca.NY).strftime("%Y-%m-%d_%H%M")
+    arch = os.path.join(DIR, f"archive-{stamp}")
+    os.makedirs(arch, exist_ok=True)
+    for f in (BOOK, LEDGER, EQUITY, STATUS):
+        if os.path.exists(f):
+            os.replace(f, os.path.join(arch, os.path.basename(f)))
+    c["reset"], c["reset_at"] = "done", stamp
+    _save(CONTROL, c)
+    st = _state(c, log)
+    _save(BOOK, st)
+    log(f"[paper] reset done: old books moved to {arch}")
+    return None                                                    # the normal run continues with the fresh books
 
 
 def close(book, log=print):
