@@ -91,7 +91,7 @@ def fetch(log=print):
     creds = alpaca.credentials()
     jobs = sorted(first.items())
     t0 = time.time()
-    with ThreadPoolExecutor(4) as ex:
+    with ThreadPoolExecutor(12) as ex:
         for k, (sym, n) in enumerate(ex.map(lambda j: _fetch_one(j[0], f"{j[1] - 1}-11-15", creds), jobs), 1):
             if n >= 0:
                 log(f"  {k}/{len(jobs)} {sym}: {n} bars ({(time.time() - t0) / 60:.1f} min)", flush=True)
@@ -213,7 +213,10 @@ SIZES = {"small": ("mlp", 2, 64), "medium": ("mlp", 3, 256), "large": ("mlp", 4,
 
 def daily_ic(pred, y, meta):
     """Cross-sectional Spearman at each (day, bar), averaged per day -> (mean, t over days)."""
-    from scipy.stats import rankdata
+    def rankdata(x):                                               # plain NumPy (the GPU venv has no SciPy); ties are rare
+        r = np.empty(len(x))
+        r[np.argsort(x, kind="stable")] = np.arange(len(x))
+        return r
     key = meta[:, 1].astype(np.int64) * 100 + meta[:, 2]
     order = np.argsort(key, kind="stable")
     k, p, t = key[order], pred[order], y[order]
@@ -269,8 +272,8 @@ def train(log=print):
         model.eval()
         out = []
         with torch.no_grad():
-            for i in range(0, len(X), 65536):
-                xb = torch.from_numpy((X[i:i + 65536] - mu) / sd).to(dev)
+            for i in range(0, len(X), 8192):
+                xb = torch.from_numpy((X[i:i + 8192] - mu) / sd).to(dev)
                 out.append(model(xb).cpu().numpy())
         model.train()
         return np.concatenate(out)

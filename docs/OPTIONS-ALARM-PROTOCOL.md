@@ -87,3 +87,26 @@ rate 74% / 77%).
 early: the 5% version fired on 127 of 310 trades and gave up 0.27% per trade, significantly. Implied volatility rises
 intraday for many reasons (a fast move either way, news, hedging flows), so a jump is not a reliable "time to sell".
 Per section Live, the live rule stays unless the user decides otherwise; the recommendation is to turn the alarm off.
+
+## Results: larger 5-minute model (amendment A; added 2026-10-21, nothing above was changed)
+219 stocks (point-in-time top 100 each year, plus NVDA, MU, QQQ), 5-minute bars 2018-11 → 2026-10: 5.2 million fitting
+samples, 0.86 million validation, 2.3 million final; 117 inputs. Trained on the RX 7800 XT through DirectML (no driver
+resets during training).
+
+| model | parameters | validation IC (t) |
+|---|---|---|
+| small 2 × 64 | ~12k | +0.0068 (+2.79) |
+| medium 3 × 256 | ~0.16M | +0.0050 (+2.34) |
+| **large 4 × 1024 (selected)** | ~3.3M | **+0.0072 (+2.98)** |
+| conv 4 × 256 over 48 bars | ~0.8M | +0.0045 (+1.68) |
+
+Every size stopped improving on validation after 1–3 epochs: more fitting only learned the training years. On
+validation the exit rule lost money at every threshold (C − A −0.18% to −0.33% per trade) and the entry filter too
+(D − A −0.18%); the 10th-percentile threshold was the least bad and was carried forward, as written.
+
+**Final 2025-07 → 2026-10, once:** IC **+0.0007 (t +0.45)**: no forecasting power. Exit rule C − A **−0.37%** per trade
+(t −2.40); entry rule D − A **−0.34%** (t −2.27). **Both fail, and both hurt.**
+
+**Reading.** The larger model on 40× more data did not find a 30-minute signal that survives into new months; the
+validation IC of +0.007 was itself tiny (a perfect forecast is 1.0) and vanished in the final period. Size was not the
+limit: the small and large networks scored the same. Nothing changes on the paper slice.
