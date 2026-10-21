@@ -212,6 +212,7 @@ def test_focus_options_alarm_sells_even_at_a_loss():
     saved = W.reading, W.record
     W.reading = lambda sym, S, **k: {"iv": iv["v"], "pc": 0.6, "vol": 1000, "expiry": "2026-10-30"}
     W.record = lambda *a, **k: None
+    T.OPTIONS_ALARM = True                                                               # the switch is off live
     try:
         b = {"cash": 0.0, "start": 10000.0, "holdings": {"NVDA": 23.0}, "cost": {"NVDA": 23.0 * 220.0},
              "entered": "2026-10-21", "day": "2026-10-21"}

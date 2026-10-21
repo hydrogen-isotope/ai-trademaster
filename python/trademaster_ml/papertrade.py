@@ -36,9 +36,11 @@ CONTROL, BOOK, LEDGER, EQUITY, STATUS = (os.path.join(DIR, f) for f in ("control
 BOOKS = {"ai": "AI signals (Qwen + models, 5-day BUY)", "rank": "Top-ranked stocks (LightGBM top 20, daily)",
          "night": "Overnight QQQ (buy at the close, sell at the next open)",
          "intraday": "Intraday 30-minute model (top 5, every 30 min; keeps losers until break-even)",
-         "focus": "NVDA & MU opening-range, options-watched (buy if the first 5 minutes close up; sell on an options alarm)"}
+         "focus": "NVDA & MU opening-range (buy if the first 5 minutes close up; keeps losers until break-even; options recorded)"}
 SPLIT = {"ai": 0.40, "rank": 0.40, "night": 0.10, "intraday": 0.10, "focus": 0.10}   # focus is on margin (1.1x)
 FOCUS_SYMS, FOCUS_ENTRY = ("NVDA", "MU"), (9 * 60 + 35, 9 * 60 + 50)
+OPTIONS_ALARM = False            # off: it lost 0.15-0.27% per trade in the 2025-26 test (docs/OPTIONS-ALARM-PROTOCOL.md);
+                                 # readings are still recorded for learning
 INTRA_TOP, INTRA_EVERY_S, INTRA_FLAT_MIN = 5, 1800, 15 * 60 + 50
 CARRY_STOP, CARRY_MAX_DAYS = -0.04, 3        # a position kept to avoid selling at a loss: sold at -4% or after 3 sessions
 FORWARD = os.path.join("private", "data", "forward")
@@ -393,7 +395,7 @@ def focus_step(st, clock, log=print):
             continue
         why = options_watch.alarm(base, r)
         options_watch.record(sym, prices[sym], r, why)
-        if why:                                                    # the alarm overrides the keep-losers rule
+        if why and OPTIONS_ALARM:                                                    # the alarm overrides the keep-losers rule
             _order("focus", sym, "sell", qty=q, log=log)
             carry.pop(sym, None)
             sold.add(sym)

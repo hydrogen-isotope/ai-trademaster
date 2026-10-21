@@ -109,8 +109,7 @@ button.go:disabled{opacity:.5}
   <div class="panel"><div class="ph">Orders</div><div class="scroll"><table><thead><tr><th>Time</th><th>Half</th><th>Side</th><th>Stock</th><th>Amount</th><th>Status</th></tr></thead><tbody id="ledger"></tbody></table></div></div>
   <div class="panel" id="phonepanel" style="display:none"><div class="ph">Phone access (Tailscale) <span class="dim" style="text-transform:none;letter-spacing:0">shown only on this PC</span></div>
     <div class="pad" id="phoneinfo"></div></div>
-  <div class="note">How it works: the whole paper account is one slice, <b>NVDA &amp; MU</b>. At 9:35 AM New York it buys each of the two (half the account each) if its first 5 minutes closed up; if both opened down it stays in cash that day. While holding, it reads each stock's near-the-money options every 5 minutes and <b>sells on an options alarm</b>: at-the-money implied volatility 8% above the day's first reading, or the put/call volume ratio 1.5&times; the first reading (and at least 1.0, once 500 contracts have traded). The alarm sells even at a loss. Otherwise it sells at 3:50 PM what is at or above its buy price and keeps losers until they are back at cost, 4% below it, or 3 trading days old. Needs the app open from 9:30 AM New York. The options rule is untested: there is no intraday options history to back-test it on. Every options reading is saved for learning.
-    Research only; results on simulated money, before taxes, with Alpaca's paper fills.</div>
+  <div class="note">How it works: the whole paper account is one slice, <b>NVDA &amp; MU</b>. At 9:35 AM New York it buys each of the two (half the account each) if its first 5 minutes closed up; if both opened down it stays in cash that day. While holding, it records each stock's near-the-money options every 5 minutes for learning; the options alarm is off, because in the 2025–26 test it sold winners too early (it cost 0.15–0.27% per trade). It sells at 3:50 PM what is at or above its buy price and keeps losers until they are back at cost, 4% below it, or 3 trading days old. Needs the app open from 9:30 AM New York.     Research only; results on simulated money, before taxes, with Alpaca's paper fills.</div>
 </main>
 <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <script>
@@ -146,7 +145,7 @@ function render() {
   ].map(([k, v, d]) => `<div class="kpi"><div class="k">${k}</div><div class="v ${k === 'Market' ? '' : 'num'}" style="${k === 'Market' ? 'font-size:15px;font-weight:600' : ''}">${v}</div><div class="d">${d}</div></div>`).join('');
   const LABELS = { ai: 'AI signals (Qwen + models, 5-day BUY)', rank: 'Top-ranked stocks (LightGBM top 20, daily)', night: 'Overnight QQQ (buy at the close, sell at the next open)',
     intraday: 'Intraday 30-minute model (top 5, every 30 min; keeps losers until break-even)',
-    focus: 'NVDA & MU opening-range, options-watched (buy if the first 5 minutes close up; sell on an options alarm)' };
+    focus: 'NVDA & MU opening-range (buy if the first 5 minutes close up; keeps losers until break-even; options recorded)' };
   $('books').innerHTML = ['ai', 'rank', 'night', 'intraday', 'focus'].filter(k => ((c.split || {})[k] ?? 1) > 0 || ((books[k] || {}).value || 0) > 1).map(k => {
     const b = books[k] || { label: LABELS[k], positions: [] };
     const vsHold = k === 'night' && q0 && st.qqq && b.return != null
