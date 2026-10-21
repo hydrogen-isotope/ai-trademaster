@@ -69,3 +69,21 @@ replaced by:
   - Pass for each: mean (C or D) − A per trade > 0 with t ≥ 2.24 (two rules: Bonferroni at 5%).
 - Trained on the RX 7800 XT through DirectML. Stated limitation: the 2025-07 → 2026-10 period was already used in
   earlier daily studies, but no 5-minute model was ever evaluated on it.
+
+## Results: options alarm (added 2026-10-21; nothing above was changed)
+NVDA and MU, 682 days of 5-minute stock and near-the-money option bars each. Per trade, after 3 bps a side; t
+clustered by entry day.
+
+| alarm | development 2024-02 → 2025-06: B − A | final 2025-07 → 2026-10: B − A |
+|---|---|---|
+| **IV +5%, put/call off (selected)** | +0.06% (t +0.54) | **−0.27% (t −2.71)** |
+| IV +8%, put/call on (the live setting) | +0.06% (t +0.64) | −0.15% (t −1.80) |
+| other six variants | −0.00% to +0.06% (t −0.04 to +0.83) | not run (one final check only) |
+
+Without the alarm (A) the same entries earned −0.05% per trade in development and **+0.35%** in the final period (hit
+rate 74% / 77%).
+
+**Fails, and worse: the alarm hurts.** In development it was neutral at best; in the final period it sold winners
+early: the 5% version fired on 127 of 310 trades and gave up 0.27% per trade, significantly. Implied volatility rises
+intraday for many reasons (a fast move either way, news, hedging flows), so a jump is not a reliable "time to sell".
+Per section Live, the live rule stays unless the user decides otherwise; the recommendation is to turn the alarm off.
