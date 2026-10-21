@@ -111,6 +111,15 @@ def control():
     return c
 
 
+def session_now():
+    """'pre' (4:00-9:30 New York), 'regular', 'post' (16:00-20:00) or 'closed'."""
+    now = datetime.now(alpaca.NY)
+    if not holidays.is_session(now.date()):
+        return "closed"
+    m = now.hour * 60 + now.minute
+    return "pre" if 240 <= m < 570 else "regular" if 570 <= m < 960 else "post" if 960 <= m < 1200 else "closed"
+
+
 def _today_ny():
     return datetime.now(alpaca.NY).date().isoformat() if hasattr(alpaca, "NY") else datetime.now(timezone.utc).date().isoformat()
 
@@ -153,9 +162,12 @@ def targets_rank():
 
 # ---------------------------------------------------------------- orders
 
-def _order(book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None, take_profit=None, stop_loss=None):
+def _order(book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None, take_profit=None, stop_loss=None,
+           extended=False):
     body = {"symbol": sym, "side": side, "type": "limit" if limit else "market", "time_in_force": tif,
             "client_order_id": f"tm-{book}-{int(time.time() * 1000)}-{sym}"[:48]}
+    if extended:                                    # pre-market / after-hours: limit, day orders only (Alpaca's rule)
+        body["extended_hours"] = True
     exits = None
     if take_profit or stop_loss:                    # buy: bracket (entry + target + stop); sell: one-cancels-other exit
         exits = "bracket" if side == "buy" else "oco"
@@ -175,6 +187,7 @@ def _order(book, sym, side, qty=None, notional=None, log=print, tif="day", limit
     o = _req("POST", "/v2/orders", body)
     _append(LEDGER, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "book": book, "symbol": sym, "side": side,
                      "qty": qty, "notional": notional, "tif": tif, "order_id": o.get("id"), "status": o.get("status"),
+                     **({"extended_hours": True} if extended else {}),
                      **({"class": exits, "take_profit": take_profit, "stop_loss": stop_loss} if exits else {})})
     log(f"[paper] {book}: {side} {sym} " + (f"${notional:.2f}" if notional is not None else f"{qty} sh") + (f" ({tif})" if tif != "day" else ""))
     return o
@@ -534,6 +547,8 @@ def run(a=None, log=print):
     if not c["enabled"]:
         return {"done": "auto-trade is off"}
     clock = _req("GET", "/v2/clock")
+    if c.get("reset") == "liquidating":
+        _reset_finish(c, clock, log)
     if c.get("reset") in ("pending", "submitted"):
         waiting = _reset_step(c, clock, log)
         if waiting:
@@ -569,6 +584,89 @@ def run(a=None, log=print):
     _save(BOOK, st)
     status(st)
     return {"orders": done, "night_orders": night, "intraday_orders": intra}
+
+
+def reset_extended(log=print):
+    """Account reset during pre-market or after-hours: cancel every order, sell every position with extended-hours limit
+    orders 1% under the last price (they fill at the best bid at or above it), move the old books aside and start fresh
+    books at once, so the user can trade straight away. Whatever is not sold by the open (thin stocks, fractions) is
+    sold at the open by run() with market orders for exactly the remaining old quantity."""
+    c = control()
+    if c.get("reset") != "pending":
+        raise SystemExit(f"refused: no pending reset (state: {c.get('reset')})")
+    if session_now() not in ("pre", "post"):
+        raise SystemExit("refused: not in pre-market or after-hours; the reset runs at the open instead")
+    _req("DELETE", "/v2/orders")
+    for _ in range(12):
+        if not _req("GET", "/v2/orders", params={"status": "open"}):
+            break
+        time.sleep(5)
+    pos = _req("GET", "/v2/positions")
+    prices = _latest_prices(sorted(p["symbol"] for p in pos))
+    sells = {}
+    for p in pos:
+        sym, q = p["symbol"], float(p["qty"])
+        if q <= 0:
+            continue
+        px = prices.get(sym) or float(p.get("current_price") or 0)
+        rec = {"total": q, "id": None, "placed": 0.0}
+        for qq in (q, float(int(q))):                              # whole shares if fractions are refused outside hours
+            if qq < 1e-9 or not px:
+                continue
+            body = {"symbol": sym, "side": "sell", "type": "limit", "time_in_force": "day", "extended_hours": True,
+                    "limit_price": f"{px * 0.99:.2f}", "qty": f"{qq:.9f}".rstrip("0").rstrip("."),
+                    "client_order_id": f"tm-reset-{int(time.time() * 1000)}-{sym}"[:48]}
+            try:
+                o = _req("POST", "/v2/orders", body)
+                rec.update(id=o.get("id"), placed=qq)
+                break
+            except RuntimeError as e:
+                log(f"[paper] reset {sym} {qq:g}: {str(e)[:120]}")
+        sells[sym] = rec
+    stamp = datetime.now(alpaca.NY).strftime("%Y-%m-%d_%H%M")
+    arch = os.path.join(DIR, f"archive-{stamp}")
+    os.makedirs(arch, exist_ok=True)
+    for f in (BOOK, LEDGER, EQUITY, STATUS):
+        if os.path.exists(f):
+            os.replace(f, os.path.join(arch, os.path.basename(f)))
+    c = control()
+    c.update(reset="liquidating", reset_at=stamp, reset_orders=sells)
+    _save(CONTROL, c)
+    st = _state(c, log)
+    _save(BOOK, st)
+    n_out = sum(1 for v in sells.values() if v["placed"] < v["total"] - 1e-9)
+    log(f"[paper] reset: {len(sells)} positions, {len(sells) - n_out} sell orders cover the whole position now, "
+        f"{n_out} have leftovers for the open; old books moved to {arch}")
+    return {"positions": len(sells), "leftovers_for_open": n_out, "archive": arch}
+
+
+def _reset_finish(c, clock, log=print):
+    """At the open: whatever of the old positions the extended-hours sells did not get rid of is sold at market."""
+    if not clock.get("is_open"):
+        return
+    for sym, r in (c.get("reset_orders") or {}).items():
+        filled = 0.0
+        if r.get("id"):
+            o = _req("GET", f"/v2/orders/{r['id']}")
+            if o.get("status") not in FINAL_STATES:
+                try:
+                    _req("DELETE", f"/v2/orders/{r['id']}")
+                except RuntimeError:
+                    pass
+                for _ in range(10):
+                    o = _req("GET", f"/v2/orders/{r['id']}")
+                    if o.get("status") in FINAL_STATES:
+                        break
+                    time.sleep(2)
+            filled = float(o.get("filled_qty") or 0)
+        left = r["total"] - filled
+        if left > 1e-6:
+            _req("POST", "/v2/orders", {"symbol": sym, "side": "sell", "type": "market", "time_in_force": "day",
+                                        "qty": f"{left:.9f}".rstrip("0").rstrip("."),
+                                        "client_order_id": f"tm-reset-{int(time.time() * 1000)}-{sym}"[:48]})
+            log(f"[paper] reset: sold the remaining {left:g} {sym} at the open")
+    c["reset"] = "done"
+    _save(CONTROL, c)
 
 
 def _reset_step(c, clock, log=print):
@@ -774,12 +872,19 @@ def manual_order(spec, log=print):
     notional = float(spec["notional"]) if spec.get("notional") not in (None, "") else None
     limit = float(spec["limit"]) if spec.get("limit") not in (None, "") else None
     note = str(spec.get("note") or "")[:300]
+    extended = bool(spec.get("extended"))
     tp = float(spec["take_profit"]) if spec.get("take_profit") not in (None, "") else None
     sl = float(spec["stop_loss"]) if spec.get("stop_loss") not in (None, "") else None
     if (qty is None) == (notional is None) or (qty or notional or 0) <= 0:
         raise SystemExit("refused: give either a share quantity or a dollar amount")
     if notional is not None and limit:
         raise SystemExit("refused: a limit order needs a share quantity")
+    sess = session_now()
+    if extended:
+        if not limit:
+            raise SystemExit("refused: pre-market and after-hours orders must be limit orders (set a limit price)")
+        if tp or sl:
+            raise SystemExit("refused: target & stop orders only work in regular hours; place a plain limit order")
     c = control()
     if c.get("reset") in ("pending", "submitted"):
         raise SystemExit("refused: the account reset runs at the open (it sells everything); trade once it has finished, "
@@ -810,10 +915,10 @@ def manual_order(spec, log=print):
             raise SystemExit("refused: a protective exit uses the target as its limit; leave the limit price empty")
     # target / stop orders stay active across days until they fill or are cancelled (good till cancelled)
     o = _order("manual", sym, side, qty=qty, notional=notional, log=log, limit=limit, take_profit=tp, stop_loss=sl,
-               tif="gtc" if (tp or sl) else "day")
+               tif="gtc" if (tp or sl) else "day", extended=extended)
     _append(MANUAL, {"t": datetime.now(timezone.utc).isoformat(timespec="seconds"), "order_id": o.get("id"), "symbol": sym, "side": side,
                      "qty": qty, "notional": notional, "limit": limit, "take_profit": tp, "stop_loss": sl, "price_at_order": px, "note": note,
-                     "context_file": os.path.basename(MANUAL_CONTEXT)})
+                     "session": sess, "extended_hours": extended, "context_file": os.path.basename(MANUAL_CONTEXT)})
     _record_context_async(o.get("id"), sym, px, log)
     _save(BOOK, st)
     time.sleep(2)
@@ -913,12 +1018,14 @@ def cancel(order_id, log=print):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("cmd", choices=["run", "status", "close", "order", "cancel", "enrich"])
+    ap.add_argument("cmd", choices=["run", "status", "close", "order", "cancel", "enrich", "reset-now"])
     ap.add_argument("--book", choices=["ai", "rank", "night", "intraday", "focus", "manual", "all"], default="all")
     ap.add_argument("--json", default="{}")
     ap.add_argument("--id", default="")
     a = ap.parse_args()
-    if a.cmd == "enrich":
+    if a.cmd == "reset-now":
+        print(json.dumps(reset_extended()))
+    elif a.cmd == "enrich":
         enrich(json.loads(a.json))
     elif a.cmd == "order":
         print(json.dumps(manual_order(json.loads(a.json))))

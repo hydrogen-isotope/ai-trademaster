@@ -73,7 +73,7 @@ def test_manual_orders_refuse_shorts_and_bad_input():
     T.context = lambda sym, px=None: {}
     T._record_context_async = lambda *a, **k: None
     sent = []
-    T._order = lambda book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None, take_profit=None, stop_loss=None:         sent.append((book, sym, side, qty, notional, limit) + ((take_profit, stop_loss) if take_profit or stop_loss else ())) or {"id": "x"}
+    T._order = lambda book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None, take_profit=None, stop_loss=None, extended=False:         sent.append((book, sym, side, qty, notional, limit) + ((take_profit, stop_loss) if take_profit or stop_loss else ())) or {"id": "x"}
     T.time.sleep = lambda s: None
     for spec in ({"symbol": "MU", "side": "sell", "qty": 3}, {"symbol": "NVDA", "side": "sell", "qty": 1}, {"symbol": "MU", "side": "buy"},
                  {"symbol": "MU", "side": "buy", "notional": 100, "limit": 850}, {"symbol": "MU X", "side": "buy", "qty": 1}):
@@ -99,7 +99,7 @@ def test_manual_orders_refuse_shorts_and_bad_input():
     T.manual_order({"symbol": "MU", "side": "sell", "qty": 1, "take_profit": 930, "stop_loss": 880})
     assert sent[-2:] == [("manual", "MU", "buy", 2.0, None, None, 930.0, 880.0), ("manual", "MU", "sell", 1.0, None, None, 930.0, 880.0)]
     tifs = []
-    T._order = lambda book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None, take_profit=None, stop_loss=None: tifs.append(tif) or {"id": "x"}
+    T._order = lambda book, sym, side, qty=None, notional=None, log=print, tif="day", limit=None, take_profit=None, stop_loss=None, extended=False: tifs.append(tif) or {"id": "x"}
     T.manual_order({"symbol": "MU", "side": "buy", "qty": 1, "take_profit": 930, "stop_loss": 880})
     T.manual_order({"symbol": "MU", "side": "buy", "qty": 1})
     assert tifs == ["gtc", "day"]
@@ -228,6 +228,44 @@ def test_focus_options_alarm_sells_even_at_a_loss():
         assert sent == [("NVDA", "sell", 23)] and "options alarm" in b["note"]
     finally:
         W.reading, W.record = saved
+
+
+def test_extended_hours_orders_need_a_limit_and_no_exits():
+    import importlib
+    importlib.reload(T)
+    T.control = lambda: {"enabled": True, "books": {}, "split": {k: 0.0 for k in T.BOOKS}}
+    T._state = lambda c, log=print: {"books": {"manual": {"cash": 0.0, "start": 0.0, "holdings": {}, "cost": {}}}}
+    T._settle = lambda st, log=print: None
+    T._save = lambda *a: None
+    T._append = lambda *a: None
+    T.status = lambda *a, **k: None
+    T._latest_prices = lambda syms: {s: 216.0 for s in syms}
+    T._record_context_async = lambda *a, **k: None
+    T.time.sleep = lambda s: None
+    sent = []
+    T._order = lambda book, sym, side, **k: sent.append((sym, side, k.get("limit"), k.get("extended"))) or {"id": "x"}
+    for spec in ({"symbol": "NVDA", "side": "buy", "qty": 1, "extended": True},
+                 {"symbol": "NVDA", "side": "buy", "qty": 1, "limit": 215, "take_profit": 230, "extended": True}):
+        try:
+            T.manual_order(spec)
+            assert False, spec
+        except SystemExit as e:
+            assert "refused" in str(e)
+    T.manual_order({"symbol": "NVDA", "side": "buy", "qty": 1, "limit": 215, "extended": True})
+    assert sent == [("NVDA", "buy", 215, True)]
+    importlib.reload(T)
+
+
+def test_order_body_carries_the_extended_flag():
+    import importlib
+    importlib.reload(T)
+    bodies = []
+    T._req = lambda method, path, body=None, params=None: bodies.append(body) or {"id": "o1", "status": "new"}
+    T._append = lambda *a: None
+    T._order("manual", "MU", "buy", qty=2, limit=900.0, extended=True)
+    T._order("manual", "MU", "buy", qty=2, limit=900.0)
+    assert bodies[0]["extended_hours"] is True and bodies[0]["type"] == "limit" and "extended_hours" not in bodies[1]
+    importlib.reload(T)
 
 
 def test_options_alarm_put_call_needs_volume():
